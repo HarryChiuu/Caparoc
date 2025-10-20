@@ -38,6 +38,29 @@ This file provides essential guidance to Agent AI (claude.ai/code or github copi
 - **先閱讀文件 (READ FILES FIRST)**：在編輯/寫入文件之前，您必須先閱讀該文件
 - **技術債預防 (DEBT PREVENTION)**：在創建新文件之前，檢查是否存在現有相似功能以進行擴展
 - **單一事實來源 (SINGLE SOURCE OF TRUTH)**：每個功能/概念只有一個權威的實作
+- **📦 套件管理 (PACKAGE MANAGEMENT)**：當安裝新的 Python 套件時，必須更新 `requirements.txt` 文件
+
+### 📦 PACKAGE MANAGEMENT WORKFLOW (套件管理工作流程)
+當使用者安裝新套件或 Agent AI 建議安裝套件時：
+
+1. **安裝套件**：`pip install package_name`
+2. **記錄到 requirements.txt**：將套件和版本添加到適當的分類區域
+3. **提交變更**：`git add requirements.txt && git commit -m "Add package_name to dependencies"`
+4. **推送到 GitHub**：`git push origin main`
+
+**範例：安裝 pyserial**
+```bash
+# 1. 安裝套件
+pip install pyserial
+
+# 2. Agent AI 自動更新 requirements.txt 的 "核心依賴" 區域：
+# pyserial>=3.5  # 串口通訊
+
+# 3. 提交
+git add requirements.txt
+git commit -m "Add pyserial for serial communication"
+git push origin main
+```
 
 ### ⚡ EXECUTION PATTERNS (執行模式)
 - **平行任務 Agent (PARALLEL TASK AGENTS)**：同時啟動多個任務 Agent 以實現最大效率

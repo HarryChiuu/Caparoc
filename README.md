@@ -38,46 +38,48 @@ Caparoc_breaker_control/
 
 ## 安裝 (Installation)
 
-### 使用 Conda 環境（推薦）
+### 使用現有的 Conda 環境（推薦）
 
-#### 1. 創建 Conda 環境
+#### 1. 啟動您的 Conda 環境
+```bash
+# 啟動您現有的 Conda 環境（替換為您的環境名稱）
+conda activate your_env_name
+```
+
+#### 2. 安裝專案依賴
+```bash
+# 安裝 requirements.txt 中的套件
+pip install -r requirements.txt
+```
+
+#### 3. 驗證安裝
+```bash
+python --version
+python src/main.py
+```
+
+#### 4. 當您安裝新套件時
+```bash
+# 安裝新套件（例如 pyserial）
+pip install pyserial
+
+# 匯出當前環境的所有套件（可選）
+pip freeze > requirements_full.txt
+
+# 或者手動更新 requirements.txt
+# Agent AI 會協助您維護 requirements.txt
+```
+
+### 創建新的 Conda 環境（可選）
+
+如果需要創建新環境：
 ```bash
 # 使用 environment.yml 創建環境
 conda env create -f environment.yml
 
 # 或手動創建環境
 conda create -n caparoc_breaker python=3.11
-```
-
-#### 2. 啟動環境
-```bash
 conda activate caparoc_breaker
-```
-
-#### 3. 安裝依賴
-```bash
-# 如果使用 environment.yml，依賴已自動安裝
-# 否則手動安裝
-pip install -r requirements.txt
-```
-
-#### 4. 驗證安裝
-```bash
-python --version
-python src/main.py
-```
-
-### 使用 venv 虛擬環境（替代方案）
-
-#### 1. 創建虛擬環境
-```bash
-python -m venv venv
-venv\Scripts\activate  # Windows
-source venv/bin/activate  # Linux/Mac
-```
-
-#### 2. 安裝依賴
-```bash
 pip install -r requirements.txt
 ```
 
@@ -97,19 +99,23 @@ python src/main.py
 python -m pytest tests/
 ```
 
-### 常用 Conda 命令
+### 常用命令參考
 ```bash
-# 查看已安裝的套件
-conda list
+# 查看當前環境已安裝的套件
+pip list
 
-# 更新套件
-conda update --all
+# 查看 pip 安裝的套件（排除 conda 安裝的）
+pip freeze
 
-# 匯出環境
-conda env export > environment.yml
+# 安裝新套件並記錄版本
+pip install package_name
+# 然後將套件添加到 requirements.txt
 
-# 刪除環境
-conda env remove -n caparoc_breaker
+# 匯出完整環境（包含所有套件）
+pip freeze > requirements_full.txt
+
+# 匯出 Conda 環境配置
+conda env export > environment_backup.yml
 ```
 
 ## 開發指南 (Development Guidelines)

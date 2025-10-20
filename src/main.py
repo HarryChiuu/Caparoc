@@ -1,6 +1,6 @@
 """
 Caparoc Breaker Control - Main Application
-進行遠端控制Caparoc_breaker，可檢測每一channel的電壓電流值以及啟閉動作
+進行遠端控制Caparoc_breaker，檢測每一channel的電壓電流值以及啟閉動作
 """
 
 from utils import BreakerController

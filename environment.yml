@@ -1,0 +1,21 @@
+name: caparoc_breaker
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+    # Core dependencies
+    # Add your project dependencies here
+    
+    # Testing
+    - pytest>=7.4.0
+    - pytest-cov>=4.1.0
+    
+    # Code quality
+    - flake8>=6.0.0
+    - black>=23.0.0
+    
+    # Development
+    - ipython>=8.12.0

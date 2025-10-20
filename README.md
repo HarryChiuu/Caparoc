@@ -18,7 +18,8 @@ Caparoc_breaker_control/
 ├── AgentAI_init.md        # Agent AI 的基本規則
 ├── README.md              # 專案文件
 ├── .gitignore             # Git 忽略模式
-├── requirements.txt       # Python 依賴
+├── requirements.txt       # Python 依賴 (pip)
+├── environment.yml        # Conda 環境配置
 ├── src/                   # 原始碼 (NEVER put files in root)
 │   ├── main.py            # 主要腳本/進入點
 │   └── utils.py           # 工具函數
@@ -37,13 +38,45 @@ Caparoc_breaker_control/
 
 ## 安裝 (Installation)
 
-### 1. 創建虛擬環境
+### 使用 Conda 環境（推薦）
+
+#### 1. 創建 Conda 環境
+```bash
+# 使用 environment.yml 創建環境
+conda env create -f environment.yml
+
+# 或手動創建環境
+conda create -n caparoc_breaker python=3.11
+```
+
+#### 2. 啟動環境
+```bash
+conda activate caparoc_breaker
+```
+
+#### 3. 安裝依賴
+```bash
+# 如果使用 environment.yml，依賴已自動安裝
+# 否則手動安裝
+pip install -r requirements.txt
+```
+
+#### 4. 驗證安裝
+```bash
+python --version
+python src/main.py
+```
+
+### 使用 venv 虛擬環境（替代方案）
+
+#### 1. 創建虛擬環境
 ```bash
 python -m venv venv
 venv\Scripts\activate  # Windows
+source venv/bin/activate  # Linux/Mac
 ```
 
-### 2. 安裝依賴
+#### 2. 安裝依賴
 ```bash
 pip install -r requirements.txt
 ```
@@ -52,12 +85,31 @@ pip install -r requirements.txt
 
 ### 運行主程式
 ```bash
+# 確保已啟動 Conda 環境
+conda activate caparoc_breaker
+
+# 運行主程式
 python src/main.py
 ```
 
 ### 運行測試
 ```bash
 python -m pytest tests/
+```
+
+### 常用 Conda 命令
+```bash
+# 查看已安裝的套件
+conda list
+
+# 更新套件
+conda update --all
+
+# 匯出環境
+conda env export > environment.yml
+
+# 刪除環境
+conda env remove -n caparoc_breaker
 ```
 
 ## 開發指南 (Development Guidelines)
@@ -70,7 +122,8 @@ python -m pytest tests/
 
 ## 技術堆疊 (Tech Stack)
 
-- **語言**: Python 3.x
+- **語言**: Python 3.11
+- **環境管理**: Conda
 - **專案類型**: Simple (基本腳本/工具)
 - **版本控制**: Git + GitHub
 

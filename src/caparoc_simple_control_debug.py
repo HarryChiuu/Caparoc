@@ -467,11 +467,18 @@ class CaparocSimpleController:
                     channel_byte = module_index  # byte position for module
                     channel_bit = channel_index - 1  # bit position for channel
                     
+                    # ⚠️ 關鍵修復：保留當前通道狀態，避免清除其他通道
+                    with self.io_data_lock:
+                        current_channel_state = self.current_output_data[1] & 0x0F  # 保留 bit0-3
+                    
+                    print(f"[DEBUG] 當前通道狀態: 0x{current_channel_state:02X} (CH1={bool(current_channel_state & 0x01)}, CH2={bool(current_channel_state & 0x02)}, CH3={bool(current_channel_state & 0x04)}, CH4={bool(current_channel_state & 0x08)})")
+                    
                     # 步驟1: 進入程式模式
                     prog_data = bytearray(data_length)
-                    prog_data[channel_byte] = (1 << 7) | (1 << 6)
+                    # 保留其他通道狀態 + 設定程式模式位元
+                    prog_data[channel_byte] = (1 << 7) | (1 << 6) | current_channel_state
                     
-                    print(f"[DEBUG] 進入程式模式 -> Instance 0x{instance:02X}, byte[{channel_byte}]=0x{prog_data[channel_byte]:02X}")
+                    print(f"[DEBUG] 進入程式模式 -> Instance 0x{instance:02X}, byte[{channel_byte}]=0x{prog_data[channel_byte]:02X} (保留其他通道)")
                     if data_length > 1:
                         print(f"[DEBUG] prog_data[0]=0x{prog_data[0]:02X}, prog_data[1]=0x{prog_data[1]:02X}")
                     
@@ -492,38 +499,39 @@ class CaparocSimpleController:
                         
                         # 步驟2: 模擬按鈕設定電流值
                         for press_count in range(current_amps):
-                            # 按下
+                            # 按下（保留其他通道狀態）
                             press_data = bytearray(data_length)
-                            press_data[channel_byte] = (1 << channel_bit) | (1 << 7)
+                            press_data[channel_byte] = (1 << channel_bit) | (1 << 7) | current_channel_state
                             driver.generic_message(
                                 service=0x10, class_code=0x04, instance=instance,
                                 attribute=3, request_data=bytes(press_data), connected=False
                             )
                             time.sleep(0.5)
                             
-                            # 釋放
+                            # 釋放（保留其他通道狀態）
                             release_data = bytearray(data_length)
-                            release_data[channel_byte] = (1 << 7)
+                            release_data[channel_byte] = (1 << 7) | current_channel_state
                             driver.generic_message(
                                 service=0x10, class_code=0x04, instance=instance,
                                 attribute=3, request_data=bytes(release_data), connected=False
                             )
                             time.sleep(0.3)
                         
-                        # 步驟3: 儲存設定
+                        # 步驟3: 儲存設定（保留其他通道狀態）
                         save_data = bytearray(data_length)
-                        save_data[channel_byte] = (1 << channel_bit) | (1 << 7) | (1 << 6)
+                        save_data[channel_byte] = (1 << channel_bit) | (1 << 7) | (1 << 6) | current_channel_state
                         driver.generic_message(
                             service=0x10, class_code=0x04, instance=instance,
                             attribute=3, request_data=bytes(save_data), connected=False
                         )
                         time.sleep(3.0)
                         
-                        # 退出程式模式
+                        # 退出程式模式（⚠️ 關鍵：保留通道狀態，不發送全 0）
                         exit_data = bytearray(data_length)
-                        print(f"[DEBUG] 退出程式模式 -> Instance 0x{instance:02X}, 發送全 0 資料")
+                        exit_data[channel_byte] = (1 << 7) | current_channel_state  # 保留 bit7 + 通道狀態
+                        print(f"[DEBUG] 退出程式模式 -> Instance 0x{instance:02X}, 保留通道狀態 0x{exit_data[channel_byte]:02X}")
                         if data_length > 1:
-                            print(f"[DEBUG] exit_data[0]=0x{exit_data[0]:02X}, exit_data[1]=0x{exit_data[1]:02X}")
+                            print(f"[DEBUG] exit_data[0]=0x{exit_data[0]:02X}, exit_data[1]=0x{exit_data[1]:02X} (保留 CH1-CH4 狀態)")
                         driver.generic_message(
                             service=0x10, class_code=0x04, instance=instance,
                             attribute=3, request_data=bytes(exit_data), connected=False

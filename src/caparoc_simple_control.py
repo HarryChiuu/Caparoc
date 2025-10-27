@@ -52,8 +52,12 @@ class CaparocSimpleController:
         # CIP Driver 物件 (在 establish_implicit_messaging 時保存)
         self.driver = None
         
-        # 額定電流設定記錄
+        # 額定電流設定記錄 - 記錄哪些通道已經設定過額定電流
+        # Key: (module, channel), Value: current_amps
         self.nominal_current_per_channel = {}
+        
+        # 通道首次開啟記錄 - 避免重複設定額定電流
+        self.channel_first_opened = set()
 
     def establish_implicit_messaging(self, driver, verbose=True):
         """
@@ -334,10 +338,15 @@ class CaparocSimpleController:
                 action = "開啟" if state else "關閉"
                 print(f"[控制] {action}通道{channel}...")
             
-            # 步驟1: 設定額定電流 (與測試程式相同，每次都執行)
-            if verbose:
-                print(f"[控制] 設定額定電流: 4A")
-            self.set_nominal_current(driver, module, channel, 4, verbose=False)
+            # 步驟1: 只在首次開啟時設定額定電流
+            channel_key = (module, channel)
+            if state and channel_key not in self.channel_first_opened:
+                if verbose:
+                    print(f"[控制] 首次開啟通道{channel}，設定額定電流: 4A")
+                self.set_nominal_current(driver, module, channel, 4, verbose=False)
+                self.channel_first_opened.add(channel_key)
+            elif verbose and state:
+                print(f"[控制] 通道{channel}已設定過額定電流，跳過")
             
             # 步驟2: 修改輸出資料緩存
             with self.io_data_lock:

@@ -40,10 +40,15 @@ Caparoc_breaker_control/
 
 ### ⚠️ 待實作
 - [ ] 全域狀態監測 (持續背景監控)
-- [ ] 初始化電流值設定 (可配置)
 - [ ] GUI 規劃設計 (圖形化介面)
 
-詳見 [TODO.md](TODO.md) 完整開發計畫
+詳見 [docs/TODO.md](docs/TODO.md) 完整開發計畫
+
+## 📚 文檔 (Documentation)
+
+- [TODO.md](docs/TODO.md) - 待實作功能與開發計畫
+- [CHANGELOG.md](docs/CHANGELOG.md) - 版本更新歷史
+- [DEBUG_ANALYSIS.md](docs/DEBUG_ANALYSIS.md) - 開發除錯記錄
 
 ## 安裝 (Installation)
 

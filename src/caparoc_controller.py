@@ -8,12 +8,12 @@ CAPAROC 控制器 (Production Version)
   - 多通道獨立控制 (on/off)
   - 即時狀態讀取 (電壓、電流)
   - 通道額定電流初始化
+  - 互動式電流值設定 (Phase 1 完成)
   - Implicit Messaging 自動檢測
 
 ⚠️ 待實作:
   1. 全域狀態監測 (持續背景監控異常狀態)
-  2. 初始化電流值設定 (可配置的額定電流)
-  3. GUI 規劃設計 (圖形化控制介面)
+  2. GUI 規劃設計 (圖形化控制介面)
 
 策略：
 1. 程式啟動時一次性設定所有通道額定電流（順序執行，避免干擾）
@@ -49,9 +49,81 @@ class CaparocController:
         # 初始化標記
         self.channels_initialized = False
     
-    def initialize_all_channels(self, driver, nominal_current=4):
+    def prompt_channel_currents(self):
+        """
+        互動式詢問每個通道的額定電流設定
+        
+        Returns:
+            dict: {1: current, 2: current, 3: current, 4: current}
+        """
+        print("\n" + "="*60)
+        print("⚙️  通道額定電流設定")
+        print("="*60)
+        print("請為每個通道設定額定電流 (0.5A - 25.5A)")
+        print("直接按 Enter 使用預設值 4A")
+        print("輸入 0 表示跳過該通道的初始化")
+        print()
+        
+        channel_currents = {}
+        default_current = 4.0
+        
+        for ch in range(1, 5):
+            while True:
+                try:
+                    user_input = input(f"  CH{ch} 額定電流 [預設: {default_current}A]: ").strip()
+                    
+                    # 直接按 Enter,使用預設值
+                    if user_input == "":
+                        current = default_current
+                        print(f"    → 使用預設值: {current}A")
+                        channel_currents[ch] = current
+                        break
+                    
+                    # 解析輸入
+                    current = float(user_input)
+                    
+                    # 驗證範圍
+                    if current == 0:
+                        print(f"    → 跳過 CH{ch} 初始化")
+                        channel_currents[ch] = 0
+                        break
+                    elif 0.5 <= current <= 25.5:
+                        print(f"    → 設定為: {current}A")
+                        channel_currents[ch] = current
+                        break
+                    else:
+                        print(f"    ⚠️  錯誤: 請輸入 0.5-25.5 之間的數值 (或 0 跳過)")
+                        
+                except ValueError:
+                    print(f"    ⚠️  錯誤: 請輸入有效的數字")
+                except KeyboardInterrupt:
+                    print("\n\n⚠️  設定已取消，使用全部預設值")
+                    return {1: 4, 2: 4, 3: 4, 4: 4}
+        
+        print("\n" + "="*60)
+        print("📋 設定摘要:")
+        for ch, current in channel_currents.items():
+            if current > 0:
+                print(f"  CH{ch}: {current}A")
+            else:
+                print(f"  CH{ch}: 跳過初始化")
+        print("="*60)
+        
+        # 確認
+        confirm = input("\n確認設定? [Y/n]: ").strip().lower()
+        if confirm in ['n', 'no']:
+            print("⚠️  設定已取消，使用預設值")
+            return {1: 4, 2: 4, 3: 4, 4: 4}
+        
+        return channel_currents
+    
+    def initialize_all_channels(self, driver, channel_currents=None):
         """
         初始化所有通道的額定電流（一次性，程式啟動時執行）
+        
+        Args:
+            driver: CIPDriver 實例
+            channel_currents: dict {1: 4.0, 2: 2.5, 3: 1.0, 4: 5.0} 或 None (使用預設)
         
         重要：順序執行，確保不互相干擾
         """
@@ -59,14 +131,31 @@ class CaparocController:
             print("[初始化] 通道已初始化，跳過")
             return True
         
+        # 如果沒有提供設定，使用預設值
+        if channel_currents is None:
+            channel_currents = {1: 4, 2: 4, 3: 4, 4: 4}
+        
         print("\n" + "="*60)
         print("🔧 初始化所有通道額定電流")
+        print("   設定值:")
+        for ch, current in channel_currents.items():
+            if current > 0:
+                print(f"     CH{ch}: {current} A")
+            else:
+                print(f"     CH{ch}: 跳過")
         print("   這個過程需要約 40 秒，請耐心等待...")
         print("="*60)
         
         for ch in range(1, 5):
-            print(f"\n[初始化] 通道 {ch}/4: 設定額定電流 {nominal_current}A")
-            success = self._set_nominal_current_led_button(driver, 1, ch, nominal_current)
+            current = channel_currents.get(ch, 4)  # 預設 4A
+            
+            # 如果設定為 0, 跳過初始化
+            if current == 0:
+                print(f"\n[初始化] 通道 {ch}/4: ⏭️  跳過")
+                continue
+            
+            print(f"\n[初始化] 通道 {ch}/4: 設定額定電流 {current}A")
+            success = self._set_nominal_current_led_button(driver, 1, ch, int(current))
             if success:
                 print(f"[初始化] ✅ 通道 {ch} 完成")
             else:
@@ -459,24 +548,27 @@ class CaparocController:
         """主程式"""
         print("🚀 CAPAROC 控制器 (Production)")
         print(f"設備: {self.device_ip}")
-        print("\n⚠️  待實作功能:")
+        print("\n✅ Phase 1 完成: 互動式電流值設定")
+        print("⚠️  待實作功能:")
         print("   1. 全域狀態監測 (持續背景監控)")
-        print("   2. 初始化電流值設定 (可配置)")
-        print("   3. GUI 規劃設計 (圖形化介面)")
+        print("   2. GUI 規劃設計 (圖形化介面)")
         
         with CIPDriver(self.device_ip) as driver:
             self.driver = driver
             
-            # 步驟 1: 初始化所有通道
+            # 步驟 1: 互動式設定通道額定電流
+            channel_currents = self.prompt_channel_currents()
+            
+            # 步驟 2: 初始化所有通道
             print("\n[步驟 1/2] 初始化通道額定電流...")
-            if not self.initialize_all_channels(driver):
+            if not self.initialize_all_channels(driver, channel_currents):
                 print("❌ 初始化失敗")
                 return
             
             # 嘗試建立 Implicit Messaging (靜默模式,CAPAROC 不支援)
             self._establish_implicit_messaging(driver)
             
-            # 步驟 2: 互動控制
+            # 步驟 3: 互動控制
             print("\n指令:")
             print("  on <ch>   - 開啟通道 (例: on 1)")
             print("  off <ch>  - 關閉通道")

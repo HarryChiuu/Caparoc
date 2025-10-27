@@ -592,8 +592,12 @@ class CaparocController:
                     
                     if response and hasattr(response, 'value') and len(response.value) >= 18:
                         # 載入設備當前狀態到 buffer
-                        self.current_output_data = bytearray(response.value)
+                        # ⚠️ 重要: 只取前 18 bytes (Output Assembly 0x64 的正確長度)
+                        device_data = response.value[:18]  # 截取前 18 bytes
+                        self.current_output_data = bytearray(device_data)
+                        
                         print(f"✅ 已載入設備狀態 (byte[1]=0x{self.current_output_data[1]:02X})")
+                        print(f"   資料長度: {len(self.current_output_data)} bytes")
                         print(f"   這樣可以避免覆蓋設備當前運行的通道")
                     else:
                         print("⚠️  無法讀取設備狀態,使用空白狀態")

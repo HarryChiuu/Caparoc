@@ -287,14 +287,36 @@ class CaparocController:
                     
                     # DEBUG: 顯示回應詳情
                     if response:
-                        print(f"       [DEBUG] Response: {response}")
+                        print(f"       [DEBUG] Response 物件: {response}")
                         if hasattr(response, 'error'):
-                            print(f"       [DEBUG] Error: {response.error}")
+                            error_status = response.error if response.error else "None (成功)"
+                            print(f"       [DEBUG] Error: {error_status}")
                         if hasattr(response, 'value'):
-                            print(f"       [DEBUG] Value: {response.value}")
+                            value_str = response.value if response.value else "b'' (空回應，正常)"
+                            print(f"       [DEBUG] Value: {value_str}")
+                            print(f"       [說明] Set 操作成功時通常回傳空值")
                     
                     if response and not (hasattr(response, 'error') and response.error):
                         print(f"       ✅ 已寫入設備")
+                        
+                        # 驗證: 讀取回來確認
+                        try:
+                            verify_resp = self.driver.generic_message(
+                                service=0x0E,  # Get Attribute Single
+                                class_code=0x04,
+                                instance=self.output_instance,
+                                attribute=3,
+                                connected=False
+                            )
+                            if verify_resp and hasattr(verify_resp, 'value') and len(verify_resp.value) >= 2:
+                                actual_byte1 = verify_resp.value[1]
+                                print(f"       [驗證] 設備實際 byte[1] = 0x{actual_byte1:02X}")
+                                if actual_byte1 == new_value:
+                                    print(f"       ✅ 驗證成功：設備狀態與預期一致")
+                                else:
+                                    print(f"       ⚠️ 警告：設備 byte[1]=0x{actual_byte1:02X}, 預期=0x{new_value:02X}")
+                        except Exception as ve:
+                            print(f"       [驗證] 無法驗證: {ve}")
                     else:
                         error_msg = response.error if hasattr(response, 'error') else '未知'
                         print(f"       ⚠️ 寫入失敗: {error_msg}")

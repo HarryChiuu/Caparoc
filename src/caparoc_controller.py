@@ -10,10 +10,13 @@ CAPAROC 控制器 (Production Version)
   - 通道額定電流初始化
   - 互動式電流值設定 (Phase 1 完成)
   - Implicit Messaging 自動檢測
+  - 增強狀態顯示 (Phase 2 完成):
+    * 全域系統狀態 (Byte 0: 欠壓/過壓/系統錯誤/80%警告/總電流關斷)
+    * 系統電壓與總電流
+    * 各通道詳細狀態 (開關/電流/警告)
 
 ⚠️ 待實作:
-  1. 全域狀態監測 (持續背景監控異常狀態)
-  2. GUI 規劃設計 (圖形化控制介面)
+  1. GUI 規劃設計 (圖形化控制介面)
 
 策略：
 1. 程式啟動時一次性設定所有通道額定電流（順序執行，避免干擾）
@@ -504,13 +507,13 @@ class CaparocController:
         return None
     
     def show_status(self):
-        """顯示所有通道狀態（從設備讀取）"""
+        """顯示所有通道狀態 + 全域系統狀態（從設備讀取）"""
         if not self.driver:
             print("❌ Driver 未初始化")
             return
         
         try:
-            print("\n📊 讀取通道狀態...")
+            print("\n📊 讀取設備狀態...")
             
             # 讀取 Input Assembly 0x65 (包含系統資訊和通道電流)
             response_input = self.driver.generic_message(
@@ -521,16 +524,64 @@ class CaparocController:
                 connected=False
             )
             
+            if not response_input or not hasattr(response_input, 'value'):
+                print("❌ 無法讀取狀態資料")
+                return
+            
+            data = response_input.value
+            
+            # ========== 1. 全域系統狀態 (Byte 0) ==========
+            print("\n🌐 全域系統狀態:")
+            if len(data) > 0:
+                global_status_byte = data[0]
+                undervoltage = bool(global_status_byte & 0x01)
+                overvoltage = bool(global_status_byte & 0x02)
+                system_error = bool(global_status_byte & 0x04)
+                warning_80 = bool(global_status_byte & 0x08)
+                total_shutdown = bool(global_status_byte & 0x10)
+                config_processing = bool(global_status_byte & 0x80)
+                
+                status_icons = []
+                if undervoltage:
+                    status_icons.append("⚡ 欠壓")
+                if overvoltage:
+                    status_icons.append("⚡ 過壓")
+                if system_error:
+                    status_icons.append("🔥 系統錯誤")
+                if warning_80:
+                    status_icons.append("⚠️  80%警告")
+                if total_shutdown:
+                    status_icons.append("🔴 總電流關斷")
+                if config_processing:
+                    status_icons.append("🔧 Config處理中")
+                
+                if status_icons:
+                    print("   " + " | ".join(status_icons))
+                else:
+                    print("   ✅ 正常")
+            
+            # ========== 2. 系統電壓與全域總電流 ==========
+            # 根據實測驗證:
+            # - Byte 4-5: Total voltage (例如 2400 = 24.00V)
+            # - Byte 2-3: Total current (例如 102 = 10.2A)
             voltage = 0.0
-            total_current = 0.0
+            global_total_current = 0.0
             
-            if response_input and hasattr(response_input, 'value'):
-                data = response_input.value
-                if len(data) >= 6:
-                    voltage = struct.unpack('<H', data[4:6])[0] / 100.0
-                if len(data) >= 8:
-                    total_current = struct.unpack('<H', data[6:8])[0] / 100.0
+            if len(data) >= 4:
+                # Byte 2-3: Total current (little-endian)
+                current_raw = struct.unpack('<H', data[2:4])[0]
+                global_total_current = current_raw / 10.0  # 0-500 -> 0.0-50.0A
             
+            if len(data) >= 6:
+                # Byte 4-5: Total voltage (little-endian)
+                voltage_raw = struct.unpack('<H', data[4:6])[0]
+                voltage = voltage_raw / 100.0  # 例如 2400 -> 24.00V
+            
+            print(f"\n📊 系統參數:")
+            print(f"   電壓: {voltage:.2f} V")
+            print(f"   全域總電流: {global_total_current:.2f} A  (設備報告)")
+            
+            # ========== 3. 各通道狀態 ==========
             # 根據手冊 7.2.5 節 (Table 7-4):
             # Module 1 每個通道佔 3 bytes:
             #   Byte 0: Status (bit 0 = on/off)
@@ -538,13 +589,14 @@ class CaparocController:
             #   Byte 2: Flowing current (0-255 = 0-25.5A)
             # CH1: Byte[6-8], CH2: Byte[9-11], CH3: Byte[12-14], CH4: Byte[15-17]
             
-            print("\n📊 通道狀態 (即時讀取):")
-            print(f"   電壓: {voltage:.2f} V")
-            print(f"   總電流: {total_current:.2f} A")
-            print("   " + "─" * 35)
+            print("\n📊 通道狀態:")
+            print("   " + "─" * 40)
             
-            # 每個通道的起始 offset (Module 1)
-            channel_offsets = [6, 9, 12, 15]  # CH1-CH4 的 Byte 0 位置
+            # 每個通道的起始 offset (經實測驗證)
+            channel_offsets = [6, 9, 12, 15]  # CH1-CH4 的 Status byte 位置
+            
+            # 計算通道電流總和 (用於驗證)
+            channels_sum = 0.0
             
             for ch in range(1, 5):
                 base_offset = channel_offsets[ch - 1]
@@ -553,13 +605,16 @@ class CaparocController:
                     # Byte 0: Status byte (根據手冊 Table 7-5)
                     status_byte = data[base_offset]
                     is_on = bool(status_byte & 0x01)           # bit 0: on/off
-                    warning_80 = bool(status_byte & 0x02)      # bit 1: 80% warning
+                    warning_80_ch = bool(status_byte & 0x02)   # bit 1: 80% warning
                     overload = bool(status_byte & 0x04)        # bit 2: overload
                     short_circuit = bool(status_byte & 0x08)   # bit 3: short circuit
                     
                     # Byte 2: Flowing current (實際電流)
                     current_raw = data[base_offset + 2]
                     current = current_raw / 10.0  # 0-255 -> 0-25.5A
+                    
+                    # 累加通道電流總和 (用於驗證)
+                    channels_sum += current
                     
                     # 根據狀態位元判斷開關,而非電流值
                     state = "🟢 開" if is_on else "🔴 關"
@@ -571,8 +626,8 @@ class CaparocController:
                     warnings = []
                     if is_on and current < 0.05:
                         warnings.append("無負載")
-                    if warning_80:
-                        warnings.append("⚠️ 80%警告")
+                    if warning_80_ch:
+                        warnings.append("⚠️ 80%")
                     if overload:
                         warnings.append("❌ 過載")
                     if short_circuit:
@@ -585,6 +640,18 @@ class CaparocController:
                 else:
                     print(f"   CH{ch}: ⚠️ 資料不足 (offset {base_offset})")
             
+            # 顯示總計與驗證
+            print("   " + "─" * 40)
+            print(f"   通道總和: {channels_sum:.2f} A  (CH1+CH2+CH3+CH4)")
+            
+            # 比對全域總電流與通道總和
+            diff = abs(global_total_current - channels_sum)
+            if diff < 0.1:
+                print(f"   ✅ 驗證通過 (全域={global_total_current:.2f}A, 總和={channels_sum:.2f}A)")
+            else:
+                print(f"   ⚠️  差異: {diff:.2f}A (全域={global_total_current:.2f}A, 總和={channels_sum:.2f}A)")
+                print(f"       (全域電流可能包含系統電路消耗)")
+            
         except Exception as e:
             print(f"❌ 讀取狀態失敗: {e}")
             import traceback
@@ -595,9 +662,9 @@ class CaparocController:
         print("🚀 CAPAROC 控制器 (Production)")
         print(f"設備: {self.device_ip}")
         print("\n✅ Phase 1 完成: 互動式電流值設定")
+        print("✅ Phase 2 完成: 狀態顯示增強 (全域狀態 + 通道 + 總電流)")
         print("⚠️  待實作功能:")
-        print("   1. 全域狀態監測 (持續背景監控)")
-        print("   2. GUI 規劃設計 (圖形化介面)")
+        print("   1. GUI 規劃設計 (圖形化介面)")
         
         with CIPDriver(self.device_ip) as driver:
             self.driver = driver
@@ -607,34 +674,58 @@ class CaparocController:
             
             # 步驟 2: 初始化所有通道 (如果需要)
             if channel_currents is not None:
-                print("\n[步驟 1/2] 初始化通道額定電流...")
+                print("\n[初始化] 設定通道額定電流...")
                 if not self.initialize_all_channels(driver, channel_currents):
                     print("❌ 初始化失敗")
                     return
                 # 初始化後標記為已完成
                 self.channels_initialized = True
             else:
-                # 跳過初始化,先讀取設備當前狀態
-                print("\n[步驟 1/2] 跳過初始化,讀取設備當前狀態...")
+                # 跳過初始化,從設備讀取實際狀態並同步
+                print("\n[跳過初始化] 讀取設備實際狀態並同步...")
                 try:
-                    # 讀取當前 Output Assembly 狀態
+                    # ✅ 正確做法: 從 Input Assembly 讀取實際狀態
                     response = driver.generic_message(
                         service=0x0E,  # Get Attribute Single
                         class_code=0x04,
-                        instance=self.output_instance,
+                        instance=self.input_instance,  # 0x65 (Input Assembly)
                         attribute=3,
                         connected=False
                     )
                     
                     if response and hasattr(response, 'value') and len(response.value) >= 18:
-                        # 載入設備當前狀態到 buffer
-                        # ⚠️ 重要: 只取前 18 bytes (Output Assembly 0x64 的正確長度)
-                        device_data = response.value[:18]  # 截取前 18 bytes
-                        self.current_output_data = bytearray(device_data)
+                        data = response.value
                         
-                        print(f"✅ 已載入設備狀態 (byte[1]=0x{self.current_output_data[1]:02X})")
-                        print(f"   資料長度: {len(self.current_output_data)} bytes")
-                        print(f"   這樣可以避免覆蓋設備當前運行的通道")
+                        # 讀取各通道實際狀態 (從 Byte 6, 9, 12, 15)
+                        channel_offsets = [6, 9, 12, 15]
+                        actual_states = {}
+                        
+                        print("   設備當前狀態:")
+                        for ch in range(1, 5):
+                            offset = channel_offsets[ch - 1]
+                            if len(data) > offset:
+                                status_byte = data[offset]
+                                is_on = bool(status_byte & 0x01)  # bit 0 = on/off
+                                actual_states[ch] = is_on
+                                
+                                current_byte = data[offset + 2] if len(data) > offset + 2 else 0
+                                current = current_byte / 10.0
+                                
+                                state_icon = "🟢 開" if is_on else "🔴 關"
+                                print(f"     CH{ch}: {state_icon} ({current:.1f}A)")
+                        
+                        # 根據實際狀態重建 Output Assembly buffer
+                        self.current_output_data = bytearray(18)
+                        byte1_value = 0x80  # bit7=1 (release)
+                        
+                        for ch, is_on in actual_states.items():
+                            if is_on:
+                                byte1_value |= (1 << (ch - 1))
+                        
+                        self.current_output_data[1] = byte1_value
+                        
+                        print(f"\n   ✅ 已同步控制狀態 (byte[1]=0x{byte1_value:02X})")
+                        print(f"   現在可以安全地控制通道,不會影響其他已開啟的通道")
                     else:
                         print("⚠️  無法讀取設備狀態,使用空白狀態")
                         
@@ -648,11 +739,11 @@ class CaparocController:
             # 嘗試建立 Implicit Messaging (靜默模式,CAPAROC 不支援)
             self._establish_implicit_messaging(driver)
             
-            # 步驟 3: 互動控制
+            # 互動控制
             print("\n指令:")
             print("  on <ch>   - 開啟通道 (例: on 1)")
             print("  off <ch>  - 關閉通道")
-            print("  s         - 顯示狀態")
+            print("  s         - 顯示完整狀態 (全域 + 通道 + 總電流)")
             print("  q         - 退出")
             
             while True:

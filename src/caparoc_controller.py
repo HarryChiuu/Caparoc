@@ -531,30 +531,59 @@ class CaparocController:
                 if len(data) >= 8:
                     total_current = struct.unpack('<H', data[6:8])[0] / 100.0
             
-            # 根據手冊 7.2.5 節 (Table 7-4, 7-9):
-            # Module 1: CH1=Byte[8], CH2=Byte[11], CH3=Byte[14], CH4=Byte[17]
-            # 資料格式: 1 byte, 範圍 0-255 對應 0-25.5A
+            # 根據手冊 7.2.5 節 (Table 7-4):
+            # Module 1 每個通道佔 3 bytes:
+            #   Byte 0: Status (bit 0 = on/off)
+            #   Byte 1: Nominal current
+            #   Byte 2: Flowing current (0-255 = 0-25.5A)
+            # CH1: Byte[6-8], CH2: Byte[9-11], CH3: Byte[12-14], CH4: Byte[15-17]
             
             print("\n📊 通道狀態 (即時讀取):")
             print(f"   電壓: {voltage:.2f} V")
             print(f"   總電流: {total_current:.2f} A")
             print("   " + "─" * 35)
             
-            # 通道電流的 offset (Module 1)
-            channel_offsets = [8, 11, 14, 17]  # CH1, CH2, CH3, CH4
+            # 每個通道的起始 offset (Module 1)
+            channel_offsets = [6, 9, 12, 15]  # CH1-CH4 的 Byte 0 位置
             
             for ch in range(1, 5):
-                offset = channel_offsets[ch - 1]
+                base_offset = channel_offsets[ch - 1]
                 
-                if len(data) > offset:
-                    # 讀取 1 byte, 範圍 0-255 = 0-25.5A
-                    current_raw = data[offset]
+                if len(data) > base_offset + 2:
+                    # Byte 0: Status byte (根據手冊 Table 7-5)
+                    status_byte = data[base_offset]
+                    is_on = bool(status_byte & 0x01)           # bit 0: on/off
+                    warning_80 = bool(status_byte & 0x02)      # bit 1: 80% warning
+                    overload = bool(status_byte & 0x04)        # bit 2: overload
+                    short_circuit = bool(status_byte & 0x08)   # bit 3: short circuit
+                    
+                    # Byte 2: Flowing current (實際電流)
+                    current_raw = data[base_offset + 2]
                     current = current_raw / 10.0  # 0-255 -> 0-25.5A
                     
-                    state = "🟢 開" if current > 0.05 else "🔴 關"
-                    print(f"   CH{ch}: {state}  {current:.2f} A")
+                    # 根據狀態位元判斷開關,而非電流值
+                    state = "🟢 開" if is_on else "🔴 關"
+                    
+                    # 組合顯示訊息
+                    status_msg = f"   CH{ch}: {state}  {current:.2f} A"
+                    
+                    # 添加特殊狀態標註
+                    warnings = []
+                    if is_on and current < 0.05:
+                        warnings.append("無負載")
+                    if warning_80:
+                        warnings.append("⚠️ 80%警告")
+                    if overload:
+                        warnings.append("❌ 過載")
+                    if short_circuit:
+                        warnings.append("❌ 短路")
+                    
+                    if warnings:
+                        status_msg += f" ({', '.join(warnings)})"
+                    
+                    print(status_msg)
                 else:
-                    print(f"   CH{ch}: ⚠️ 資料不足 (offset {offset})")
+                    print(f"   CH{ch}: ⚠️ 資料不足 (offset {base_offset})")
             
         except Exception as e:
             print(f"❌ 讀取狀態失敗: {e}")

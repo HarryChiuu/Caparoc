@@ -16,7 +16,7 @@ import threading
 
 
 class CaparocController:
-    """CAPAROC 控制器 - 基於手冊規範"""
+    """CAPAROC  - 基於手冊規範"""
     
     def __init__(self, device_ip="192.168.2.111"):
         self.device_ip = device_ip
@@ -85,7 +85,7 @@ class CaparocController:
             )
             
             if response and not (hasattr(response, 'error') and response.error):
-                print("[Implicit] Forward Open 成功")
+                print("[DEBUG] Forward Open 成功")
                 self.implicit_mode_enabled = True
                 
                 # 啟動 I/O Worker
@@ -100,7 +100,7 @@ class CaparocController:
                 
                 return True
             else:
-                print(f"[Implicit] Forward Open 失敗: {response.error if hasattr(response, 'error') else '未知'}")
+                # 設備不支援 Implicit Messaging,使用標準 Explicit 模式
                 return False
                 
         except Exception as e:
@@ -394,66 +394,49 @@ class CaparocController:
         try:
             print("\n📊 讀取通道狀態...")
             
-            # 讀取 Assembly.101
-            response = self.driver.generic_message(
-                service=0x0E,  # Get Attribute Single
+            # 讀取 Input Assembly 0x65 (包含系統資訊和通道電流)
+            response_input = self.driver.generic_message(
+                service=0x0E,
                 class_code=0x04,
-                instance=0x101,
+                instance=self.input_instance,  # 0x65
                 attribute=3,
                 connected=False
             )
             
-            # DEBUG: 檢查回應
-            if not response:
-                print("❌ 無回應")
-                return
+            voltage = 0.0
+            total_current = 0.0
             
-            if hasattr(response, 'error') and response.error:
-                print(f"❌ 讀取錯誤: {response.error}")
-                return
+            if response_input and hasattr(response_input, 'value'):
+                data = response_input.value
+                if len(data) >= 6:
+                    voltage = struct.unpack('<H', data[4:6])[0] / 100.0
+                if len(data) >= 8:
+                    total_current = struct.unpack('<H', data[6:8])[0] / 100.0
             
-            if not hasattr(response, 'value'):
-                print(f"❌ 回應無 value 屬性")
-                print(f"   Response: {response}")
-                return
-            
-            data = response.value
-            print(f"[DEBUG] 讀取到 {len(data)} bytes")
-            
-            if len(data) < 20:
-                print(f"⚠️ 資料長度不足: {len(data)} bytes (預期至少 20 bytes)")
-                return
-            if len(data) < 20:
-                print(f"⚠️ 資料長度不足: {len(data)} bytes (預期至少 20 bytes)")
-                return
+            # 根據手冊 7.2.5 節 (Table 7-4, 7-9):
+            # Module 1: CH1=Byte[8], CH2=Byte[11], CH3=Byte[14], CH4=Byte[17]
+            # 資料格式: 1 byte, 範圍 0-255 對應 0-25.5A
             
             print("\n📊 通道狀態 (即時讀取):")
-            
-            # 讀取電壓
-            if len(data) >= 6:
-                voltage_raw = struct.unpack('<H', data[4:6])[0]
-                voltage = voltage_raw / 100.0
-                print(f"   電壓: {voltage:.2f} V")
-            
-            # 讀取總電流
-            if len(data) >= 8:
-                total_current_raw = struct.unpack('<H', data[6:8])[0]
-                total_current = total_current_raw / 100.0
-                print(f"   總電流: {total_current:.2f} A")
-            
+            print(f"   電壓: {voltage:.2f} V")
+            print(f"   總電流: {total_current:.2f} A")
             print("   " + "─" * 35)
             
-            # 讀取各通道
+            # 通道電流的 offset (Module 1)
+            channel_offsets = [8, 11, 14, 17]  # CH1, CH2, CH3, CH4
+            
             for ch in range(1, 5):
-                offset = 20 + (ch - 1) * 2
-                if len(data) >= offset + 2:
-                    current_raw = struct.unpack('<H', data[offset:offset+2])[0]
-                    current = current_raw / 100.0
+                offset = channel_offsets[ch - 1]
+                
+                if len(data) > offset:
+                    # 讀取 1 byte, 範圍 0-255 = 0-25.5A
+                    current_raw = data[offset]
+                    current = current_raw / 10.0  # 0-255 -> 0-25.5A
                     
                     state = "🟢 開" if current > 0.05 else "🔴 關"
                     print(f"   CH{ch}: {state}  {current:.2f} A")
                 else:
-                    print(f"   CH{ch}: ⚠️ 資料不足")
+                    print(f"   CH{ch}: ⚠️ 資料不足 (offset {offset})")
             
         except Exception as e:
             print(f"❌ 讀取狀態失敗: {e}")
@@ -469,20 +452,15 @@ class CaparocController:
             self.driver = driver
             
             # 步驟 1: 初始化所有通道
-            print("\n[步驟 1/3] 初始化通道額定電流...")
+            print("\n[步驟 1/2] 初始化通道額定電流...")
             if not self.initialize_all_channels(driver):
                 print("❌ 初始化失敗")
                 return
             
-            # 步驟 2: 建立 Implicit Messaging
-            print("\n[步驟 2/3] 建立 Implicit Messaging 連接...")
-            if not self._establish_implicit_messaging(driver):
-                print("❌ Implicit Messaging 連接失敗")
-                print("\n嘗試不使用 Implicit Messaging 模式...")
-            else:
-                print("✅ Implicit Messaging 連接成功")
+            # 嘗試建立 Implicit Messaging (靜默模式,CAPAROC 不支援)
+            self._establish_implicit_messaging(driver)
             
-            # 步驟 3: 互動控制
+            # 步驟 2: 互動控制
             print("\n指令:")
             print("  on <ch>   - 開啟通道 (例: on 1)")
             print("  off <ch>  - 關閉通道")

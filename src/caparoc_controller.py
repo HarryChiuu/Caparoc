@@ -57,75 +57,82 @@ class CaparocController:
             dict: {1: current, 2: current, 3: current, 4: current}
             或 None (完全跳過初始化)
         """
-        print("\n" + "="*60)
-        print("⚙️  通道額定電流設定")
-        print("="*60)
-        print("⚠️  注意: 初始化會覆蓋設備當前狀態")
-        print()
-        
-        # 先詢問是否需要初始化
-        skip_init = input("是否需要初始化通道? [y/N]: ").strip().lower()
-        if skip_init not in ['y', 'yes']:
-            print("✅ 跳過初始化,保持設備當前狀態")
-            return None
-        
-        print("\n請為每個通道設定額定電流 (0.5A - 25.5A)")
-        print("直接按 Enter 使用預設值 4A")
-        print("輸入 0 表示跳過該通道的初始化")
-        print()
-        
-        channel_currents = {}
-        default_current = 4.0
-        
-        for ch in range(1, 5):
-            while True:
-                try:
-                    user_input = input(f"  CH{ch} 額定電流 [預設: {default_current}A]: ").strip()
-                    
-                    # 直接按 Enter,使用預設值
-                    if user_input == "":
-                        current = default_current
-                        print(f"    → 使用預設值: {current}A")
-                        channel_currents[ch] = current
-                        break
-                    
-                    # 解析輸入
-                    current = float(user_input)
-                    
-                    # 驗證範圍
-                    if current == 0:
-                        print(f"    → 跳過 CH{ch} 初始化")
-                        channel_currents[ch] = 0
-                        break
-                    elif 0.5 <= current <= 25.5:
-                        print(f"    → 設定為: {current}A")
-                        channel_currents[ch] = current
-                        break
+        while True:  # 外層循環: 是否初始化
+            print("\n" + "="*60)
+            print("⚙️  通道額定電流設定")
+            print("="*60)
+            print("⚠️  注意: 初始化會覆蓋設備當前狀態")
+            print()
+            
+            # 先詢問是否需要初始化
+            skip_init = input("是否需要初始化通道? [y/N]: ").strip().lower()
+            if skip_init not in ['y', 'yes']:
+                print("✅ 跳過初始化,保持設備當前狀態")
+                return None
+            
+            # 進入設定循環
+            while True:  # 內層循環: 設定電流值
+                print("\n請為每個通道設定額定電流 (0.5A - 25.5A)")
+                print("直接按 Enter 使用預設值 4A")
+                print()
+                channel_currents = {}
+                default_current = 4.0
+                for ch in range(1, 5):
+                    while True:
+                        try:
+                            user_input = input(f"  CH{ch} 額定電流 [預設: {default_current}A]: ").strip()
+                            if user_input == "":
+                                current = default_current
+                                print(f"    → 使用預設值: {current}A")
+                                channel_currents[ch] = current
+                                break
+                            current = float(user_input)
+                            if 0.5 <= current <= 25.5:
+                                print(f"    → 設定為: {current}A")
+                                channel_currents[ch] = current
+                                break
+                            else:
+                                print(f"    ⚠️  錯誤: 請輸入 0.5-25.5 之間的數值")
+                        except ValueError:
+                            print(f"    ⚠️  錯誤: 請輸入有效的數字")
+                        except KeyboardInterrupt:
+                            print("\n\n⚠️  設定已取消")
+                            return None
+                
+                # 顯示設定摘要
+                print("\n" + "="*60)
+                print("📋 設定摘要:")
+                for ch, current in channel_currents.items():
+                    if current > 0:
+                        print(f"  CH{ch}: {current}A")
                     else:
-                        print(f"    ⚠️  錯誤: 請輸入 0.5-25.5 之間的數值 (或 0 跳過)")
+                        print(f"  CH{ch}: 跳過初始化")
+                print("="*60)
+                
+                # 確認設定
+                while True:
+                    confirm = input("\n確認設定? [Y/n/b(返回)]: ").strip().lower()
+                    
+                    if confirm in ['b', 'back', '返回']:
+                        print("⚠️  返回上一層 (重新選擇是否初始化)")
+                        break  # 跳出確認循環
                         
-                except ValueError:
-                    print(f"    ⚠️  錯誤: 請輸入有效的數字")
-                except KeyboardInterrupt:
-                    print("\n\n⚠️  設定已取消，使用全部預設值")
-                    return {1: 4, 2: 4, 3: 4, 4: 4}
-        
-        print("\n" + "="*60)
-        print("📋 設定摘要:")
-        for ch, current in channel_currents.items():
-            if current > 0:
-                print(f"  CH{ch}: {current}A")
-            else:
-                print(f"  CH{ch}: 跳過初始化")
-        print("="*60)
-        
-        # 確認
-        confirm = input("\n確認設定? [Y/n]: ").strip().lower()
-        if confirm in ['n', 'no']:
-            print("⚠️  設定已取消，使用預設值")
-            return {1: 4, 2: 4, 3: 4, 4: 4}
-        
-        return channel_currents
+                    elif confirm in ['n', 'no']:
+                        print("⚠️  重新設定通道電流值\n")
+                        break  # 跳出確認循環
+                        
+                    elif confirm in ['', 'y', 'yes']:
+                        # 確認完成,返回設定
+                        return channel_currents
+                        
+                    else:
+                        print("    請輸入 Y(確認), n(重設), 或 b(返回)")
+                
+                # 根據選擇決定行為
+                if confirm in ['b', 'back', '返回']:
+                    break  # 跳出內層循環,回到外層 (重新詢問是否初始化)
+                # 如果是 'n',繼續內層循環 (重新輸入電流值)
+
     
     def initialize_all_channels(self, driver, channel_currents=None):
         """

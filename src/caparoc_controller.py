@@ -55,11 +55,21 @@ class CaparocController:
         
         Returns:
             dict: {1: current, 2: current, 3: current, 4: current}
+            或 None (完全跳過初始化)
         """
         print("\n" + "="*60)
         print("⚙️  通道額定電流設定")
         print("="*60)
-        print("請為每個通道設定額定電流 (0.5A - 25.5A)")
+        print("⚠️  注意: 初始化會覆蓋設備當前狀態")
+        print()
+        
+        # 先詢問是否需要初始化
+        skip_init = input("是否需要初始化通道? [y/N]: ").strip().lower()
+        if skip_init not in ['y', 'yes']:
+            print("✅ 跳過初始化,保持設備當前狀態")
+            return None
+        
+        print("\n請為每個通道設定額定電流 (0.5A - 25.5A)")
         print("直接按 Enter 使用預設值 4A")
         print("輸入 0 表示跳過該通道的初始化")
         print()
@@ -559,11 +569,41 @@ class CaparocController:
             # 步驟 1: 互動式設定通道額定電流
             channel_currents = self.prompt_channel_currents()
             
-            # 步驟 2: 初始化所有通道
-            print("\n[步驟 1/2] 初始化通道額定電流...")
-            if not self.initialize_all_channels(driver, channel_currents):
-                print("❌ 初始化失敗")
-                return
+            # 步驟 2: 初始化所有通道 (如果需要)
+            if channel_currents is not None:
+                print("\n[步驟 1/2] 初始化通道額定電流...")
+                if not self.initialize_all_channels(driver, channel_currents):
+                    print("❌ 初始化失敗")
+                    return
+                # 初始化後標記為已完成
+                self.channels_initialized = True
+            else:
+                # 跳過初始化,先讀取設備當前狀態
+                print("\n[步驟 1/2] 跳過初始化,讀取設備當前狀態...")
+                try:
+                    # 讀取當前 Output Assembly 狀態
+                    response = driver.generic_message(
+                        service=0x0E,  # Get Attribute Single
+                        class_code=0x04,
+                        instance=self.output_instance,
+                        attribute=3,
+                        connected=False
+                    )
+                    
+                    if response and hasattr(response, 'value') and len(response.value) >= 18:
+                        # 載入設備當前狀態到 buffer
+                        self.current_output_data = bytearray(response.value)
+                        print(f"✅ 已載入設備狀態 (byte[1]=0x{self.current_output_data[1]:02X})")
+                        print(f"   這樣可以避免覆蓋設備當前運行的通道")
+                    else:
+                        print("⚠️  無法讀取設備狀態,使用空白狀態")
+                        
+                except Exception as e:
+                    print(f"⚠️  讀取設備狀態失敗: {e}")
+                    print("   將使用空白狀態 (可能會關閉運行中的通道)")
+                
+                # 標記為已完成 (允許控制)
+                self.channels_initialized = True
             
             # 嘗試建立 Implicit Messaging (靜默模式,CAPAROC 不支援)
             self._establish_implicit_messaging(driver)

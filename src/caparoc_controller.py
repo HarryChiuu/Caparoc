@@ -1,7 +1,19 @@
 #!/usr/bin/env python3
 """
-CAPAROC 簡化控制器 - 最終版本
+CAPAROC 控制器 (Production Version)
 基於手冊 7.1.2 節的正確控制方式
+
+功能狀態:
+✅ 已實作:
+  - 多通道獨立控制 (on/off)
+  - 即時狀態讀取 (電壓、電流)
+  - 通道額定電流初始化
+  - Implicit Messaging 自動檢測
+
+⚠️ 待實作:
+  1. 全域狀態監測 (持續背景監控異常狀態)
+  2. 初始化電流值設定 (可配置的額定電流)
+  3. GUI 規劃設計 (圖形化控制介面)
 
 策略：
 1. 程式啟動時一次性設定所有通道額定電流（順序執行，避免干擾）
@@ -445,8 +457,12 @@ class CaparocController:
     
     def run(self):
         """主程式"""
-        print("🚀 CAPAROC 控制器 v3.0")
+        print("🚀 CAPAROC 控制器 (Production)")
         print(f"設備: {self.device_ip}")
+        print("\n⚠️  待實作功能:")
+        print("   1. 全域狀態監測 (持續背景監控)")
+        print("   2. 初始化電流值設定 (可配置)")
+        print("   3. GUI 規劃設計 (圖形化介面)")
         
         with CIPDriver(self.device_ip) as driver:
             self.driver = driver

@@ -31,10 +31,19 @@ Caparoc_breaker_control/
 
 ## 主要功能 (Features)
 
-- ✅ 檢測每一 channel 的電壓值
-- ✅ 檢測每一 channel 的電流值
-- ✅ 控制每一 channel 的啟閉動作
-- ✅ 遠端控制介面
+### ✅ 已實作 (V3.1)
+- ✅ 多通道獨立控制 (on/off)
+- ✅ 即時狀態讀取 (電壓、電流)
+- ✅ 通道額定電流初始化
+- ✅ Implicit Messaging 自動檢測
+- ✅ 命令列互動介面
+
+### ⚠️ 待實作
+- [ ] 全域狀態監測 (持續背景監控)
+- [ ] 初始化電流值設定 (可配置)
+- [ ] GUI 規劃設計 (圖形化介面)
+
+詳見 [TODO.md](TODO.md) 完整開發計畫
 
 ## 安裝 (Installation)
 
@@ -85,13 +94,21 @@ pip install -r requirements.txt
 
 ## 使用方法 (Usage)
 
-### 運行主程式
+### 運行控制器
 ```bash
 # 確保已啟動 Conda 環境
 conda activate caparoc_breaker
 
-# 運行主程式
-python src/main.py
+# 運行主控制器
+python src/caparoc_controller.py
+```
+
+### 可用指令
+```
+on <ch>   - 開啟通道 (例: on 1)
+off <ch>  - 關閉通道 (例: off 2)
+s         - 顯示狀態
+q         - 退出
 ```
 
 ### 運行測試

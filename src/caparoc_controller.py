@@ -14,14 +14,24 @@ CAPAROC 控制器 (Production Version)
     * 全域系統狀態 (Byte 0: 欠壓/過壓/系統錯誤/80%警告/總電流關斷)
     * 系統電壓與總電流
     * 各通道詳細狀態 (開關/電流/警告)
+  - 程式啟動全域狀態檢查 (Phase 3-1 完成):
+    * 手冊 7.2.1: 系統電壓檢查 (9.0-30.5V)
+    * 手冊 7.2.2: 欠壓/過壓警告檢測
+    * 手冊 7.2.3: 系統錯誤檢測
+    * 手冊 7.2.4: 80%總電流警告與總電流關斷狀態
+    * 異常狀態時提示使用者是否繼續
 
 ⚠️ 待實作:
-  1. GUI 規劃設計 (圖形化控制介面)
+  1. 即時監控功能 (Phase 3-2)
+  2. 通道資訊擴展 (Phase 3-3)
+  3. IP配置支援 (Phase 3-4)
+  4. GUI 規劃設計 (Phase 3-5)
 
 策略：
-1. 程式啟動時一次性設定所有通道額定電流（順序執行，避免干擾）
-2. 之後只使用 Output Assembly 控制開關（符合手冊規範）
-3. 從 Input Assembly 讀取狀態
+1. 程式啟動時先檢查全域系統狀態（Phase 3 新增）
+2. 一次性設定所有通道額定電流（順序執行，避免干擾）
+3. 之後只使用 Output Assembly 控制開關（符合手冊規範）
+4. 從 Input Assembly 讀取狀態
 """
 
 from pycomm3 import CIPDriver
@@ -506,6 +516,144 @@ class CaparocController:
                 }
         return None
     
+    def check_global_system_status(self):
+        """
+        檢查全域系統狀態（基於手冊 7.2.1-7.2.4）
+        在程式啟動時執行，確保系統狀態安全
+        
+        涵蓋功能：
+        - 7.2.1: Input assembly, global status (Byte 0)
+        - 7.2.2: Input assembly, global module counter (Byte 1)
+        - 7.2.3: Input assembly, global total current (Byte 2-3)
+        - 7.2.4: Input assembly, global input voltage (Byte 4-5)
+        
+        Returns:
+            dict: {
+                'safe': bool,  # True=安全可以繼續, False=有嚴重問題
+                'warnings': list,  # 警告訊息列表
+                'errors': list,  # 錯誤訊息列表
+                'voltage': float,  # 系統電壓 (V)
+                'total_current': float,  # 總電流 (A)
+                'module_count': int,  # 安裝的斷路器模組數量 (0-16)
+                'global_status_byte': int  # 原始狀態位元組
+            }
+        """
+        if not self.driver:
+            return {
+                'safe': False,
+                'warnings': [],
+                'errors': ['Driver 未初始化'],
+                'voltage': 0.0,
+                'total_current': 0.0,
+                'module_count': 0,
+                'global_status_byte': 0
+            }
+        
+        try:
+            # 讀取 Input Assembly 0x65
+            response = self.driver.generic_message(
+                service=0x0E,  # Get Attribute Single
+                class_code=0x04,  # Assembly Object
+                instance=self.input_instance,  # 0x65
+                attribute=3,
+                connected=False
+            )
+            
+            if not response or not hasattr(response, 'value') or len(response.value) < 6:
+                return {
+                    'safe': False,
+                    'warnings': [],
+                    'errors': ['無法讀取設備狀態'],
+                    'voltage': 0.0,
+                    'total_current': 0.0,
+                    'module_count': 0,
+                    'global_status_byte': 0
+                }
+            
+            data = response.value
+            warnings = []
+            errors = []
+            
+            # ========== 解析 Byte 0: 全域系統狀態 (7.2.1) ==========
+            global_status_byte = data[0]
+            undervoltage = bool(global_status_byte & 0x01)      # bit 0
+            overvoltage = bool(global_status_byte & 0x02)       # bit 1
+            system_error = bool(global_status_byte & 0x04)      # bit 2
+            warning_80 = bool(global_status_byte & 0x08)        # bit 3
+            total_shutdown = bool(global_status_byte & 0x10)    # bit 4
+            config_processing = bool(global_status_byte & 0x80) # bit 7
+            
+            # ========== 解析 Byte 1: 全域模組計數器 (7.2.2) ==========
+            module_count = data[1] if len(data) > 1 else 0  # 0-16 個模組
+            
+            # ========== 解析 Byte 2-3: 總電流 (7.2.3) ==========
+            current_raw = struct.unpack('<H', data[2:4])[0]
+            total_current = current_raw / 10.0  # 0.0-50.0A
+            
+            # ========== 解析 Byte 4-5: 系統電壓 (7.2.4) ==========
+            voltage_raw = struct.unpack('<H', data[4:6])[0]
+            voltage = voltage_raw / 100.0  # 9.0-30.5V
+            
+            # ========== 模組數量檢查 ==========
+            if module_count < 1:
+                warnings.append("⚠️  未偵測到斷路器模組")
+            elif module_count > 4:
+                warnings.append(f"⚠️  偵測到 {module_count} 個模組（標準為 4 個）")
+            
+            # ========== 判斷錯誤狀態 ==========
+            if undervoltage:
+                errors.append(f"⚡ 系統欠壓 (電壓: {voltage:.2f}V < 9.0V)")
+            
+            if overvoltage:
+                errors.append(f"⚡ 系統過壓 (電壓: {voltage:.2f}V > 30.5V)")
+            
+            if system_error:
+                errors.append("🔥 系統錯誤 (硬體故障或通訊異常)")
+            
+            # ========== 判斷警告狀態 ==========
+            if warning_80:
+                warnings.append(f"⚠️  總電流已達80%警告閾值 (當前: {total_current:.2f}A)")
+            
+            if total_shutdown:
+                warnings.append("🔴 總電流關斷已觸發 (系統已停止供電)")
+            
+            if config_processing:
+                warnings.append("🔧 設備正在處理配置變更")
+            
+            # 電壓範圍檢查 (9.0V - 30.5V)
+            if voltage < 9.0:
+                errors.append(f"⚡ 電壓過低: {voltage:.2f}V (最低: 9.0V)")
+            elif voltage > 30.5:
+                errors.append(f"⚡ 電壓過高: {voltage:.2f}V (最高: 30.5V)")
+            elif voltage < 18.0:
+                warnings.append(f"⚠️  電壓偏低: {voltage:.2f}V (建議: 24V)")
+            elif voltage > 26.0:
+                warnings.append(f"⚠️  電壓偏高: {voltage:.2f}V (建議: 24V)")
+            
+            # 判斷是否安全
+            safe = len(errors) == 0
+            
+            return {
+                'safe': safe,
+                'warnings': warnings,
+                'errors': errors,
+                'voltage': voltage,
+                'total_current': total_current,
+                'module_count': module_count,
+                'global_status_byte': global_status_byte
+            }
+            
+        except Exception as e:
+            return {
+                'safe': False,
+                'warnings': [],
+                'errors': [f'狀態檢查異常: {str(e)}'],
+                'voltage': 0.0,
+                'total_current': 0.0,
+                'module_count': 0,
+                'global_status_byte': 0
+            }
+    
     def show_status(self):
         """顯示所有通道狀態 + 全域系統狀態（從設備讀取）"""
         if not self.driver:
@@ -530,7 +678,7 @@ class CaparocController:
             
             data = response_input.value
             
-            # ========== 1. 全域系統狀態 (Byte 0) ==========
+            # ========== 1. 全域系統狀態 (7.2.1 - Byte 0) ==========
             print("\n🌐 全域系統狀態:")
             if len(data) > 0:
                 global_status_byte = data[0]
@@ -560,10 +708,13 @@ class CaparocController:
                 else:
                     print("   ✅ 正常")
             
-            # ========== 2. 系統電壓與全域總電流 ==========
+            # ========== 2. 模組數量 (7.2.2 - Byte 1) ==========
+            module_count = data[1] if len(data) > 1 else 0
+            
+            # ========== 3. 系統電壓與全域總電流 (7.2.3, 7.2.4) ==========
             # 根據實測驗證:
-            # - Byte 4-5: Total voltage (例如 2400 = 24.00V)
-            # - Byte 2-3: Total current (例如 102 = 10.2A)
+            # - Byte 4-5: Total voltage (例如 2400 = 24.00V) - 7.2.4
+            # - Byte 2-3: Total current (例如 102 = 10.2A) - 7.2.3
             voltage = 0.0
             global_total_current = 0.0
             
@@ -580,8 +731,9 @@ class CaparocController:
             print(f"\n📊 系統參數:")
             print(f"   電壓: {voltage:.2f} V")
             print(f"   全域總電流: {global_total_current:.2f} A  (設備報告)")
+            print(f"   模組數量: {module_count} 個")
             
-            # ========== 3. 各通道狀態 ==========
+            # ========== 4. 各通道狀態 ==========
             # 根據手冊 7.2.5 節 (Table 7-4):
             # Module 1 每個通道佔 3 bytes:
             #   Byte 0: Status (bit 0 = on/off)
@@ -663,11 +815,61 @@ class CaparocController:
         print(f"設備: {self.device_ip}")
         print("\n✅ Phase 1 完成: 互動式電流值設定")
         print("✅ Phase 2 完成: 狀態顯示增強 (全域狀態 + 通道 + 總電流)")
+        print("✅ Phase 3 進行中: 程式啟動全域狀態檢查")
         print("⚠️  待實作功能:")
-        print("   1. GUI 規劃設計 (圖形化介面)")
+        print("   1. 即時監控功能")
+        print("   2. GUI 規劃設計 (圖形化介面)")
         
         with CIPDriver(self.device_ip) as driver:
             self.driver = driver
+            
+            # ========== Phase 3: 步驟 0 - 全域系統狀態檢查 ==========
+            print("\n" + "="*60)
+            print("🔍 Phase 3: 全域系統狀態檢查")
+            print("="*60)
+            
+            status = self.check_global_system_status()
+            
+            # 顯示檢查結果
+            print(f"\n📊 系統狀態:")
+            print(f"   電壓: {status['voltage']:.2f} V")
+            print(f"   總電流: {status['total_current']:.2f} A")
+            print(f"   模組數量: {status['module_count']} 個")
+            print(f"   狀態位元組: 0x{status['global_status_byte']:02X}")
+            
+            # 顯示錯誤訊息
+            if status['errors']:
+                print(f"\n❌ 發現 {len(status['errors'])} 個錯誤:")
+                for error in status['errors']:
+                    print(f"   {error}")
+            
+            # 顯示警告訊息
+            if status['warnings']:
+                print(f"\n⚠️  發現 {len(status['warnings'])} 個警告:")
+                for warning in status['warnings']:
+                    print(f"   {warning}")
+            
+            # 顯示正常狀態
+            if not status['errors'] and not status['warnings']:
+                print(f"\n✅ 系統狀態正常")
+            
+            # 如果有嚴重錯誤，詢問是否繼續
+            if not status['safe']:
+                print("\n" + "="*60)
+                print("⚠️  警告: 系統狀態異常")
+                print("="*60)
+                while True:
+                    user_choice = input("\n是否仍要繼續? [y/N]: ").strip().lower()
+                    if user_choice in ['y', 'yes']:
+                        print("⚠️  使用者選擇繼續 (風險自負)")
+                        break
+                    elif user_choice in ['', 'n', 'no']:
+                        print("✅ 安全退出")
+                        return
+                    else:
+                        print("   請輸入 y (繼續) 或 N (退出)")
+            
+            print("\n" + "="*60)
             
             # 步驟 1: 互動式設定通道額定電流
             channel_currents = self.prompt_channel_currents()

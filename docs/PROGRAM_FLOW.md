@@ -1,7 +1,7 @@
 # CAPAROC Controller 程式執行流程
 
-> 📅 最後更新: 2025-10-27  
-> 📌 版本: V3.3 (Phase 2 完成)
+> 📅 最後更新: 2025-10-28  
+> 📌 版本: V3.4 (Phase 3-1 完成)
 
 ## 🌳 程式執行流程樹狀圖
 
@@ -15,10 +15,63 @@ main()
            ├─► 🚀 顯示啟動訊息
            │    ├─ Phase 1 完成狀態
            │    ├─ Phase 2 完成狀態
+           │    ├─ Phase 3 進行中狀態
            │    └─ 待實作功能列表
            │
            ├─► 建立 CIPDriver 連接
            │    └─ with CIPDriver(192.168.2.111) as driver
+           │
+           ├─► 【Step 0】全域系統狀態檢查 (Phase 3-1 新增) 🆕
+           │    │
+           │    └─► check_global_system_status()
+           │         │
+           │         ├─► 讀取 Input Assembly 0x65
+           │         │    └─ service=0x0E, instance=0x65, attribute=3
+           │         │
+           │         ├─► 解析 Byte 0: 全域狀態位元組
+           │         │    ├─ bit 0: 欠壓 (Undervoltage)
+           │         │    ├─ bit 1: 過壓 (Overvoltage)
+           │         │    ├─ bit 2: 系統錯誤 (System Error)
+           │         │    ├─ bit 3: 80% 警告 (Warning 80%)
+           │         │    ├─ bit 4: 總電流關斷 (Total Shutdown)
+           │         │    └─ bit 7: 配置處理中 (Config Processing)
+           │         │
+           │         ├─► 解析 Byte 2-3: 總電流 (uint16 / 10.0)
+           │         │
+           │         ├─► 解析 Byte 4-5: 系統電壓 (uint16 / 100.0)
+           │         │
+           │         ├─► 分析錯誤狀態
+           │         │    ├─ 欠壓: 電壓 < 9.0V
+           │         │    ├─ 過壓: 電壓 > 30.5V
+           │         │    └─ 系統錯誤: 硬體故障或通訊異常
+           │         │
+           │         ├─► 分析警告狀態
+           │         │    ├─ 電壓偏低: 電壓 < 18.0V
+           │         │    ├─ 電壓偏高: 電壓 > 26.0V
+           │         │    ├─ 80% 警告: 總電流接近閾值
+           │         │    ├─ 總電流關斷: 系統已停止供電
+           │         │    └─ 配置處理中: 設備正在變更配置
+           │         │
+           │         ├─► 顯示檢查結果
+           │         │    ├─ 📊 系統狀態 (電壓/電流/狀態位元組)
+           │         │    ├─ ❌ 錯誤列表 (如果有)
+           │         │    ├─ ⚠️  警告列表 (如果有)
+           │         │    └─ ✅ 正常 (無錯誤無警告)
+           │         │
+           │         ├─► [分支] 如果 safe == False (有嚴重錯誤)
+           │         │    │
+           │         │    └─► 詢問使用者是否繼續?
+           │         │         ├─ y/yes ──► ⚠️  繼續執行 (風險自負)
+           │         │         └─ N/Enter ──► ✅ 安全退出
+           │         │
+           │         └─► 返回: {
+           │              'safe': bool,
+           │              'warnings': list,
+           │              'errors': list,
+           │              'voltage': float,
+           │              'total_current': float,
+           │              'global_status_byte': int
+           │              }
            │
            ├─► 【Step 1】互動式設定通道額定電流
            │    │
@@ -204,6 +257,7 @@ main()
 
 | 步驟 | 決策點 | 選項 A | 選項 B |
 |------|--------|--------|--------|
+| **Step 0** | 系統狀態安全? | 安全 → 繼續執行 | 不安全 → 詢問使用者 (y=繼續, N=退出) |
 | **Step 1** | 是否初始化? | Y → 設定電流值 | N → 跳過初始化 |
 | **Step 2** | channel_currents | != None → 初始化通道 | == None → 同步設備狀態 |
 | **Step 3** | Implicit Messaging | 成功 → 背景 I/O | 失敗 → Explicit 模式 |
@@ -225,16 +279,24 @@ main()
 
 ### Input Assembly 0x65 (狀態讀取)
 
-| Byte | 內容 | 格式 | 說明 |
-|------|------|------|------|
-| 0 | Global Status | bit mask | 全域系統狀態 (欠壓/過壓/錯誤等) |
-| 1 | Reserved | - | 保留 |
-| 2-3 | Total Current | uint16 / 10.0 | 全域總電流 (0-50.0A) |
-| 4-5 | Total Voltage | uint16 / 100.0 | 系統電壓 (9.0-30.5V) |
-| 6-8 | CH1 Status | 3 bytes | Status, Nominal, Flowing current |
-| 9-11 | CH2 Status | 3 bytes | 同上 |
-| 12-14 | CH3 Status | 3 bytes | 同上 |
-| 15-17 | CH4 Status | 3 bytes | 同上 |
+| Byte | 內容 | 格式 | 說明 | 手冊章節 |
+|------|------|------|------|----------|
+| 0 | Global Status | bit mask | 全域系統狀態 (欠壓/過壓/錯誤等) | 7.2.1 |
+| 1 | Module Counter | uint8 | 安裝的斷路器模組數量 (0-16) | 7.2.2 |
+| 2-3 | Total Current | uint16 / 10.0 | 全域總電流 (0-50.0A) | 7.2.3 |
+| 4-5 | Total Voltage | uint16 / 100.0 | 系統電壓 (9.0-30.5V) | 7.2.4 |
+| 6-8 | CH1 Status | 3 bytes | Status, Nominal, Flowing current | 7.2.5 |
+| 9-11 | CH2 Status | 3 bytes | 同上 | 7.2.5 |
+| 12-14 | CH3 Status | 3 bytes | 同上 | 7.2.5 |
+| 15-17 | CH4 Status | 3 bytes | 同上 | 7.2.5 |
+
+**Byte 0 狀態位元 (7.2.1)**:
+- bit 0: 欠壓 (Undervoltage)
+- bit 1: 過壓 (Overvoltage)
+- bit 2: 系統錯誤 (System error)
+- bit 3: 80% 標稱電流警告
+- bit 4: 總電流關斷 (Total current shutdown)
+- bit 7: Config assembly 處理狀態
 
 ### Output Assembly 0x64 (控制命令)
 
@@ -248,6 +310,7 @@ main()
 
 ## 🔄 版本歷史
 
+- **V3.4** (2025-10-28): Phase 3-1 完成 - 全域系統狀態檢查 (啟動時 Step 0)
 - **V3.3** (2025-10-27): Phase 2 完成 - 狀態顯示增強 + 設備復電狀態同步修復
 - **V3.2** (2025-10-27): Phase 1 完成 - 互動式額定電流設定
 - **V3.1** (2025-10-27): 多通道控制 + 正確狀態讀取

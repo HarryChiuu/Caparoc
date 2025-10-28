@@ -81,6 +81,7 @@ class CaparocController:
         self.monitor_thread = None
         self.monitor_running = False
         self.monitor_interval = 2.0  # 預設 2 秒更新
+        self.monitor_mode = 'silent'  # 'silent' (靜默) 或 'display' (顯示)
         self.monitor_lock = threading.Lock()
         self.last_status_snapshot = {}  # 儲存上次狀態,用於變化檢測
 
@@ -806,7 +807,8 @@ class CaparocController:
     
     def _monitor_worker(self):
         """即時監控背景執行緒"""
-        print(f"🔄 監控執行緒啟動 (更新頻率: {self.monitor_interval}s)")
+        mode_str = "靜默模式 (僅警報)" if self.monitor_mode == 'silent' else "顯示模式"
+        print(f"🔄 監控執行緒啟動 (更新頻率: {self.monitor_interval}s, {mode_str})")
         
         while self.monitor_running:
             try:
@@ -817,8 +819,16 @@ class CaparocController:
                     # 檢測變化
                     changes = self._detect_changes(current_status)
                     
-                    # 顯示監控狀態
-                    self._show_monitor_status(current_status, changes)
+                    # 根據模式決定是否顯示
+                    if self.monitor_mode == 'display':
+                        # 顯示模式: 每次都顯示完整狀態
+                        self._show_monitor_status(current_status, changes)
+                    elif self.monitor_mode == 'silent':
+                        # 靜默模式: 只在有變化時顯示警報
+                        if any([changes['channel_state_changes'], 
+                               changes['current_anomalies'], 
+                               changes['system_alerts']]):
+                            self._show_monitor_alerts(changes)
                     
                     # 更新快照
                     with self.monitor_lock:
@@ -1046,8 +1056,31 @@ class CaparocController:
         
         print(f"{'='*70}")
     
-    def start_monitor(self, interval=None):
-        """啟動即時監控"""
+    def _show_monitor_alerts(self, changes):
+        """顯示監控警報 (靜默模式專用)"""
+        timestamp_str = time.strftime("%H:%M:%S", time.localtime())
+        
+        print(f"\n{'='*70}")
+        print(f"🔔 監控警報 [{timestamp_str}]")
+        print(f"{'='*70}")
+        
+        for change in changes['channel_state_changes']:
+            print(f"  ▸ {change}")
+        for anomaly in changes['current_anomalies']:
+            print(f"  ▸ {anomaly}")
+        for alert in changes['system_alerts']:
+            print(f"  ▸ {alert}")
+        
+        print(f"{'='*70}")
+        print("> ", end='', flush=True)  # 恢復輸入提示
+    
+    def start_monitor(self, interval=None, mode=None):
+        """啟動即時監控
+        
+        Args:
+            interval: 更新頻率(秒), 預設2.0
+            mode: 'silent' (靜默,僅警報) 或 'display' (持續顯示), 預設 'silent'
+        """
         if self.monitor_running:
             print("⚠️  監控已在運行中")
             return False
@@ -1058,6 +1091,12 @@ class CaparocController:
                 return False
             self.monitor_interval = interval
         
+        if mode is not None:
+            if mode not in ['silent', 'display']:
+                print("⚠️  模式必須是 'silent' 或 'display'")
+                return False
+            self.monitor_mode = mode
+        
         # 初始化快照
         with self.monitor_lock:
             self.last_status_snapshot = {}
@@ -1067,7 +1106,12 @@ class CaparocController:
         self.monitor_thread = threading.Thread(target=self._monitor_worker, daemon=True)
         self.monitor_thread.start()
         
-        print(f"✅ 即時監控已啟動 (更新頻率: {self.monitor_interval}s)")
+        mode_desc = "靜默模式 (僅警報)" if self.monitor_mode == 'silent' else "顯示模式 (持續更新)"
+        print(f"✅ 即時監控已啟動")
+        print(f"   更新頻率: {self.monitor_interval}s")
+        print(f"   模式: {mode_desc}")
+        if self.monitor_mode == 'silent':
+            print(f"   💡 提示: 監控在背景運行,有變化時會自動通知")
         return True
     
     def stop_monitor(self):
@@ -1088,12 +1132,17 @@ class CaparocController:
     
     def show_monitor_info(self):
         """顯示監控狀態資訊"""
+        mode_desc = "靜默模式 (僅警報)" if self.monitor_mode == 'silent' else "顯示模式 (持續更新)"
+        
         if self.monitor_running:
             print(f"✅ 監控運行中")
             print(f"   更新頻率: {self.monitor_interval}s")
+            print(f"   模式: {mode_desc}")
         else:
             print(f"⚠️  監控未啟動")
-            print(f"   設定頻率: {self.monitor_interval}s (啟動後生效)")
+            print(f"   設定頻率: {self.monitor_interval}s")
+            print(f"   設定模式: {mode_desc}")
+            print(f"   (參數將在下次啟動時生效)")
     
     # ==================== 原有功能 ====================
     
@@ -1402,13 +1451,17 @@ class CaparocController:
             
             # 互動控制
             print("\n指令:")
-            print("  on <ch>        - 開啟通道 (例: on 1)")
-            print("  off <ch>       - 關閉通道")
-            print("  s              - 顯示完整狀態 (全域 + 通道 + 總電流)")
-            print("  monitor start [interval]  - 啟動即時監控 (預設2s,可選: 1, 2, 5, 10)")
-            print("  monitor stop   - 停止即時監控")
-            print("  monitor status - 顯示監控狀態")
-            print("  q              - 退出")
+            print("  on <ch>                      - 開啟通道 (例: on 1)")
+            print("  off <ch>                     - 關閉通道")
+            print("  s                            - 顯示完整狀態")
+            print("  monitor start [interval] [mode]  - 啟動監控")
+            print("                                     interval: 更新頻率(秒), 預設2")
+            print("                                     mode: silent(靜默) 或 display(顯示), 預設silent")
+            print("                                     範例: monitor start 5 silent")
+            print("  monitor stop                 - 停止監控")
+            print("  monitor status               - 顯示監控狀態")
+            print("  q                            - 退出")
+            print("\n💡 提示: 建議使用靜默模式(silent),監控在背景運行不干擾輸入")
             
             while True:
                 try:
@@ -1436,8 +1489,10 @@ class CaparocController:
                         subcmd = parts[1]
                         
                         if subcmd == 'start':
-                            # 解析間隔參數
+                            # 解析間隔和模式參數
                             interval = None
+                            mode = None
+                            
                             if len(parts) >= 3:
                                 try:
                                     interval = float(parts[2])
@@ -1445,7 +1500,13 @@ class CaparocController:
                                     print(f"⚠️  無效的更新頻率: {parts[2]}")
                                     continue
                             
-                            self.start_monitor(interval)
+                            if len(parts) >= 4:
+                                mode = parts[3]
+                                if mode not in ['silent', 'display']:
+                                    print(f"⚠️  模式必須是 'silent' 或 'display'")
+                                    continue
+                            
+                            self.start_monitor(interval, mode)
                         
                         elif subcmd == 'stop':
                             self.stop_monitor()

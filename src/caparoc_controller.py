@@ -20,18 +20,29 @@ CAPAROC 控制器 (Production Version)
     * 手冊 7.2.3: 系統錯誤檢測
     * 手冊 7.2.4: 80%總電流警告與總電流關斷狀態
     * 異常狀態時提示使用者是否繼續
+  - 動態多模組支援 (V3.5):
+    * 自動檢測模組數量 (1-16)
+    * 動態通道管理 (最多64通道)
+    * 多模組顯示格式
+  - 即時監控功能 (Phase 3-2 完成):
+    * 背景執行緒定期讀取狀態
+    * 可設定更新頻率 (0.5s-60s)
+    * 即時通道電流顯示
+    * 狀態變化檢測與警報
+    * 電流異常檢測 (>30%變化)
+    * 新指令: monitor start/stop/status
 
 ⚠️ 待實作:
-  1. 即時監控功能 (Phase 3-2)
-  2. 通道資訊擴展 (Phase 3-3)
-  3. IP配置支援 (Phase 3-4)
-  4. GUI 規劃設計 (Phase 3-5)
+  1. 通道資訊擴展 (Phase 3-3)
+  2. IP配置支援 (Phase 3-4)
+  3. GUI 規劃設計 (Phase 3-5)
 
-策略：
-1. 程式啟動時先檢查全域系統狀態（Phase 3 新增）
-2. 一次性設定所有通道額定電流（順序執行，避免干擾）
-3. 之後只使用 Output Assembly 控制開關（符合手冊規範）
+策略:
+1. 程式啟動時先檢查全域系統狀態(Phase 3 新增)
+2. 一次性設定所有通道額定電流(順序執行,避免干擾)
+3. 之後只使用 Output Assembly 控制開關(符合手冊規範)
 4. 從 Input Assembly 讀取狀態
+5. 即時監控背景執行緒定期更新(Phase 3-2 新增)
 """
 
 from pycomm3 import CIPDriver
@@ -49,13 +60,13 @@ class CaparocController:
         self.input_instance = 0x65
         
         # 模組與通道配置（動態檢測）
-        self.module_count = 0  # 初始化時檢測，支援 1-16 個模組
+        self.module_count = 0  # 初始化時檢測,支援 1-16 個模組
         self.channels_per_module = 4  # 每個模組 4 通道
         
         # I/O 狀態
         self.implicit_mode_enabled = False
         self.cip_keep_alive = False
-        # ⚠️ 關鍵修復：Output Assembly 0x64 長度是 18 bytes（不是 20）
+        # ⚠️ 關鍵修復:Output Assembly 0x64 長度是 18 bytes(不是 20)
         self.current_output_data = bytearray(18)  # Output Assembly = 18 bytes
         self.current_input_data = bytearray(244)  # Input Assembly = 244 bytes
         self.io_data_lock = threading.Lock()
@@ -65,6 +76,14 @@ class CaparocController:
         
         # 初始化標記
         self.channels_initialized = False
+        
+        # 即時監控 (Phase 3-2)
+        self.monitor_thread = None
+        self.monitor_running = False
+        self.monitor_interval = 2.0  # 預設 2 秒更新
+        self.monitor_lock = threading.Lock()
+        self.last_status_snapshot = {}  # 儲存上次狀態,用於變化檢測
+
     
     def get_channel_offset(self, module, channel):
         """
@@ -783,6 +802,301 @@ class CaparocController:
                 'global_status_byte': 0
             }
     
+    # ==================== 即時監控功能 (Phase 3-2) ====================
+    
+    def _monitor_worker(self):
+        """即時監控背景執行緒"""
+        print(f"🔄 監控執行緒啟動 (更新頻率: {self.monitor_interval}s)")
+        
+        while self.monitor_running:
+            try:
+                # 讀取當前狀態
+                current_status = self._read_current_status()
+                
+                if current_status:
+                    # 檢測變化
+                    changes = self._detect_changes(current_status)
+                    
+                    # 顯示監控狀態
+                    self._show_monitor_status(current_status, changes)
+                    
+                    # 更新快照
+                    with self.monitor_lock:
+                        self.last_status_snapshot = current_status
+                
+                # 等待下次更新
+                time.sleep(self.monitor_interval)
+                
+            except Exception as e:
+                print(f"⚠️  監控執行緒錯誤: {e}")
+                time.sleep(self.monitor_interval)
+        
+        print("🛑 監控執行緒已停止")
+    
+    def _read_current_status(self):
+        """讀取當前設備狀態 (用於監控)"""
+        if not self.driver:
+            return None
+        
+        try:
+            response = self.driver.generic_message(
+                service=0x0E,
+                class_code=0x04,
+                instance=self.input_instance,
+                attribute=3,
+                connected=False
+            )
+            
+            if not response or not hasattr(response, 'value'):
+                return None
+            
+            data = response.value
+            
+            # 解析全域狀態
+            global_status_byte = data[0] if len(data) > 0 else 0
+            module_count = data[1] if len(data) > 1 else 0
+            
+            total_current_raw = struct.unpack('<H', data[2:4])[0] if len(data) >= 4 else 0
+            total_current = total_current_raw / 10.0
+            
+            voltage_raw = struct.unpack('<H', data[4:6])[0] if len(data) >= 6 else 0
+            voltage = voltage_raw / 100.0
+            
+            # 解析通道狀態
+            channels = {}
+            for module in range(1, module_count + 1):
+                for ch in range(1, self.channels_per_module + 1):
+                    global_ch = (module - 1) * self.channels_per_module + ch
+                    offset = self.get_channel_offset(module, ch)
+                    
+                    if len(data) > offset + 2:
+                        status_byte = data[offset]
+                        nominal_byte = data[offset + 1]
+                        flowing_byte = data[offset + 2]
+                        
+                        is_on = bool(status_byte & 0x01)
+                        warning_80 = bool(status_byte & 0x02)
+                        overload = bool(status_byte & 0x04)
+                        short_circuit = bool(status_byte & 0x08)
+                        hardware_fault = bool(status_byte & 0x10)
+                        total_shutdown_ch = bool(status_byte & 0x20)
+                        
+                        nominal_current = nominal_byte / 10.0
+                        flowing_current = flowing_byte / 10.0
+                        
+                        channels[global_ch] = {
+                            'module': module,
+                            'channel': ch,
+                            'is_on': is_on,
+                            'flowing_current': flowing_current,
+                            'nominal_current': nominal_current,
+                            'warning_80': warning_80,
+                            'overload': overload,
+                            'short_circuit': short_circuit,
+                            'hardware_fault': hardware_fault,
+                            'total_shutdown': total_shutdown_ch
+                        }
+            
+            return {
+                'timestamp': time.time(),
+                'global_status_byte': global_status_byte,
+                'module_count': module_count,
+                'total_current': total_current,
+                'voltage': voltage,
+                'channels': channels
+            }
+            
+        except Exception as e:
+            print(f"⚠️  讀取狀態失敗: {e}")
+            return None
+    
+    def _detect_changes(self, current_status):
+        """檢測狀態變化"""
+        changes = {
+            'channel_state_changes': [],
+            'current_anomalies': [],
+            'system_alerts': []
+        }
+        
+        with self.monitor_lock:
+            last = self.last_status_snapshot
+            
+            if not last:
+                return changes
+            
+            # 檢測通道開關狀態變化
+            for ch_num, ch_data in current_status['channels'].items():
+                if ch_num in last['channels']:
+                    last_ch = last['channels'][ch_num]
+                    
+                    # 開關狀態變化
+                    if ch_data['is_on'] != last_ch['is_on']:
+                        state_str = "開啟" if ch_data['is_on'] else "關閉"
+                        if self.module_count > 1:
+                            ch_label = f"M{ch_data['module']}.CH{ch_data['channel']} (#{ch_num})"
+                        else:
+                            ch_label = f"CH{ch_num}"
+                        changes['channel_state_changes'].append(f"{ch_label} 狀態變更: {state_str}")
+                    
+                    # 電流異常變化 (變化超過 30%)
+                    if ch_data['is_on'] and last_ch['is_on']:
+                        current_diff = abs(ch_data['flowing_current'] - last_ch['flowing_current'])
+                        if last_ch['flowing_current'] > 0:
+                            change_percent = (current_diff / last_ch['flowing_current']) * 100
+                            if change_percent > 30:
+                                if self.module_count > 1:
+                                    ch_label = f"M{ch_data['module']}.CH{ch_data['channel']} (#{ch_num})"
+                                else:
+                                    ch_label = f"CH{ch_num}"
+                                changes['current_anomalies'].append(
+                                    f"{ch_label} 電流變化 {change_percent:.1f}%: "
+                                    f"{last_ch['flowing_current']:.1f}A → {ch_data['flowing_current']:.1f}A"
+                                )
+                    
+                    # 新出現的警告/錯誤
+                    if ch_data['warning_80'] and not last_ch['warning_80']:
+                        if self.module_count > 1:
+                            ch_label = f"M{ch_data['module']}.CH{ch_data['channel']} (#{ch_num})"
+                        else:
+                            ch_label = f"CH{ch_num}"
+                        changes['system_alerts'].append(f"{ch_label} ⚠️ 80% 警告")
+                    
+                    if ch_data['overload'] and not last_ch['overload']:
+                        if self.module_count > 1:
+                            ch_label = f"M{ch_data['module']}.CH{ch_data['channel']} (#{ch_num})"
+                        else:
+                            ch_label = f"CH{ch_num}"
+                        changes['system_alerts'].append(f"{ch_label} 🔴 過載")
+                    
+                    if ch_data['short_circuit'] and not last_ch['short_circuit']:
+                        if self.module_count > 1:
+                            ch_label = f"M{ch_data['module']}.CH{ch_data['channel']} (#{ch_num})"
+                        else:
+                            ch_label = f"CH{ch_num}"
+                        changes['system_alerts'].append(f"{ch_label} 🔴 短路")
+            
+            # 系統電壓變化
+            voltage_diff = abs(current_status['voltage'] - last['voltage'])
+            if voltage_diff > 1.0:
+                changes['system_alerts'].append(
+                    f"電壓變化: {last['voltage']:.1f}V → {current_status['voltage']:.1f}V"
+                )
+        
+        return changes
+    
+    def _show_monitor_status(self, status, changes):
+        """顯示監控狀態 (簡潔格式)"""
+        # 清屏效果 (可選)
+        # print("\n" * 2)
+        
+        timestamp_str = time.strftime("%H:%M:%S", time.localtime(status['timestamp']))
+        
+        print(f"\n{'='*70}")
+        print(f"🔄 即時監控 [{timestamp_str}] - 更新頻率: {self.monitor_interval}s")
+        print(f"{'='*70}")
+        
+        # 系統摘要
+        print(f"📊 系統: {status['voltage']:.1f}V | {status['total_current']:.1f}A | {status['module_count']} 模組")
+        
+        # 顯示所有通道
+        print(f"\n{'通道':<15} {'狀態':<6} {'電流':<12} {'警告/錯誤'}")
+        print("-" * 70)
+        
+        for ch_num in sorted(status['channels'].keys()):
+            ch = status['channels'][ch_num]
+            
+            # 通道標籤
+            if self.module_count > 1:
+                ch_label = f"M{ch['module']}.CH{ch['channel']} (#{ch_num})"
+            else:
+                ch_label = f"CH{ch_num}"
+            
+            # 狀態
+            state_icon = "🟢 開" if ch['is_on'] else "🔴 關"
+            
+            # 電流
+            current_str = f"{ch['flowing_current']:.1f}A / {ch['nominal_current']:.1f}A"
+            
+            # 警告/錯誤
+            alerts = []
+            if ch['warning_80']:
+                alerts.append("⚠️80%")
+            if ch['overload']:
+                alerts.append("🔴過載")
+            if ch['short_circuit']:
+                alerts.append("🔴短路")
+            if ch['hardware_fault']:
+                alerts.append("🔴硬體")
+            if ch['total_shutdown']:
+                alerts.append("🔴總斷")
+            
+            alert_str = " ".join(alerts) if alerts else "✅"
+            
+            print(f"{ch_label:<15} {state_icon:<6} {current_str:<12} {alert_str}")
+        
+        # 顯示變化
+        if any([changes['channel_state_changes'], changes['current_anomalies'], changes['system_alerts']]):
+            print(f"\n{'🔔 檢測到變化:'}")
+            for change in changes['channel_state_changes']:
+                print(f"  ▸ {change}")
+            for anomaly in changes['current_anomalies']:
+                print(f"  ▸ {anomaly}")
+            for alert in changes['system_alerts']:
+                print(f"  ▸ {alert}")
+        
+        print(f"{'='*70}")
+    
+    def start_monitor(self, interval=None):
+        """啟動即時監控"""
+        if self.monitor_running:
+            print("⚠️  監控已在運行中")
+            return False
+        
+        if interval is not None:
+            if interval < 0.5:
+                print("⚠️  更新頻率不能小於 0.5 秒")
+                return False
+            self.monitor_interval = interval
+        
+        # 初始化快照
+        with self.monitor_lock:
+            self.last_status_snapshot = {}
+        
+        # 啟動監控執行緒
+        self.monitor_running = True
+        self.monitor_thread = threading.Thread(target=self._monitor_worker, daemon=True)
+        self.monitor_thread.start()
+        
+        print(f"✅ 即時監控已啟動 (更新頻率: {self.monitor_interval}s)")
+        return True
+    
+    def stop_monitor(self):
+        """停止即時監控"""
+        if not self.monitor_running:
+            print("⚠️  監控未運行")
+            return False
+        
+        print("🛑 正在停止監控...")
+        self.monitor_running = False
+        
+        # 等待執行緒結束
+        if self.monitor_thread:
+            self.monitor_thread.join(timeout=5)
+        
+        print("✅ 監控已停止")
+        return True
+    
+    def show_monitor_info(self):
+        """顯示監控狀態資訊"""
+        if self.monitor_running:
+            print(f"✅ 監控運行中")
+            print(f"   更新頻率: {self.monitor_interval}s")
+        else:
+            print(f"⚠️  監控未啟動")
+            print(f"   設定頻率: {self.monitor_interval}s (啟動後生效)")
+    
+    # ==================== 原有功能 ====================
+    
     def show_status(self):
         """顯示所有通道狀態 + 全域系統狀態（從設備讀取）"""
         if not self.driver:
@@ -955,10 +1269,12 @@ class CaparocController:
         print(f"設備: {self.device_ip}")
         print("\n✅ Phase 1 完成: 互動式電流值設定")
         print("✅ Phase 2 完成: 狀態顯示增強 (全域狀態 + 通道 + 總電流)")
-        print("✅ Phase 3 進行中: 程式啟動全域狀態檢查")
+        print("✅ Phase 3-1 完成: 程式啟動全域狀態檢查")
+        print("✅ Phase 3-2 完成: 即時監控功能")
         print("⚠️  待實作功能:")
-        print("   1. 即時監控功能")
-        print("   2. GUI 規劃設計 (圖形化介面)")
+        print("   1. 通道資訊擴展 (Phase 3-3)")
+        print("   2. IP 配置支援 (Phase 3-4)")
+        print("   3. GUI 規劃設計 (Phase 3-5)")
         
         with CIPDriver(self.device_ip) as driver:
             self.driver = driver
@@ -1086,16 +1402,22 @@ class CaparocController:
             
             # 互動控制
             print("\n指令:")
-            print("  on <ch>   - 開啟通道 (例: on 1)")
-            print("  off <ch>  - 關閉通道")
-            print("  s         - 顯示完整狀態 (全域 + 通道 + 總電流)")
-            print("  q         - 退出")
+            print("  on <ch>        - 開啟通道 (例: on 1)")
+            print("  off <ch>       - 關閉通道")
+            print("  s              - 顯示完整狀態 (全域 + 通道 + 總電流)")
+            print("  monitor start [interval]  - 啟動即時監控 (預設2s,可選: 1, 2, 5, 10)")
+            print("  monitor stop   - 停止即時監控")
+            print("  monitor status - 顯示監控狀態")
+            print("  q              - 退出")
             
             while True:
                 try:
                     cmd = input("\n> ").strip().lower()
                     
                     if cmd == 'q':
+                        # 停止監控 (如果運行中)
+                        if self.monitor_running:
+                            self.stop_monitor()
                         break
                     elif cmd == 's':
                         self.show_status()
@@ -1105,8 +1427,39 @@ class CaparocController:
                     elif cmd.startswith('off '):
                         ch = int(cmd.split()[1])
                         self.set_channel(ch, False)
+                    elif cmd.startswith('monitor'):
+                        parts = cmd.split()
+                        if len(parts) < 2:
+                            print("⚠️  請指定 monitor 子命令: start, stop, status")
+                            continue
+                        
+                        subcmd = parts[1]
+                        
+                        if subcmd == 'start':
+                            # 解析間隔參數
+                            interval = None
+                            if len(parts) >= 3:
+                                try:
+                                    interval = float(parts[2])
+                                except ValueError:
+                                    print(f"⚠️  無效的更新頻率: {parts[2]}")
+                                    continue
+                            
+                            self.start_monitor(interval)
+                        
+                        elif subcmd == 'stop':
+                            self.stop_monitor()
+                        
+                        elif subcmd == 'status':
+                            self.show_monitor_info()
+                        
+                        else:
+                            print(f"⚠️  未知的 monitor 子命令: {subcmd}")
                     
                 except KeyboardInterrupt:
+                    print("\n⚠️  收到中斷訊號")
+                    if self.monitor_running:
+                        self.stop_monitor()
                     break
                 except Exception as e:
                     print(f"❌ 錯誤: {e}")

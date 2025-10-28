@@ -733,12 +733,18 @@ class CaparocController:
             print(f"   全域總電流: {global_total_current:.2f} A  (設備報告)")
             print(f"   模組數量: {module_count} 個")
             
-            # ========== 4. 各通道狀態 ==========
-            # 根據手冊 7.2.5 節 (Table 7-4):
-            # Module 1 每個通道佔 3 bytes:
-            #   Byte 0: Status (bit 0 = on/off)
-            #   Byte 1: Nominal current
-            #   Byte 2: Flowing current (0-255 = 0-25.5A)
+            # ========== 4. 各通道狀態 (7.2.5) ==========
+            # 根據手冊 7.2.5 節 (Table 7-9):
+            # 每個模組有 12 bytes 數據塊，4 通道模組分為 4 組，每組 3 bytes:
+            #   Byte 0: Status byte (6 個狀態位元)
+            #     - bit 0: Channel status (開/關)
+            #     - bit 1: 80% warning
+            #     - bit 2: Overload tripping (過載跳脫)
+            #     - bit 3: Short-circuit tripping (短路跳脫)
+            #     - bit 4: Hardware fault (硬體故障)
+            #     - bit 5: Total current shutdown (總電流關斷)
+            #   Byte 1: Nominal current (標稱電流, 1A - 10A)
+            #   Byte 2: Flowing current (流動電流, 0-255 = 0A - 25.5A)
             # CH1: Byte[6-8], CH2: Byte[9-11], CH3: Byte[12-14], CH4: Byte[15-17]
             
             print("\n📊 通道狀態:")
@@ -747,32 +753,31 @@ class CaparocController:
             # 每個通道的起始 offset (經實測驗證)
             channel_offsets = [6, 9, 12, 15]  # CH1-CH4 的 Status byte 位置
             
-            # 計算通道電流總和 (用於驗證)
-            channels_sum = 0.0
-            
             for ch in range(1, 5):
                 base_offset = channel_offsets[ch - 1]
                 
                 if len(data) > base_offset + 2:
-                    # Byte 0: Status byte (根據手冊 Table 7-5)
+                    # Byte 0: Status byte (根據手冊 7.2.5 Table 7-9)
                     status_byte = data[base_offset]
-                    is_on = bool(status_byte & 0x01)           # bit 0: on/off
+                    is_on = bool(status_byte & 0x01)           # bit 0: Channel status (on/off)
                     warning_80_ch = bool(status_byte & 0x02)   # bit 1: 80% warning
-                    overload = bool(status_byte & 0x04)        # bit 2: overload
-                    short_circuit = bool(status_byte & 0x08)   # bit 3: short circuit
+                    overload = bool(status_byte & 0x04)        # bit 2: Overload tripping
+                    short_circuit = bool(status_byte & 0x08)   # bit 3: Short-circuit tripping
+                    hardware_fault = bool(status_byte & 0x10)  # bit 4: Hardware fault
+                    total_shutdown_ch = bool(status_byte & 0x20) # bit 5: Total current shutdown
                     
-                    # Byte 2: Flowing current (實際電流)
+                    # Byte 1: Nominal current (標稱電流) 1-10A
+                    nominal_current = data[base_offset + 1]
+                    
+                    # Byte 2: Flowing current (實際電流) 0-255 = 0-25.5A
                     current_raw = data[base_offset + 2]
-                    current = current_raw / 10.0  # 0-255 -> 0-25.5A
-                    
-                    # 累加通道電流總和 (用於驗證)
-                    channels_sum += current
+                    current = current_raw / 10.0
                     
                     # 根據狀態位元判斷開關,而非電流值
                     state = "🟢 開" if is_on else "🔴 關"
                     
-                    # 組合顯示訊息
-                    status_msg = f"   CH{ch}: {state}  {current:.2f} A"
+                    # 組合顯示訊息 - 加入標稱電流
+                    status_msg = f"   CH{ch}: {state}  {current:.2f}A / {nominal_current}A"
                     
                     # 添加特殊狀態標註
                     warnings = []
@@ -784,6 +789,11 @@ class CaparocController:
                         warnings.append("❌ 過載")
                     if short_circuit:
                         warnings.append("❌ 短路")
+                    if hardware_fault:
+                        warnings.append("🔥 硬體故障")
+                    if total_shutdown_ch:
+                        warnings.append("🔴 總電流關斷")
+                        warnings.append("❌ 短路")
                     
                     if warnings:
                         status_msg += f" ({', '.join(warnings)})"
@@ -792,17 +802,7 @@ class CaparocController:
                 else:
                     print(f"   CH{ch}: ⚠️ 資料不足 (offset {base_offset})")
             
-            # 顯示總計與驗證
             print("   " + "─" * 40)
-            print(f"   通道總和: {channels_sum:.2f} A  (CH1+CH2+CH3+CH4)")
-            
-            # 比對全域總電流與通道總和
-            diff = abs(global_total_current - channels_sum)
-            if diff < 0.1:
-                print(f"   ✅ 驗證通過 (全域={global_total_current:.2f}A, 總和={channels_sum:.2f}A)")
-            else:
-                print(f"   ⚠️  差異: {diff:.2f}A (全域={global_total_current:.2f}A, 總和={channels_sum:.2f}A)")
-                print(f"       (全域電流可能包含系統電路消耗)")
             
         except Exception as e:
             print(f"❌ 讀取狀態失敗: {e}")

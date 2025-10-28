@@ -285,18 +285,34 @@ main()
 | 1 | Module Counter | uint8 | 安裝的斷路器模組數量 (0-16) | 7.2.2 |
 | 2-3 | Total Current | uint16 / 10.0 | 全域總電流 (0-50.0A) | 7.2.3 |
 | 4-5 | Total Voltage | uint16 / 100.0 | 系統電壓 (9.0-30.5V) | 7.2.4 |
-| 6-8 | CH1 Status | 3 bytes | Status, Nominal, Flowing current | 7.2.5 |
-| 9-11 | CH2 Status | 3 bytes | 同上 | 7.2.5 |
-| 12-14 | CH3 Status | 3 bytes | 同上 | 7.2.5 |
-| 15-17 | CH4 Status | 3 bytes | 同上 | 7.2.5 |
+| 6-8 | CH1 Data Block | 3 bytes | 見下方「通道數據塊結構」 | 7.2.5 |
+| 9-11 | CH2 Data Block | 3 bytes | 同上 | 7.2.5 |
+| 12-14 | CH3 Data Block | 3 bytes | 同上 | 7.2.5 |
+| 15-17 | CH4 Data Block | 3 bytes | 同上 | 7.2.5 |
 
-**Byte 0 狀態位元 (7.2.1)**:
+**全域狀態位元 Byte 0 (7.2.1)**:
 - bit 0: 欠壓 (Undervoltage)
 - bit 1: 過壓 (Overvoltage)
 - bit 2: 系統錯誤 (System error)
 - bit 3: 80% 標稱電流警告
 - bit 4: 總電流關斷 (Total current shutdown)
 - bit 7: Config assembly 處理狀態
+
+**通道數據塊結構 (7.2.5) - 每通道 3 bytes**:
+
+| Byte | 內容 | 格式 | 說明 |
+|------|------|------|------|
+| 0 | Status | bit mask | 通道狀態位元 (見下方) |
+| 1 | Nominal Current | uint8 | 標稱電流 (1-10A) |
+| 2 | Flowing Current | uint8 / 10.0 | 實際電流 (0-255 = 0-25.5A) |
+
+**通道狀態位元 Byte 0 (7.2.5)**:
+- bit 0: Channel status (通道開/關)
+- bit 1: 80% warning (80% 警告)
+- bit 2: Overload tripping (過載跳脫)
+- bit 3: Short-circuit tripping (短路跳脫)
+- bit 4: Hardware fault (硬體故障)
+- bit 5: Total current shutdown (總電流關斷)
 
 ### Output Assembly 0x64 (控制命令)
 
@@ -310,6 +326,7 @@ main()
 
 ## 🔄 版本歷史
 
+- **V3.4.1** (2025-10-28): 補充 7.2.5 完整實作 (bit 4-5 + Nominal current 顯示)
 - **V3.4** (2025-10-28): Phase 3-1 完成 - 全域系統狀態檢查 (啟動時 Step 0)
 - **V3.3** (2025-10-27): Phase 2 完成 - 狀態顯示增強 + 設備復電狀態同步修復
 - **V3.2** (2025-10-27): Phase 1 完成 - 互動式額定電流設定

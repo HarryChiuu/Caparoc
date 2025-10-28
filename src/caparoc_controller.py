@@ -48,6 +48,10 @@ class CaparocController:
         self.output_instance = 0x64
         self.input_instance = 0x65
         
+        # 模組與通道配置（動態檢測）
+        self.module_count = 0  # 初始化時檢測，支援 1-16 個模組
+        self.channels_per_module = 4  # 每個模組 4 通道
+        
         # I/O 狀態
         self.implicit_mode_enabled = False
         self.cip_keep_alive = False
@@ -62,18 +66,82 @@ class CaparocController:
         # 初始化標記
         self.channels_initialized = False
     
-    def prompt_channel_currents(self):
+    def get_channel_offset(self, module, channel):
         """
-        互動式詢問每個通道的額定電流設定
+        計算通道在 Input Assembly 中的起始位置（支援多模組）
+        
+        Args:
+            module: 模組編號 (1-16)
+            channel: 通道編號 (1-4)
         
         Returns:
-            dict: {1: current, 2: current, 3: current, 4: current}
+            int: 該通道 Status byte 的位置
+        
+        範例:
+            Module 1, CH1: offset = 6 + 0*12 + 0*3 = 6
+            Module 1, CH4: offset = 6 + 0*12 + 3*3 = 15
+            Module 2, CH1: offset = 6 + 1*12 + 0*3 = 18
+            Module 2, CH4: offset = 6 + 1*12 + 3*3 = 27
+        """
+        # 全域資訊佔 6 bytes (Byte 0-5)
+        global_bytes = 6
+        
+        # 每個模組佔 12 bytes (4 通道 × 3 bytes)
+        bytes_per_module = 12
+        
+        # 每個通道佔 3 bytes (Status, Nominal, Flowing)
+        bytes_per_channel = 3
+        
+        # 計算偏移
+        module_offset = global_bytes + (module - 1) * bytes_per_module
+        channel_offset = module_offset + (channel - 1) * bytes_per_channel
+        
+        return channel_offset
+    
+    def get_total_channels(self):
+        """
+        取得系統總通道數
+        
+        Returns:
+            int: 總通道數 (module_count × channels_per_module)
+        """
+        return self.module_count * self.channels_per_module
+    
+    def get_module_and_channel(self, global_channel):
+        """
+        將全域通道編號轉換為模組和通道
+        
+        Args:
+            global_channel: 全域通道編號 (1-64, 最多16個模組×4通道)
+        
+        Returns:
+            tuple: (module, channel)
+        
+        範例:
+            1 -> (1, 1)   # 模組1通道1
+            4 -> (1, 4)   # 模組1通道4
+            5 -> (2, 1)   # 模組2通道1
+            8 -> (2, 4)   # 模組2通道4
+        """
+        module = ((global_channel - 1) // self.channels_per_module) + 1
+        channel = ((global_channel - 1) % self.channels_per_module) + 1
+        return (module, channel)
+    
+    def prompt_channel_currents(self):
+        """
+        互動式詢問每個通道的額定電流設定（支援多模組）
+        
+        Returns:
+            dict: {global_ch: current, ...} 全域通道編號對應電流
             或 None (完全跳過初始化)
         """
+        total_channels = self.get_total_channels()
+        
         while True:  # 外層循環: 是否初始化
             print("\n" + "="*60)
             print("⚙️  通道額定電流設定")
             print("="*60)
+            print(f"系統檢測到 {self.module_count} 個模組，共 {total_channels} 個通道")
             print("⚠️  注意: 初始化會覆蓋設備當前狀態")
             print()
             
@@ -90,36 +158,62 @@ class CaparocController:
                 print()
                 channel_currents = {}
                 default_current = 4.0
-                for ch in range(1, 5):
-                    while True:
-                        try:
-                            user_input = input(f"  CH{ch} 額定電流 [預設: {default_current}A]: ").strip()
-                            if user_input == "":
-                                current = default_current
-                                print(f"    → 使用預設值: {current}A")
-                                channel_currents[ch] = current
-                                break
-                            current = float(user_input)
-                            if 0.5 <= current <= 25.5:
-                                print(f"    → 設定為: {current}A")
-                                channel_currents[ch] = current
-                                break
-                            else:
-                                print(f"    ⚠️  錯誤: 請輸入 0.5-25.5 之間的數值")
-                        except ValueError:
-                            print(f"    ⚠️  錯誤: 請輸入有效的數字")
-                        except KeyboardInterrupt:
-                            print("\n\n⚠️  設定已取消")
-                            return None
+                
+                # 遍歷所有模組的所有通道
+                for module in range(1, self.module_count + 1):
+                    if self.module_count > 1:
+                        print(f"\n  📦 模組 {module}:")
+                    
+                    for ch in range(1, self.channels_per_module + 1):
+                        global_ch = (module - 1) * self.channels_per_module + ch
+                        
+                        while True:
+                            try:
+                                if self.module_count > 1:
+                                    prompt = f"    M{module}.CH{ch} (#{global_ch}) 額定電流 [預設: {default_current}A]: "
+                                else:
+                                    prompt = f"  CH{ch} 額定電流 [預設: {default_current}A]: "
+                                
+                                user_input = input(prompt).strip()
+                                if user_input == "":
+                                    current = default_current
+                                    print(f"    → 使用預設值: {current}A")
+                                    channel_currents[global_ch] = current
+                                    break
+                                current = float(user_input)
+                                if 0.5 <= current <= 25.5:
+                                    print(f"    → 設定為: {current}A")
+                                    channel_currents[global_ch] = current
+                                    break
+                                else:
+                                    print(f"    ⚠️  錯誤: 請輸入 0.5-25.5 之間的數值")
+                            except ValueError:
+                                print(f"    ⚠️  錯誤: 請輸入有效的數字")
+                            except KeyboardInterrupt:
+                                print("\n\n⚠️  設定已取消")
+                                return None
                 
                 # 顯示設定摘要
                 print("\n" + "="*60)
                 print("📋 設定摘要:")
-                for ch, current in channel_currents.items():
-                    if current > 0:
-                        print(f"  CH{ch}: {current}A")
-                    else:
-                        print(f"  CH{ch}: 跳過初始化")
+                for module in range(1, self.module_count + 1):
+                    if self.module_count > 1:
+                        print(f"  📦 模組 {module}:")
+                    
+                    for ch in range(1, self.channels_per_module + 1):
+                        global_ch = (module - 1) * self.channels_per_module + ch
+                        current = channel_currents.get(global_ch, 0)
+                        
+                        if current > 0:
+                            if self.module_count > 1:
+                                print(f"    M{module}.CH{ch} (#{global_ch}): {current}A")
+                            else:
+                                print(f"  CH{ch}: {current}A")
+                        else:
+                            if self.module_count > 1:
+                                print(f"    M{module}.CH{ch} (#{global_ch}): 跳過初始化")
+                            else:
+                                print(f"  CH{ch}: 跳過初始化")
                 print("="*60)
                 
                 # 確認設定
@@ -149,11 +243,11 @@ class CaparocController:
     
     def initialize_all_channels(self, driver, channel_currents=None):
         """
-        初始化所有通道的額定電流（一次性，程式啟動時執行）
+        初始化所有通道的額定電流（一次性，程式啟動時執行）- 支援多模組
         
         Args:
             driver: CIPDriver 實例
-            channel_currents: dict {1: 4.0, 2: 2.5, 3: 1.0, 4: 5.0} 或 None (使用預設)
+            channel_currents: dict {global_ch: current, ...} 或 None (使用預設)
         
         重要：順序執行，確保不互相干擾
         """
@@ -161,42 +255,77 @@ class CaparocController:
             print("[初始化] 通道已初始化，跳過")
             return True
         
-        # 如果沒有提供設定，使用預設值
+        total_channels = self.get_total_channels()
+        
+        # 如果沒有提供設定，使用預設值（所有通道 4A）
         if channel_currents is None:
-            channel_currents = {1: 4, 2: 4, 3: 4, 4: 4}
+            channel_currents = {ch: 4.0 for ch in range(1, total_channels + 1)}
         
         print("\n" + "="*60)
-        print("🔧 初始化所有通道額定電流")
+        print(f"🔧 初始化所有通道額定電流 ({self.module_count} 個模組, {total_channels} 個通道)")
         print("   設定值:")
-        for ch, current in channel_currents.items():
-            if current > 0:
-                print(f"     CH{ch}: {current} A")
-            else:
-                print(f"     CH{ch}: 跳過")
-        print("   這個過程需要約 40 秒，請耐心等待...")
+        
+        for module in range(1, self.module_count + 1):
+            if self.module_count > 1:
+                print(f"     📦 模組 {module}:")
+            
+            for ch in range(1, self.channels_per_module + 1):
+                global_ch = (module - 1) * self.channels_per_module + ch
+                current = channel_currents.get(global_ch, 4)
+                
+                if current > 0:
+                    if self.module_count > 1:
+                        print(f"       M{module}.CH{ch} (#{global_ch}): {current} A")
+                    else:
+                        print(f"     CH{ch}: {current} A")
+                else:
+                    if self.module_count > 1:
+                        print(f"       M{module}.CH{ch} (#{global_ch}): 跳過")
+                    else:
+                        print(f"     CH{ch}: 跳過")
+        
+        est_time = total_channels * 10  # 每個通道約 10 秒
+        print(f"   這個過程需要約 {est_time} 秒，請耐心等待...")
         print("="*60)
         
-        for ch in range(1, 5):
-            current = channel_currents.get(ch, 4)  # 預設 4A
-            
-            # 如果設定為 0, 跳過初始化
-            if current == 0:
-                print(f"\n[初始化] 通道 {ch}/4: ⏭️  跳過")
-                continue
-            
-            print(f"\n[初始化] 通道 {ch}/4: 設定額定電流 {current}A")
-            success = self._set_nominal_current_led_button(driver, 1, ch, int(current))
-            if success:
-                print(f"[初始化] ✅ 通道 {ch} 完成")
-            else:
-                print(f"[初始化] ⚠️ 通道 {ch} 失敗")
-            
-            # 每個通道間隔 1 秒
-            time.sleep(1)
+        # 遍歷所有模組的所有通道
+        for module in range(1, self.module_count + 1):
+            for ch in range(1, self.channels_per_module + 1):
+                global_ch = (module - 1) * self.channels_per_module + ch
+                current = channel_currents.get(global_ch, 4)  # 預設 4A
+                
+                # 如果設定為 0, 跳過初始化
+                if current == 0:
+                    if self.module_count > 1:
+                        print(f"\n[初始化] M{module}.CH{ch} (#{global_ch}/{total_channels}): ⏭️  跳過")
+                    else:
+                        print(f"\n[初始化] CH{ch} ({global_ch}/{total_channels}): ⏭️  跳過")
+                    continue
+                
+                if self.module_count > 1:
+                    print(f"\n[初始化] M{module}.CH{ch} (#{global_ch}/{total_channels}): 設定額定電流 {current}A")
+                else:
+                    print(f"\n[初始化] CH{ch} ({global_ch}/{total_channels}): 設定額定電流 {current}A")
+                
+                success = self._set_nominal_current_led_button(driver, module, ch, int(current))
+                
+                if success:
+                    if self.module_count > 1:
+                        print(f"[初始化] ✅ M{module}.CH{ch} 完成")
+                    else:
+                        print(f"[初始化] ✅ CH{ch} 完成")
+                else:
+                    if self.module_count > 1:
+                        print(f"[初始化] ⚠️ M{module}.CH{ch} 失敗")
+                    else:
+                        print(f"[初始化] ⚠️ CH{ch} 失敗")
+                
+                # 每個通道間隔 1 秒
+                time.sleep(1)
         
         self.channels_initialized = True
         print("\n" + "="*60)
-        print("✅ 所有通道初始化完成！")
+        print(f"✅ 所有 {total_channels} 個通道初始化完成！")
         print("="*60)
         return True
     
@@ -733,7 +862,7 @@ class CaparocController:
             print(f"   全域總電流: {global_total_current:.2f} A  (設備報告)")
             print(f"   模組數量: {module_count} 個")
             
-            # ========== 4. 各通道狀態 (7.2.5) ==========
+            # ========== 4. 各通道狀態 (7.2.5) - 支援多模組 ==========
             # 根據手冊 7.2.5 節 (Table 7-9):
             # 每個模組有 12 bytes 數據塊，4 通道模組分為 4 組，每組 3 bytes:
             #   Byte 0: Status byte (6 個狀態位元)
@@ -745,62 +874,73 @@ class CaparocController:
             #     - bit 5: Total current shutdown (總電流關斷)
             #   Byte 1: Nominal current (標稱電流, 1A - 10A)
             #   Byte 2: Flowing current (流動電流, 0-255 = 0A - 25.5A)
-            # CH1: Byte[6-8], CH2: Byte[9-11], CH3: Byte[12-14], CH4: Byte[15-17]
             
             print("\n📊 通道狀態:")
-            print("   " + "─" * 40)
             
-            # 每個通道的起始 offset (經實測驗證)
-            channel_offsets = [6, 9, 12, 15]  # CH1-CH4 的 Status byte 位置
-            
-            for ch in range(1, 5):
-                base_offset = channel_offsets[ch - 1]
+            # 動態顯示所有模組的所有通道
+            for module in range(1, module_count + 1):
+                # 如果多於一個模組，顯示模組標題
+                if module_count > 1:
+                    print(f"\n   � 模組 {module}:")
+                print("   " + "─" * 40)
                 
-                if len(data) > base_offset + 2:
-                    # Byte 0: Status byte (根據手冊 7.2.5 Table 7-9)
-                    status_byte = data[base_offset]
-                    is_on = bool(status_byte & 0x01)           # bit 0: Channel status (on/off)
-                    warning_80_ch = bool(status_byte & 0x02)   # bit 1: 80% warning
-                    overload = bool(status_byte & 0x04)        # bit 2: Overload tripping
-                    short_circuit = bool(status_byte & 0x08)   # bit 3: Short-circuit tripping
-                    hardware_fault = bool(status_byte & 0x10)  # bit 4: Hardware fault
-                    total_shutdown_ch = bool(status_byte & 0x20) # bit 5: Total current shutdown
+                for ch in range(1, self.channels_per_module + 1):
+                    # 使用動態計算的偏移
+                    base_offset = self.get_channel_offset(module, ch)
                     
-                    # Byte 1: Nominal current (標稱電流) 1-10A
-                    nominal_current = data[base_offset + 1]
+                    # 計算全域通道編號
+                    global_ch = (module - 1) * self.channels_per_module + ch
                     
-                    # Byte 2: Flowing current (實際電流) 0-255 = 0-25.5A
-                    current_raw = data[base_offset + 2]
-                    current = current_raw / 10.0
-                    
-                    # 根據狀態位元判斷開關,而非電流值
-                    state = "🟢 開" if is_on else "🔴 關"
-                    
-                    # 組合顯示訊息 - 加入標稱電流
-                    status_msg = f"   CH{ch}: {state}  {current:.2f}A / {nominal_current}A"
-                    
-                    # 添加特殊狀態標註
-                    warnings = []
-                    if is_on and current < 0.05:
-                        warnings.append("無負載")
-                    if warning_80_ch:
-                        warnings.append("⚠️ 80%")
-                    if overload:
-                        warnings.append("❌ 過載")
-                    if short_circuit:
-                        warnings.append("❌ 短路")
-                    if hardware_fault:
-                        warnings.append("🔥 硬體故障")
-                    if total_shutdown_ch:
-                        warnings.append("🔴 總電流關斷")
-                        warnings.append("❌ 短路")
-                    
-                    if warnings:
-                        status_msg += f" ({', '.join(warnings)})"
-                    
-                    print(status_msg)
-                else:
-                    print(f"   CH{ch}: ⚠️ 資料不足 (offset {base_offset})")
+                    if len(data) > base_offset + 2:
+                        # Byte 0: Status byte (根據手冊 7.2.5 Table 7-9)
+                        status_byte = data[base_offset]
+                        is_on = bool(status_byte & 0x01)           # bit 0: Channel status (on/off)
+                        warning_80_ch = bool(status_byte & 0x02)   # bit 1: 80% warning
+                        overload = bool(status_byte & 0x04)        # bit 2: Overload tripping
+                        short_circuit = bool(status_byte & 0x08)   # bit 3: Short-circuit tripping
+                        hardware_fault = bool(status_byte & 0x10)  # bit 4: Hardware fault
+                        total_shutdown_ch = bool(status_byte & 0x20) # bit 5: Total current shutdown
+                        
+                        # Byte 1: Nominal current (標稱電流) 1-10A
+                        nominal_current = data[base_offset + 1]
+                        
+                        # Byte 2: Flowing current (實際電流) 0-255 = 0-25.5A
+                        current_raw = data[base_offset + 2]
+                        current = current_raw / 10.0
+                        
+                        # 根據狀態位元判斷開關,而非電流值
+                        state = "🟢 開" if is_on else "🔴 關"
+                        
+                        # 組合顯示訊息 - 顯示全域通道編號或模組.通道格式
+                        if module_count > 1:
+                            status_msg = f"   M{module}.CH{ch} (#{global_ch}): {state}  {current:.2f}A / {nominal_current}A"
+                        else:
+                            status_msg = f"   CH{ch}: {state}  {current:.2f}A / {nominal_current}A"
+                        
+                        # 添加特殊狀態標註
+                        warnings = []
+                        if is_on and current < 0.05:
+                            warnings.append("無負載")
+                        if warning_80_ch:
+                            warnings.append("⚠️ 80%")
+                        if overload:
+                            warnings.append("❌ 過載")
+                        if short_circuit:
+                            warnings.append("❌ 短路")
+                        if hardware_fault:
+                            warnings.append("🔥 硬體故障")
+                        if total_shutdown_ch:
+                            warnings.append("🔴 總電流關斷")
+                        
+                        if warnings:
+                            status_msg += f" ({', '.join(warnings)})"
+                        
+                        print(status_msg)
+                    else:
+                        if module_count > 1:
+                            print(f"   M{module}.CH{ch} (#{global_ch}): ⚠️ 資料不足 (offset {base_offset})")
+                        else:
+                            print(f"   CH{ch}: ⚠️ 資料不足 (offset {base_offset})")
             
             print("   " + "─" * 40)
             
@@ -830,11 +970,14 @@ class CaparocController:
             
             status = self.check_global_system_status()
             
+            # 儲存模組數量到實例變數（供後續動態使用）
+            self.module_count = status['module_count']
+            
             # 顯示檢查結果
             print(f"\n📊 系統狀態:")
             print(f"   電壓: {status['voltage']:.2f} V")
             print(f"   總電流: {status['total_current']:.2f} A")
-            print(f"   模組數量: {status['module_count']} 個")
+            print(f"   模組數量: {status['module_count']} 個 ({self.get_total_channels()} 通道)")
             print(f"   狀態位元組: 0x{status['global_status_byte']:02X}")
             
             # 顯示錯誤訊息

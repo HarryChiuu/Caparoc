@@ -15,7 +15,7 @@
 
 ```
 Caparoc_breaker_control/
-├── AgentAI_init.md        # Agent AI 的基本規則
+├── AIagent_init.md        # AI Agent 的基本規則
 ├── README.md              # 專案文件
 ├── .gitignore             # Git 忽略模式
 ├── requirements.txt       # Python 依賴 (pip)

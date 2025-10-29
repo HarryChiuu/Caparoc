@@ -56,9 +56,10 @@ class CaparocController:
     
     def __init__(self, device_ip="192.168.2.111"):
         self.device_ip = device_ip
-        self.output_instance = 0x64
-        self.input_instance = 0x65
-        self.config_instance = 0x66  # Config Assembly (根據手冊 7.3.5)
+        self.output_instance = 0x64  # Output Assembly (EDS Assem100)
+        self.input_instance = 0x65   # Input Assembly (EDS Assem101)
+        self.config_instance = 0x66  # Config Assembly (EDS Assem102) - 僅用於讀取
+        # ⚠️ 寫入配置使用 Parameter Object (Class 0x0F), 不是 Config Assembly!
         
         # 模組與通道配置（動態檢測）
         self.module_count = 0  # 初始化時檢測,支援 1-16 個模組
@@ -675,9 +676,13 @@ class CaparocController:
     
     def _set_nominal_current_config_assembly(self, driver, module, channel, current_amps):
         """
-        使用 Config Assembly 設定標稱電流 (手冊 7.3.5 節 - 官方標準方法)
+        使用 Parameter Object 設定標稱電流 (EDS 官方方法)
         
-        ⚠️ 重要: 必須寫入整個 Config Assembly (244 bytes)，不能只寫單一參數
+        ✅ 正確方法 (根據 EDS 檔案):
+        - 使用 Class 0x0F (Parameter Object)
+        - Instance = Param Number (6, 9, 12, 15 for M1.CH1-4)
+        - Attribute 1 = Parameter Value
+        - 支援 1-20A 全範圍
         
         Args:
             driver: CIPDriver 實例
@@ -694,68 +699,33 @@ class CaparocController:
                 print(f"       ❌ 電流值超出範圍: {current_amps}A (必須在 1-20A 之間)")
                 return False
             
-            print(f"       [Config] 準備寫入整個 Config Assembly (244 bytes)")
-            
-            # 1️⃣ 讀取當前的 Config Assembly
-            current_config = self._read_config_assembly(driver)
-            if current_config is None or len(current_config) != 244:
-                print(f"       ⚠️  無法讀取當前 Config Assembly，使用空白模板")
-                config_data = bytearray(244)
-            else:
-                config_data = bytearray(current_config)
-            
-            # 2️⃣ 計算要修改的參數位置
+            # 計算 EDS 參數編號
             param_number = self._get_config_param_number(module, channel)
-            # Config Assembly 索引 = EDS 參數編號 - 1
-            param_index = param_number - 1
             
-            print(f"       [Config] 修改 EDS 參數 {param_number} (索引 {param_index}) = {current_amps}A")
+            print(f"       [Param] 使用 Parameter Object 方法")
+            print(f"       [Param] EDS Param {param_number} (M{module}.CH{channel}) = {current_amps}A")
             
-            # 3️⃣ 修改對應位置的值
-            config_data[param_index] = current_amps
-            
-            # 4️⃣ 寫入整個 Config Assembly
-            # ⚠️ 關鍵: Service 0x10 + Attribute 3 (資料屬性)
+            # ✅ 正確方法: 使用 Parameter Object (Class 0x0F)
+            # EDS Link Path: "20 0F 24 {param} 30 01"
+            #   20 0F = Class 0x0F (Parameter Object)
+            #   24 {param} = Instance {param_number}
+            #   30 01 = Attribute 1 (Value)
             response = driver.generic_message(
                 service=0x10,  # Set Attribute Single
-                class_code=0x04,  # Assembly Object
-                instance=self.config_instance,  # 0x66
-                attribute=3,  # ⚠️ 資料屬性，不是參數編號！
-                request_data=bytes(config_data),  # 完整 244 bytes
+                class_code=0x0F,  # ✅ Parameter Object (不是 Assembly!)
+                instance=param_number,  # ✅ Param 編號 (6, 9, 12, 15...)
+                attribute=1,  # ✅ Attribute 1 = Value
+                request_data=bytes([current_amps]),  # 1 byte (1-20)
                 connected=False
             )
             
             if response and not (hasattr(response, 'error') and response.error):
-                print(f"       ✅ Config Assembly 寫入成功")
+                print(f"       ✅ Parameter 寫入成功")
                 
-                # 5️⃣ 等待設備處理 Config
-                print(f"       ⏳ 等待設備處理配置...")
-                time.sleep(1.0)
-                
-                # 6️⃣ 檢查處理狀態 (Input Assembly Byte 0 Bit 7)
-                max_wait = 5  # 最多等 5 秒
-                for i in range(max_wait):
-                    input_data = driver.generic_message(
-                        service=0x0E,
-                        class_code=0x04,
-                        instance=self.input_instance,
-                        attribute=3,
-                        connected=False
-                    )
-                    
-                    if input_data and hasattr(input_data, 'value') and len(input_data.value) > 0:
-                        status_byte = input_data.value[0]
-                        config_processing = bool(status_byte & 0x80)  # Bit 7
-                        
-                        if not config_processing:
-                            print(f"       ✅ 設備已完成配置處理")
-                            break
-                        else:
-                            print(f"       ⏳ 設備處理中... ({i+1}/{max_wait}s)")
-                            time.sleep(1.0)
-                
-                # 7️⃣ 驗證設定結果
+                # 等待設備處理
                 time.sleep(0.5)
+                
+                # 驗證設定結果
                 actual_current = self._verify_nominal_current(driver, module, channel)
                 
                 if actual_current is not None:
@@ -763,14 +733,15 @@ class CaparocController:
                         print(f"       ✅ 驗證成功: 設備回報 {actual_current}A")
                         return True
                     else:
-                        print(f"       ⚠️  驗證失敗: 設定 {current_amps}A, 但設備回報 {actual_current}A")
+                        print(f"       ⚠️  驗證警告: 設定 {current_amps}A, 但設備回報 {actual_current}A")
+                        print(f"       💡 建議: 重新初始化此通道")
                         return False
                 else:
                     print(f"       ⚠️  無法驗證結果")
                     return False
             else:
                 error_msg = response.error if hasattr(response, 'error') else '未知錯誤'
-                print(f"       ❌ Config Assembly 寫入失敗: {error_msg}")
+                print(f"       ❌ Parameter 寫入失敗: {error_msg}")
                 return False
                 
         except Exception as e:

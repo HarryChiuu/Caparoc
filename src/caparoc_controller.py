@@ -438,6 +438,43 @@ class CaparocController:
                 print(f"[I/O Worker] 異常: {e}")
                 time.sleep(0.1)
     
+    def _verify_nominal_current(self, driver, module, channel):
+        """
+        驗證通道的標稱電流設定
+        
+        Args:
+            driver: CIPDriver 實例
+            module: 模組編號
+            channel: 通道編號
+        
+        Returns:
+            int: 實際標稱電流值 (1-10A), 或 None (讀取失敗)
+        """
+        try:
+            # 讀取 Input Assembly 0x65
+            response = driver.generic_message(
+                service=0x0E,
+                class_code=0x04,
+                instance=self.input_instance,
+                attribute=3,
+                connected=False
+            )
+            
+            if response and hasattr(response, 'value'):
+                data = response.value
+                offset = self.get_channel_offset(module, channel)
+                
+                if len(data) > offset + 1:
+                    # Byte 1: Nominal current (1-10A)
+                    nominal_current = data[offset + 1]
+                    return int(nominal_current)
+            
+            return None
+            
+        except Exception as e:
+            print(f"       [驗證] 讀取失敗: {e}")
+            return None
+    
     def _set_nominal_current_led_button(self, driver, module, channel, current_amps):
         """LED 按鈕模擬（僅用於初始化）"""
         try:
@@ -494,6 +531,16 @@ class CaparocController:
                             service=0x10, class_code=0x04, instance=instance,
                             attribute=3, request_data=bytes(exit_data), connected=False
                         )
+                        
+                        # ✅ 新增: 驗證設定結果
+                        time.sleep(1.0)
+                        actual_current = self._verify_nominal_current(driver, module, channel)
+                        if actual_current is not None:
+                            if actual_current == current_amps:
+                                print(f"       ✅ 驗證成功: 設備回報 {actual_current}A")
+                            else:
+                                print(f"       ⚠️  驗證失敗: 設定 {current_amps}A, 但設備回報 {actual_current}A")
+                                print(f"       💡 建議: 重新初始化此通道")
                         
                         return True
                         
@@ -1456,6 +1503,7 @@ class CaparocController:
             print("  on <ch>                      - 開啟通道 (例: on 1)")
             print("  off <ch>                     - 關閉通道")
             print("  s                            - 顯示完整狀態")
+            print("  verify <ch>                  - 驗證通道標稱電流設定")
             print("  monitor start [interval] [mode]  - 啟動監控")
             print("                                     interval: 更新頻率(秒), 預設2")
             print("                                     mode: silent(靜默) 或 display(顯示), 預設silent")
@@ -1476,6 +1524,23 @@ class CaparocController:
                         break
                     elif cmd == 's':
                         self.show_status()
+                    elif cmd.startswith('verify '):
+                        try:
+                            ch = int(cmd.split()[1])
+                            if 1 <= ch <= self.get_total_channels():
+                                module, channel = self.get_module_and_channel(ch)
+                                actual = self._verify_nominal_current(driver, module, channel)
+                                if actual is not None:
+                                    if self.module_count > 1:
+                                        print(f"✅ M{module}.CH{channel} (#{ch}) 標稱電流: {actual}A")
+                                    else:
+                                        print(f"✅ CH{ch} 標稱電流: {actual}A")
+                                else:
+                                    print(f"❌ 無法讀取 CH{ch} 的標稱電流")
+                            else:
+                                print(f"⚠️  通道編號超出範圍 (1-{self.get_total_channels()})")
+                        except (ValueError, IndexError):
+                            print("⚠️  用法: verify <通道編號>")
                     elif cmd.startswith('on '):
                         ch = int(cmd.split()[1])
                         self.set_channel(ch, True)

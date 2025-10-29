@@ -1774,21 +1774,31 @@ class CaparocController:
             self._establish_implicit_messaging(driver)
             
             # 互動控制
-            print("\n指令:")
+            print("\n" + "="*60)
+            print("📋 可用命令:")
+            print("="*60)
+            print("\n【通道控制】")
+            print("  init <ch> <amps>             - 設定通道標稱電流 (1-20A)")
+            print("                                 範例: init 2 4")
             print("  on <ch>                      - 開啟通道 (例: on 1)")
             print("  off <ch>                     - 關閉通道")
+            print("\n【狀態查詢】")
             print("  s                            - 顯示完整狀態")
-            print("  scan                         - 掃描所有 Assembly Instance")
-            print("  limits                       - 顯示通道配置限制 (Config Assembly)")
             print("  verify <ch>                  - 驗證通道標稱電流設定")
+            print("  scan                         - 掃描所有 Assembly Instance")
+            print("  limits                       - 顯示通道配置限制")
+            print("\n【即時監控】")
             print("  monitor start [interval] [mode]  - 啟動監控")
             print("                                     interval: 更新頻率(秒), 預設2")
-            print("                                     mode: silent(靜默) 或 display(顯示), 預設silent")
+            print("                                     mode: silent/display, 預設silent")
             print("                                     範例: monitor start 5 silent")
             print("  monitor stop                 - 停止監控")
             print("  monitor status               - 顯示監控狀態")
-            print("  q                            - 退出")
-            print("\n💡 提示: 建議使用靜默模式(silent),監控在背景運行不干擾輸入")
+            print("\n【系統】")
+            print("  q                            - 退出程式")
+            print("="*60)
+            print("💡 提示: 建議使用靜默模式(silent),監控在背景運行不干擾輸入")
+            print("="*60)
             
             while True:
                 try:
@@ -1805,6 +1815,49 @@ class CaparocController:
                         self.scan_assemblies()
                     elif cmd == 'limits':
                         self.show_channel_limits()
+                    elif cmd.startswith('init '):
+                        # 新增: 初始化通道標稱電流
+                        try:
+                            parts = cmd.split()
+                            if len(parts) != 3:
+                                print("⚠️  用法: init <通道編號> <電流值>")
+                                print("   範例: init 2 4  (設定 CH2 為 4A)")
+                                continue
+                            
+                            ch = int(parts[1])
+                            amps = int(parts[2])
+                            
+                            if not (1 <= ch <= self.get_total_channels()):
+                                print(f"⚠️  通道編號超出範圍 (1-{self.get_total_channels()})")
+                                continue
+                            
+                            if not (1 <= amps <= 20):
+                                print(f"⚠️  電流值超出範圍 (1-20A)")
+                                continue
+                            
+                            module, channel = self.get_module_and_channel(ch)
+                            
+                            if self.module_count > 1:
+                                print(f"\n[初始化] M{module}.CH{channel} (#{ch}): 設定額定電流 {amps}A")
+                            else:
+                                print(f"\n[初始化] CH{ch}: 設定額定電流 {amps}A")
+                            
+                            # 使用 Parameter Object 方法設定
+                            success = self._set_nominal_current_config_assembly(driver, module, channel, amps)
+                            
+                            if success:
+                                print(f"✅ CH{ch} 初始化完成")
+                            else:
+                                print(f"⚠️  CH{ch} 初始化失敗，嘗試 LED 按鈕模擬...")
+                                success = self._set_nominal_current_led_button(driver, module, channel, amps)
+                                if success:
+                                    print(f"✅ CH{ch} 完成 (LED 按鈕模擬)")
+                                else:
+                                    print(f"❌ CH{ch} 初始化失敗")
+                        
+                        except (ValueError, IndexError) as e:
+                            print(f"⚠️  命令格式錯誤: {e}")
+                            print("   用法: init <通道編號> <電流值>")
                     elif cmd.startswith('verify '):
                         try:
                             ch = int(cmd.split()[1])

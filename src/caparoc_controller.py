@@ -58,6 +58,7 @@ class CaparocController:
         self.device_ip = device_ip
         self.output_instance = 0x64
         self.input_instance = 0x65
+        self.config_instance = 0x66  # Config Assembly (根據手冊 7.3.5)
         
         # 模組與通道配置（動態檢測）
         self.module_count = 0  # 初始化時檢測,支援 1-16 個模組
@@ -173,7 +174,7 @@ class CaparocController:
             
             # 進入設定循環
             while True:  # 內層循環: 設定電流值
-                print("\n請為每個通道設定額定電流 (0.5A - 25.5A)")
+                print("\n請為每個通道設定額定電流 (1A - 20A)")
                 print("直接按 Enter 使用預設值 4A")
                 print()
                 channel_currents = {}
@@ -201,12 +202,12 @@ class CaparocController:
                                     channel_currents[global_ch] = current
                                     break
                                 current = float(user_input)
-                                if 0.5 <= current <= 25.5:
+                                if 1 <= current <= 20:
                                     print(f"    → 設定為: {current}A")
                                     channel_currents[global_ch] = current
                                     break
                                 else:
-                                    print(f"    ⚠️  錯誤: 請輸入 0.5-25.5 之間的數值")
+                                    print(f"    ⚠️  錯誤: 請輸入 1-20 之間的數值")
                             except ValueError:
                                 print(f"    ⚠️  錯誤: 請輸入有效的數字")
                             except KeyboardInterrupt:
@@ -304,8 +305,8 @@ class CaparocController:
                     else:
                         print(f"     CH{ch}: 跳過")
         
-        est_time = total_channels * 10  # 每個通道約 10 秒
-        print(f"   這個過程需要約 {est_time} 秒，請耐心等待...")
+        est_time = total_channels * 2  # 每個通道約 2 秒 (Config Assembly 方法)
+        print(f"   預估時間: 約 {est_time} 秒 (使用 Config Assembly 快速設定)")
         print("="*60)
         
         # 遍歷所有模組的所有通道
@@ -327,7 +328,16 @@ class CaparocController:
                 else:
                     print(f"\n[初始化] CH{ch} ({global_ch}/{total_channels}): 設定額定電流 {current}A")
                 
-                success = self._set_nominal_current_led_button(driver, module, ch, int(current))
+                # ✅ 優先使用 Config Assembly 方法 (快速、可靠)
+                success = self._set_nominal_current_config_assembly(driver, module, ch, int(current))
+                
+                # ⚠️ 如果 Config Assembly 失敗,回退到 LED 按鈕模擬 (舊方法)
+                if not success:
+                    print(f"       ⚠️  Config Assembly 方法失敗,嘗試 LED 按鈕模擬...")
+                    if int(current) <= 10:  # LED 按鈕只支援 1-10A
+                        success = self._set_nominal_current_led_button(driver, module, ch, int(current))
+                    else:
+                        print(f"       ❌ LED 按鈕模擬不支援 {int(current)}A (最大 10A)")
                 
                 if success:
                     if self.module_count > 1:
@@ -340,8 +350,8 @@ class CaparocController:
                     else:
                         print(f"[初始化] ⚠️ CH{ch} 失敗")
                 
-                # 每個通道間隔 1 秒
-                time.sleep(1)
+                # 通道間短暫延遲
+                time.sleep(0.3)
         
         self.channels_initialized = True
         print("\n" + "="*60)
@@ -438,6 +448,36 @@ class CaparocController:
                 print(f"[I/O Worker] 異常: {e}")
                 time.sleep(0.1)
     
+    def _get_config_param_number(self, module, channel):
+        """
+        計算 Config Assembly 中通道標稱電流的 EDS 參數編號
+        
+        Args:
+            module: 模組編號 (1-16)
+            channel: 通道編號 (1-4)
+        
+        Returns:
+            int: EDS 參數編號
+        
+        範例 (根據手冊 Table 7-11):
+            Module 1, CH1: 6  (nominal current)
+            Module 1, CH2: 9  (nominal current)
+            Module 1, CH3: 12 (nominal current)
+            Module 1, CH4: 15 (nominal current)
+            Module 2, CH1: 18 (nominal current)
+            ...
+        
+        公式:
+            基礎參數 = 6 + (module - 1) * 12 + (channel - 1) * 3
+            (每個模組 12 個參數: 4通道 × 3參數/通道)
+        """
+        base_param = 6  # Module 1, CH1 的起始參數
+        params_per_module = 12  # 每個模組 12 個參數 (4 通道 × 3)
+        params_per_channel = 3  # 每個通道 3 個參數 (nominal, lock, status)
+        
+        param_number = base_param + (module - 1) * params_per_module + (channel - 1) * params_per_channel
+        return param_number
+    
     def _verify_nominal_current(self, driver, module, channel):
         """
         驗證通道的標稱電流設定
@@ -448,7 +488,7 @@ class CaparocController:
             channel: 通道編號
         
         Returns:
-            int: 實際標稱電流值 (1-10A), 或 None (讀取失敗)
+            int: 實際標稱電流值 (0-20A), 或 None (讀取失敗)
         """
         try:
             # 讀取 Input Assembly 0x65
@@ -465,7 +505,7 @@ class CaparocController:
                 offset = self.get_channel_offset(module, channel)
                 
                 if len(data) > offset + 1:
-                    # Byte 1: Nominal current (1-10A)
+                    # Byte 1: Nominal current (0-20A)
                     nominal_current = data[offset + 1]
                     return int(nominal_current)
             
@@ -474,6 +514,81 @@ class CaparocController:
         except Exception as e:
             print(f"       [驗證] 讀取失敗: {e}")
             return None
+    
+    def _set_nominal_current_config_assembly(self, driver, module, channel, current_amps):
+        """
+        使用 Config Assembly 設定標稱電流 (手冊 7.3.5 節 - 官方標準方法)
+        
+        Args:
+            driver: CIPDriver 實例
+            module: 模組編號 (1-16)
+            channel: 通道編號 (1-4)
+            current_amps: 標稱電流值 (1-20A)
+        
+        Returns:
+            bool: 成功/失敗
+        
+        優點:
+            - 快速 (一次寫入)
+            - 可靠 (官方標準方法)
+            - 支援 1-20A (比 LED 按鈕的 1-10A 更大)
+        """
+        try:
+            # 驗證電流範圍
+            if not (1 <= current_amps <= 20):
+                print(f"       ❌ 電流值超出範圍: {current_amps}A (必須在 1-20A 之間)")
+                return False
+            
+            # 計算 EDS 參數編號
+            param_number = self._get_config_param_number(module, channel)
+            
+            print(f"       [Config] 使用 EDS 參數 {param_number} 設定為 {current_amps}A")
+            
+            # 嘗試使用 Set Attribute Single 寫入
+            # Service 0x10 = Set Attribute Single
+            # Class 0x04 = Assembly Object
+            # Instance = Config Assembly (0x66)
+            # Attribute = EDS 參數編號
+            # Data = 1 byte (USINT), 值為電流安培數
+            
+            request_data = bytes([current_amps])
+            
+            response = driver.generic_message(
+                service=0x10,  # Set Attribute Single
+                class_code=0x04,  # Assembly Object
+                instance=self.config_instance,  # 0x66 Config Assembly
+                attribute=param_number,  # EDS 參數編號
+                request_data=request_data,
+                connected=False
+            )
+            
+            if response and not (hasattr(response, 'error') and response.error):
+                print(f"       ✅ Config Assembly 寫入成功")
+                
+                # 驗證設定結果
+                time.sleep(0.5)  # 等待設備處理
+                actual_current = self._verify_nominal_current(driver, module, channel)
+                
+                if actual_current is not None:
+                    if actual_current == current_amps:
+                        print(f"       ✅ 驗證成功: 設備回報 {actual_current}A")
+                        return True
+                    else:
+                        print(f"       ⚠️  驗證失敗: 設定 {current_amps}A, 但設備回報 {actual_current}A")
+                        return False
+                else:
+                    print(f"       ⚠️  無法驗證結果")
+                    return False
+            else:
+                error_msg = response.error if hasattr(response, 'error') else '未知錯誤'
+                print(f"       ❌ Config Assembly 寫入失敗: {error_msg}")
+                return False
+                
+        except Exception as e:
+            print(f"       ❌ 設定異常: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
     def _set_nominal_current_led_button(self, driver, module, channel, current_amps):
         """LED 按鈕模擬（僅用於初始化）"""

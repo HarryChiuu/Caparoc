@@ -677,6 +677,8 @@ class CaparocController:
         """
         使用 Config Assembly 設定標稱電流 (手冊 7.3.5 節 - 官方標準方法)
         
+        ⚠️ 重要: 必須寫入整個 Config Assembly (244 bytes)，不能只寫單一參數
+        
         Args:
             driver: CIPDriver 實例
             module: 模組編號 (1-16)
@@ -685,11 +687,6 @@ class CaparocController:
         
         Returns:
             bool: 成功/失敗
-        
-        優點:
-            - 快速 (一次寫入)
-            - 可靠 (官方標準方法)
-            - 支援 1-20A (比 LED 按鈕的 1-10A 更大)
         """
         try:
             # 驗證電流範圍
@@ -697,34 +694,68 @@ class CaparocController:
                 print(f"       ❌ 電流值超出範圍: {current_amps}A (必須在 1-20A 之間)")
                 return False
             
-            # 計算 EDS 參數編號
+            print(f"       [Config] 準備寫入整個 Config Assembly (244 bytes)")
+            
+            # 1️⃣ 讀取當前的 Config Assembly
+            current_config = self._read_config_assembly(driver)
+            if current_config is None or len(current_config) != 244:
+                print(f"       ⚠️  無法讀取當前 Config Assembly，使用空白模板")
+                config_data = bytearray(244)
+            else:
+                config_data = bytearray(current_config)
+            
+            # 2️⃣ 計算要修改的參數位置
             param_number = self._get_config_param_number(module, channel)
+            # Config Assembly 索引 = EDS 參數編號 - 1
+            param_index = param_number - 1
             
-            print(f"       [Config] 使用 EDS 參數 {param_number} 設定為 {current_amps}A")
+            print(f"       [Config] 修改 EDS 參數 {param_number} (索引 {param_index}) = {current_amps}A")
             
-            # 嘗試使用 Set Attribute Single 寫入
-            # Service 0x10 = Set Attribute Single
-            # Class 0x04 = Assembly Object
-            # Instance = Config Assembly (0x66)
-            # Attribute = EDS 參數編號
-            # Data = 1 byte (USINT), 值為電流安培數
+            # 3️⃣ 修改對應位置的值
+            config_data[param_index] = current_amps
             
-            request_data = bytes([current_amps])
-            
+            # 4️⃣ 寫入整個 Config Assembly
+            # ⚠️ 關鍵: Service 0x10 + Attribute 3 (資料屬性)
             response = driver.generic_message(
                 service=0x10,  # Set Attribute Single
                 class_code=0x04,  # Assembly Object
-                instance=self.config_instance,  # 0x66 Config Assembly
-                attribute=param_number,  # EDS 參數編號
-                request_data=request_data,
+                instance=self.config_instance,  # 0x66
+                attribute=3,  # ⚠️ 資料屬性，不是參數編號！
+                request_data=bytes(config_data),  # 完整 244 bytes
                 connected=False
             )
             
             if response and not (hasattr(response, 'error') and response.error):
                 print(f"       ✅ Config Assembly 寫入成功")
                 
-                # 驗證設定結果
-                time.sleep(0.5)  # 等待設備處理
+                # 5️⃣ 等待設備處理 Config
+                print(f"       ⏳ 等待設備處理配置...")
+                time.sleep(1.0)
+                
+                # 6️⃣ 檢查處理狀態 (Input Assembly Byte 0 Bit 7)
+                max_wait = 5  # 最多等 5 秒
+                for i in range(max_wait):
+                    input_data = driver.generic_message(
+                        service=0x0E,
+                        class_code=0x04,
+                        instance=self.input_instance,
+                        attribute=3,
+                        connected=False
+                    )
+                    
+                    if input_data and hasattr(input_data, 'value') and len(input_data.value) > 0:
+                        status_byte = input_data.value[0]
+                        config_processing = bool(status_byte & 0x80)  # Bit 7
+                        
+                        if not config_processing:
+                            print(f"       ✅ 設備已完成配置處理")
+                            break
+                        else:
+                            print(f"       ⏳ 設備處理中... ({i+1}/{max_wait}s)")
+                            time.sleep(1.0)
+                
+                # 7️⃣ 驗證設定結果
+                time.sleep(0.5)
                 actual_current = self._verify_nominal_current(driver, module, channel)
                 
                 if actual_current is not None:

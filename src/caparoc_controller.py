@@ -478,6 +478,91 @@ class CaparocController:
         param_number = base_param + (module - 1) * params_per_module + (channel - 1) * params_per_channel
         return param_number
     
+    def _read_config_assembly(self, driver):
+        """
+        讀取 Config Assembly 完整內容
+        
+        Returns:
+            bytes: Config Assembly 資料, 或 None (失敗)
+        """
+        try:
+            # 嘗試讀取 Config Assembly
+            response = driver.generic_message(
+                service=0x0E,  # Get Attribute Single
+                class_code=0x04,  # Assembly Object
+                instance=self.config_instance,  # 0x66
+                attribute=3,  # Data attribute
+                connected=False
+            )
+            
+            if response and hasattr(response, 'value'):
+                return response.value
+            
+            return None
+            
+        except Exception as e:
+            print(f"[診斷] 讀取 Config Assembly 失敗: {e}")
+            return None
+    
+    def show_channel_limits(self):
+        """
+        顯示所有通道的配置限制 (從 Config Assembly 讀取)
+        """
+        if not self.driver:
+            print("❌ Driver 未初始化")
+            return
+        
+        print("\n" + "="*60)
+        print("📊 通道配置診斷 (Config Assembly)")
+        print("="*60)
+        
+        # 讀取 Config Assembly
+        config_data = self._read_config_assembly(self.driver)
+        
+        if config_data:
+            print(f"✅ Config Assembly 長度: {len(config_data)} bytes")
+            print(f"原始資料: {config_data.hex()}")
+            
+            # 根據手冊 Table 7-11 解析
+            print("\n全域參數:")
+            if len(config_data) > 0:
+                print(f"  參數 1 (Global nominal current lock): {config_data[0]}")
+            if len(config_data) > 1:
+                print(f"  參數 2 (Global UI lock): {config_data[1]}")
+            if len(config_data) > 2:
+                switch_delay = struct.unpack('<H', config_data[2:4])[0] if len(config_data) >= 4 else 0
+                print(f"  參數 3 (Global switch-on delay): {switch_delay} ms")
+            if len(config_data) > 4:
+                print(f"  參數 4 (Global operating mode): {config_data[4]}")
+            
+            print("\n通道配置:")
+            # 每個通道 3 個參數 (nominal, lock, status)
+            for module in range(1, self.module_count + 1):
+                if self.module_count > 1:
+                    print(f"\n  📦 模組 {module}:")
+                
+                for ch in range(1, self.channels_per_module + 1):
+                    param_base = self._get_config_param_number(module, ch)
+                    # Config Assembly 的索引 = 參數編號 - 1 (因為參數從 1 開始)
+                    offset = param_base - 1
+                    
+                    if len(config_data) > offset + 2:
+                        nominal = config_data[offset]
+                        lock = config_data[offset + 1]
+                        status = config_data[offset + 2]
+                        
+                        if self.module_count > 1:
+                            print(f"    M{module}.CH{ch} - 標稱電流: {nominal}A, 鎖定: {lock}, 狀態: {status}")
+                        else:
+                            print(f"  CH{ch} - 標稱電流: {nominal}A, 鎖定: {lock}, 狀態: {status}")
+        else:
+            print("❌ 無法讀取 Config Assembly")
+            print("💡 可能原因:")
+            print("   1. Config Assembly Instance 編號不正確 (目前: 0x66)")
+            print("   2. 設備不支援讀取 Config Assembly")
+        
+        print("="*60)
+    
     def _verify_nominal_current(self, driver, module, channel):
         """
         驗證通道的標稱電流設定
@@ -1618,6 +1703,7 @@ class CaparocController:
             print("  on <ch>                      - 開啟通道 (例: on 1)")
             print("  off <ch>                     - 關閉通道")
             print("  s                            - 顯示完整狀態")
+            print("  limits                       - 顯示通道配置限制 (Config Assembly)")
             print("  verify <ch>                  - 驗證通道標稱電流設定")
             print("  monitor start [interval] [mode]  - 啟動監控")
             print("                                     interval: 更新頻率(秒), 預設2")
@@ -1639,6 +1725,8 @@ class CaparocController:
                         break
                     elif cmd == 's':
                         self.show_status()
+                    elif cmd == 'limits':
+                        self.show_channel_limits()
                     elif cmd.startswith('verify '):
                         try:
                             ch = int(cmd.split()[1])

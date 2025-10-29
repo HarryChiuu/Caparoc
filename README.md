@@ -143,15 +143,42 @@ python src/caparoc_controller.py
 
 ### 可用指令
 ```
+init <ch> <amps>                 - 顯示標稱電流手動設定指引
+                                   範例: init 2 4
 on <ch>                          - 開啟通道 (例: on 1)
 off <ch>                         - 關閉通道 (例: off 2)
 s                                - 顯示完整狀態
+verify <ch>                      - 驗證通道標稱電流設定
 monitor start [interval] [mode]  - 啟動即時監控
                                    interval: 更新頻率(秒), 預設2
                                    mode: silent(靜默) 或 display(顯示), 預設silent
 monitor stop                     - 停止即時監控
 monitor status                   - 顯示監控狀態
 q                                - 退出
+```
+
+### ⚠️ 重要說明:標稱電流設定
+
+**無法透過 EtherNet/IP 直接修改標稱電流參數**
+
+經測試,CAPAROC 設備不允許透過 EtherNet/IP 修改標稱電流。
+請使用以下方法手動設定:
+
+#### 方法 1: 使用設備按鈕 (推薦)
+1. 長按 PWR 鍵 3 秒 (LED 閃綠光 3 次,解除硬體鎖)
+2. 短按對應通道按鈕進入編程模式
+3. 按 + 或 - 按鈕調整電流值 (1-20A)
+4. 短按通道按鈕確認
+5. 長按 PWR 鍵 3 秒退出
+
+#### 方法 2: 使用設備網頁介面 (如果支援)
+- 瀏覽器訪問: `http://192.168.2.111`
+
+#### 驗證設定
+設定完成後,使用程式驗證:
+```
+> verify 2
+✅ CH2 標稱電流: 4A
 ```
 
 ### 即時監控範例

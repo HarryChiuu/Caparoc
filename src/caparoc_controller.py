@@ -891,7 +891,9 @@ class CaparocController:
                         hardware_fault = bool(status_byte & 0x10)
                         total_shutdown_ch = bool(status_byte & 0x20)
                         
-                        nominal_current = nominal_byte / 10.0
+                        # Byte 1: Nominal current (標稱電流) 1-10A (直接值,不需除以10)
+                        nominal_current = float(nominal_byte)
+                        # Byte 2: Flowing current (流動電流) 0-255 = 0-25.5A (需除以10)
                         flowing_current = flowing_byte / 10.0
                         
                         channels[global_ch] = {

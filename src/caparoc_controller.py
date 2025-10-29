@@ -504,6 +504,71 @@ class CaparocController:
             print(f"[診斷] 讀取 Config Assembly 失敗: {e}")
             return None
     
+    def scan_assemblies(self):
+        """
+        掃描所有可能的 Assembly Instance，尋找 Config Assembly
+        """
+        if not self.driver:
+            print("❌ Driver 未初始化")
+            return
+        
+        print("\n" + "="*60)
+        print("🔍 Assembly Instance 掃描")
+        print("="*60)
+        
+        # 已知的 Assembly
+        print("\n已知 Assembly:")
+        print(f"  Output Assembly: 0x{self.output_instance:02X} (0x64)")
+        print(f"  Input Assembly:  0x{self.input_instance:02X} (0x65)")
+        print(f"  Config Assembly: 0x{self.config_instance:02X} (0x66) - 可能不正確")
+        
+        # 掃描範圍
+        print("\n掃描 Assembly Instance 0x60 - 0x70...")
+        
+        for instance in range(0x60, 0x71):
+            try:
+                response = self.driver.generic_message(
+                    service=0x0E,  # Get Attribute Single
+                    class_code=0x04,  # Assembly Object
+                    instance=instance,
+                    attribute=3,  # Data attribute
+                    connected=False
+                )
+                
+                if response and hasattr(response, 'value') and response.value:
+                    data = response.value
+                    # 檢查是否全為 0
+                    is_all_zero = all(b == 0 for b in data)
+                    
+                    # 檢查是否包含已知的標稱電流值 (3A, 4A)
+                    has_nominal = any(b in [3, 4] for b in data)
+                    
+                    status = "❓"
+                    if instance == self.output_instance:
+                        status = "📤 Output"
+                    elif instance == self.input_instance:
+                        status = "📥 Input"
+                    elif instance == self.config_instance:
+                        status = "⚙️ Config?"
+                    elif is_all_zero:
+                        status = "⚪ 全零"
+                    elif has_nominal:
+                        status = "✨ 包含標稱電流!"
+                    else:
+                        status = "📊 有資料"
+                    
+                    print(f"  0x{instance:02X}: ✅ {len(data):3d} bytes - {status}")
+                    
+                    # 如果發現可能是 Config 的 Assembly
+                    if has_nominal and instance != self.input_instance:
+                        print(f"       → 前 20 bytes: {data[:20].hex()}")
+                
+            except Exception as e:
+                # 忽略不存在的 Instance
+                pass
+        
+        print("="*60)
+    
     def show_channel_limits(self):
         """
         顯示所有通道的配置限制 (從 Config Assembly 讀取)
@@ -521,7 +586,15 @@ class CaparocController:
         
         if config_data:
             print(f"✅ Config Assembly 長度: {len(config_data)} bytes")
-            print(f"原始資料: {config_data.hex()}")
+            
+            # 檢查是否全為 0
+            is_all_zero = all(b == 0 for b in config_data)
+            if is_all_zero:
+                print("⚠️  警告: Config Assembly 全為 0")
+                print("💡 這可能不是正確的 Config Instance")
+                print("💡 建議使用 'scan' 命令掃描所有 Assembly")
+            else:
+                print(f"原始資料 (前 40 bytes): {config_data[:40].hex()}")
             
             # 根據手冊 Table 7-11 解析
             print("\n全域參數:")
@@ -1703,6 +1776,7 @@ class CaparocController:
             print("  on <ch>                      - 開啟通道 (例: on 1)")
             print("  off <ch>                     - 關閉通道")
             print("  s                            - 顯示完整狀態")
+            print("  scan                         - 掃描所有 Assembly Instance")
             print("  limits                       - 顯示通道配置限制 (Config Assembly)")
             print("  verify <ch>                  - 驗證通道標稱電流設定")
             print("  monitor start [interval] [mode]  - 啟動監控")
@@ -1725,6 +1799,8 @@ class CaparocController:
                         break
                     elif cmd == 's':
                         self.show_status()
+                    elif cmd == 'scan':
+                        self.scan_assemblies()
                     elif cmd == 'limits':
                         self.show_channel_limits()
                     elif cmd.startswith('verify '):

@@ -44,35 +44,20 @@ python src/caparoc_controller.py**詳細排查指南:** 請參閱 [連接問題�
 
 ```bash
 
-# 主開關控制### 步驟 3: 運行主程式
+### 步驟 3: 運行主程式
 
-main on                          # 開啟主開關 (總電源)
-
-main off                         # 關閉主開關 (總電源)```bash
-
+```bash
 python src/caparoc_controller.py
+```
 
-# 通道控制```
+選擇選項 **2** (互動控制模式)，然後可以使用以下命令：
 
-on 1                            # 開啟通道 1
-
-off 1                           # 關閉通道 1選擇選項 **2** (互動控制模式)，然後可以使用以下命令：
-
-
-
-# 狀態查詢- `main on` / `main off` - 控制主開關 (總電源)
-
-s                               # 顯示完整系統狀態- `on 1` / `off 1` - 控制個別通道
-
-verify 1                        # 驗證通道 1 的標稱電流設定- `s` - 查看完整狀態
-
+**可用命令：**
+- `on 1` / `off 1` - 控制個別通道
+- `s` - 查看完整狀態
 - `monitor start` - 啟動即時監控
 
-# 即時監控（靜默模式，不干擾命令輸入）
-
-monitor start 2 silent          # 每 2 秒更新，僅警報通知詳細命令請參閱 [互動式測試指南](INTERACTIVE_TEST_GUIDE.md)
-
-monitor stop                    # 停止監控
+詳細命令請參閱 [互動式測試指南](INTERACTIVE_TEST_GUIDE.md)
 
 ---
 

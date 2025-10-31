@@ -1222,102 +1222,6 @@ class CaparocController:
             print(f"[錯誤] {e}")
             return False
     
-    def set_main_power(self, state):
-        """
-        控制主開關 (Breaker PWR 總電源)
-        
-        Args:
-            state: True=開啟, False=關閉
-        
-        Returns:
-            bool: 成功/失敗
-        
-        說明:
-            - 主開關控制所有通道的總電源
-            - 透過 Output Assembly Byte 0 控制
-            - 關閉主開關會停止所有通道供電
-            - 開啟主開關後，個別通道仍需個別開啟
-        """
-        if not self.driver:
-            print("[錯誤] Driver 未初始化")
-            return False
-        
-        with self.io_data_lock:
-            # Byte 0: 全域控制
-            # bit 7 = 1: Release (正常操作)
-            # bit 0 = 1: 主開關開啟
-            # bit 0 = 0: 主開關關閉
-            
-            if state:
-                # 開啟主開關: bit7=1 (release), bit0=1 (power on)
-                new_value = 0x81  # 0b10000001
-                action = "開啟"
-            else:
-                # 關閉主開關: bit7=1 (release), bit0=0 (power off)
-                new_value = 0x80  # 0b10000000
-                action = "關閉"
-            
-            old_value = self.current_output_data[0]
-            self.current_output_data[0] = new_value
-            
-            print(f"\n[主開關] {action}主電源")
-            print(f"         byte[0]: 0x{old_value:02X} -> 0x{new_value:02X}")
-            
-            # 寫入設備
-            if self.implicit_mode_enabled:
-                print(f"         [Implicit] 已更新 buffer，等待 I/O Worker 寫入...")
-                time.sleep(0.2)
-                print(f"         ✅ 主開關命令已發送")
-            else:
-                try:
-                    output_data = bytes(self.current_output_data)
-                    
-                    response = self.driver.generic_message(
-                        service=0x10,
-                        class_code=0x04,
-                        instance=self.output_instance,
-                        attribute=3,
-                        request_data=output_data,
-                        connected=False
-                    )
-                    
-                    if response and not (hasattr(response, 'error') and response.error):
-                        print(f"         ✅ 已寫入設備")
-                    else:
-                        error_msg = response.error if hasattr(response, 'error') else '未知'
-                        print(f"         ⚠️ 寫入失敗: {error_msg}")
-                        return False
-                        
-                except Exception as e:
-                    print(f"         ❌ 寫入異常: {e}")
-                    return False
-        
-        time.sleep(0.5)
-        
-        # 讀取並顯示結果
-        try:
-            response = self.driver.generic_message(
-                service=0x0E,
-                class_code=0x04,
-                instance=self.input_instance,
-                attribute=3,
-                connected=False
-            )
-            
-            if response and hasattr(response, 'value'):
-                data = response.value
-                if len(data) > 0:
-                    global_status = data[0]
-                    print(f"         [狀態] 全域狀態: 0x{global_status:02X}")
-                    
-                    if len(data) >= 4:
-                        total_current = struct.unpack('<H', data[2:4])[0] / 10.0
-                        print(f"         [狀態] 總電流: {total_current:.2f}A")
-        except Exception as e:
-            print(f"         ⚠️ 無法讀取狀態: {e}")
-        
-        return True
-    
     def set_channel(self, channel, state):
         """
         控制通道開關（基於手冊 7.1.2 節）
@@ -2266,9 +2170,6 @@ class CaparocController:
             print("\n" + "="*60)
             print("📋 可用命令:")
             print("="*60)
-            print("\n【主開關控制】")
-            print("  main on                      - 開啟主開關 (總電源)")
-            print("  main off                     - 關閉主開關 (總電源)")
             print("\n【通道控制】")
             print("  init <ch> <amps>             - 顯示標稱電流手動設定指引")
             print("                                 範例: init 2 4")
@@ -2290,7 +2191,6 @@ class CaparocController:
             print("  q                            - 退出程式")
             print("="*60)
             print("💡 提示:")
-            print("  - 主開關控制整個系統的總電源 (緊急停止用)")
             print("  - 標稱電流需要手動設定 (使用設備按鈕)")
             print("  - 建議使用靜默監控模式 (monitor start 2 silent)")
             print("="*60)
@@ -2304,14 +2204,6 @@ class CaparocController:
                         if self.monitor_running:
                             self.stop_monitor()
                         break
-                    
-                    elif cmd == 'main on':
-                        # 開啟主開關
-                        self.set_main_power(True)
-                    
-                    elif cmd == 'main off':
-                        # 關閉主開關
-                        self.set_main_power(False)
                     
                     elif cmd == 's':
                         self.show_status()

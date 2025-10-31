@@ -149,120 +149,6 @@ class CaparocController:
         channel = ((global_channel - 1) % self.channels_per_module) + 1
         return (module, channel)
     
-    def prompt_channel_currents(self):
-        """
-        互動式詢問每個通道的額定電流設定（支援多模組）
-        
-        Returns:
-            dict: {global_ch: current, ...} 全域通道編號對應電流
-            或 None (完全跳過初始化)
-        """
-        total_channels = self.get_total_channels()
-        
-        while True:  # 外層循環: 是否初始化
-            print("\n" + "="*60)
-            print("⚙️  通道額定電流設定")
-            print("="*60)
-            print(f"系統檢測到 {self.module_count} 個模組，共 {total_channels} 個通道")
-            print("⚠️  注意: 初始化會覆蓋設備當前狀態")
-            print()
-            
-            # 先詢問是否需要初始化
-            skip_init = input("是否需要初始化通道? [y/N]: ").strip().lower()
-            if skip_init not in ['y', 'yes']:
-                print("✅ 跳過初始化,保持設備當前狀態")
-                return None
-            
-            # 進入設定循環
-            while True:  # 內層循環: 設定電流值
-                print("\n請為每個通道設定額定電流 (1A - 20A)")
-                print("直接按 Enter 使用預設值 4A")
-                print()
-                channel_currents = {}
-                default_current = 4.0
-                
-                # 遍歷所有模組的所有通道
-                for module in range(1, self.module_count + 1):
-                    if self.module_count > 1:
-                        print(f"\n  📦 模組 {module}:")
-                    
-                    for ch in range(1, self.channels_per_module + 1):
-                        global_ch = (module - 1) * self.channels_per_module + ch
-                        
-                        while True:
-                            try:
-                                if self.module_count > 1:
-                                    prompt = f"    M{module}.CH{ch} (#{global_ch}) 額定電流 [預設: {default_current}A]: "
-                                else:
-                                    prompt = f"  CH{ch} 額定電流 [預設: {default_current}A]: "
-                                
-                                user_input = input(prompt).strip()
-                                if user_input == "":
-                                    current = default_current
-                                    print(f"    → 使用預設值: {current}A")
-                                    channel_currents[global_ch] = current
-                                    break
-                                current = float(user_input)
-                                if 1 <= current <= 20:
-                                    print(f"    → 設定為: {current}A")
-                                    channel_currents[global_ch] = current
-                                    break
-                                else:
-                                    print(f"    ⚠️  錯誤: 請輸入 1-20 之間的數值")
-                            except ValueError:
-                                print(f"    ⚠️  錯誤: 請輸入有效的數字")
-                            except KeyboardInterrupt:
-                                print("\n\n⚠️  設定已取消")
-                                return None
-                
-                # 顯示設定摘要
-                print("\n" + "="*60)
-                print("📋 設定摘要:")
-                for module in range(1, self.module_count + 1):
-                    if self.module_count > 1:
-                        print(f"  📦 模組 {module}:")
-                    
-                    for ch in range(1, self.channels_per_module + 1):
-                        global_ch = (module - 1) * self.channels_per_module + ch
-                        current = channel_currents.get(global_ch, 0)
-                        
-                        if current > 0:
-                            if self.module_count > 1:
-                                print(f"    M{module}.CH{ch} (#{global_ch}): {current}A")
-                            else:
-                                print(f"  CH{ch}: {current}A")
-                        else:
-                            if self.module_count > 1:
-                                print(f"    M{module}.CH{ch} (#{global_ch}): 跳過初始化")
-                            else:
-                                print(f"  CH{ch}: 跳過初始化")
-                print("="*60)
-                
-                # 確認設定
-                while True:
-                    confirm = input("\n確認設定? [Y/n/b(返回)]: ").strip().lower()
-                    
-                    if confirm in ['b', 'back', '返回']:
-                        print("⚠️  返回上一層 (重新選擇是否初始化)")
-                        break  # 跳出確認循環
-                        
-                    elif confirm in ['n', 'no']:
-                        print("⚠️  重新設定通道電流值\n")
-                        break  # 跳出確認循環
-                        
-                    elif confirm in ['', 'y', 'yes']:
-                        # 確認完成,返回設定
-                        return channel_currents
-                        
-                    else:
-                        print("    請輸入 Y(確認), n(重設), 或 b(返回)")
-                
-                # 根據選擇決定行為
-                if confirm in ['b', 'back', '返回']:
-                    break  # 跳出內層循環,回到外層 (重新詢問是否初始化)
-                # 如果是 'n',繼續內層循環 (重新輸入電流值)
-
-    
     def initialize_all_channels(self, driver, channel_currents=None):
         """
         初始化所有通道的額定電流（一次性，程式啟動時執行）- 支援多模組
@@ -2097,72 +1983,60 @@ class CaparocController:
             
             print("\n" + "="*60)
             
-            # 步驟 1: 互動式設定通道額定電流
-            channel_currents = self.prompt_channel_currents()
-            
-            # 步驟 2: 初始化所有通道 (如果需要)
-            if channel_currents is not None:
-                print("\n[初始化] 設定通道額定電流...")
-                if not self.initialize_all_channels(driver, channel_currents):
-                    print("❌ 初始化失敗")
-                    return
-                # 初始化後標記為已完成
-                self.channels_initialized = True
-            else:
-                # 跳過初始化,從設備讀取實際狀態並同步
-                print("\n[跳過初始化] 讀取設備實際狀態並同步...")
-                try:
-                    # ✅ 正確做法: 從 Input Assembly 讀取實際狀態
-                    response = driver.generic_message(
-                        service=0x0E,  # Get Attribute Single
-                        class_code=0x04,
-                        instance=self.input_instance,  # 0x65 (Input Assembly)
-                        attribute=3,
-                        connected=False
-                    )
-                    
-                    if response and hasattr(response, 'value') and len(response.value) >= 18:
-                        data = response.value
-                        
-                        # 讀取各通道實際狀態 (從 Byte 6, 9, 12, 15)
-                        channel_offsets = [6, 9, 12, 15]
-                        actual_states = {}
-                        
-                        print("   設備當前狀態:")
-                        for ch in range(1, 5):
-                            offset = channel_offsets[ch - 1]
-                            if len(data) > offset:
-                                status_byte = data[offset]
-                                is_on = bool(status_byte & 0x01)  # bit 0 = on/off
-                                actual_states[ch] = is_on
-                                
-                                current_byte = data[offset + 2] if len(data) > offset + 2 else 0
-                                current = current_byte / 10.0
-                                
-                                state_icon = "🟢 開" if is_on else "🔴 關"
-                                print(f"     CH{ch}: {state_icon} ({current:.1f}A)")
-                        
-                        # 根據實際狀態重建 Output Assembly buffer
-                        self.current_output_data = bytearray(18)
-                        byte1_value = 0x80  # bit7=1 (release)
-                        
-                        for ch, is_on in actual_states.items():
-                            if is_on:
-                                byte1_value |= (1 << (ch - 1))
-                        
-                        self.current_output_data[1] = byte1_value
-                        
-                        print(f"\n   ✅ 已同步控制狀態 (byte[1]=0x{byte1_value:02X})")
-                        print(f"   現在可以安全地控制通道,不會影響其他已開啟的通道")
-                    else:
-                        print("⚠️  無法讀取設備狀態,使用空白狀態")
-                        
-                except Exception as e:
-                    print(f"⚠️  讀取設備狀態失敗: {e}")
-                    print("   將使用空白狀態 (可能會關閉運行中的通道)")
+            # 步驟 1: 從設備讀取實際狀態並同步 (避免誤關閉運行中的通道)
+            print("\n[啟動] 讀取設備實際狀態並同步...")
+            try:
+                # ✅ 正確做法: 從 Input Assembly 讀取實際狀態
+                response = driver.generic_message(
+                    service=0x0E,  # Get Attribute Single
+                    class_code=0x04,
+                    instance=self.input_instance,  # 0x65 (Input Assembly)
+                    attribute=3,
+                    connected=False
+                )
                 
-                # 標記為已完成 (允許控制)
-                self.channels_initialized = True
+                if response and hasattr(response, 'value') and len(response.value) >= 18:
+                    data = response.value
+                    
+                    # 讀取各通道實際狀態 (從 Byte 6, 9, 12, 15)
+                    channel_offsets = [6, 9, 12, 15]
+                    actual_states = {}
+                    
+                    print("   設備當前狀態:")
+                    for ch in range(1, 5):
+                        offset = channel_offsets[ch - 1]
+                        if len(data) > offset:
+                            status_byte = data[offset]
+                            is_on = bool(status_byte & 0x01)  # bit 0 = on/off
+                            actual_states[ch] = is_on
+                            
+                            current_byte = data[offset + 2] if len(data) > offset + 2 else 0
+                            current = current_byte / 10.0
+                            
+                            state_icon = "🟢 開" if is_on else "🔴 關"
+                            print(f"     CH{ch}: {state_icon} ({current:.1f}A)")
+                    
+                    # 根據實際狀態重建 Output Assembly buffer
+                    self.current_output_data = bytearray(18)
+                    byte1_value = 0x80  # bit7=1 (release)
+                    
+                    for ch, is_on in actual_states.items():
+                        if is_on:
+                            byte1_value |= (1 << (ch - 1))
+                    
+                    self.current_output_data[1] = byte1_value
+                    
+                    print(f"\n   ✅ 已同步控制狀態 (byte[1]=0x{byte1_value:02X})")
+                    print(f"   現在可以安全地控制通道,不會影響其他已開啟的通道")
+                else:
+                    print("⚠️  無法讀取設備狀態,使用空白狀態")
+                    
+            except Exception as e:
+                print(f"⚠️  讀取設備狀態失敗: {e}")
+                print("   將使用空白狀態 (可能會關閉運行中的通道)")
+            
+            # 標記為已初始化 (允許控制)
+            self.channels_initialized = True
             
             # 嘗試建立 Implicit Messaging (靜默模式,CAPAROC 不支援)
             self._establish_implicit_messaging(driver)
@@ -2170,14 +2044,15 @@ class CaparocController:
             print("\n" + "="*60)
             print("📋 可用命令:")
             print("="*60)
+            print("\n【標稱電流設定】")
+            print("  init <ch> <amps>             - 設定通道標稱電流")
+            print("                                 範例: init 2 4  (設定 CH2 為 4A)")
+            print("  verify <ch>                  - 驗證通道標稱電流設定")
             print("\n【通道控制】")
-            print("  init <ch> <amps>             - 顯示標稱電流手動設定指引")
-            print("                                 範例: init 2 4")
             print("  on <ch>                      - 開啟通道 (例: on 1)")
             print("  off <ch>                     - 關閉通道")
             print("\n【狀態查詢】")
             print("  s                            - 顯示完整狀態")
-            print("  verify <ch>                  - 驗證通道標稱電流設定")
             print("  scan                         - 掃描所有 Assembly Instance")
             print("  limits                       - 顯示通道配置限制")
             print("\n【即時監控】")
@@ -2190,9 +2065,11 @@ class CaparocController:
             print("\n【系統】")
             print("  q                            - 退出程式")
             print("="*60)
-            print("💡 提示:")
-            print("  - 標稱電流需要手動設定 (使用設備按鈕)")
-            print("  - 建議使用靜默監控模式 (monitor start 2 silent)")
+            print("💡 快速開始:")
+            print("  1. 使用 'init <ch> <amps>' 設定標稱電流 (如: init 1 4)")
+            print("  2. 使用 'on <ch>' 開啟通道 (如: on 1)")
+            print("  3. 使用 's' 查看狀態")
+            print("  4. 使用 'monitor start 2 silent' 啟動監控")
             print("="*60)
             
             while True:

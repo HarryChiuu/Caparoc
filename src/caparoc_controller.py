@@ -1916,6 +1916,69 @@ class CaparocController:
             import traceback
             traceback.print_exc()
     
+    def check_device_connection(self, driver):
+        """
+        檢查裝置連線狀態
+        
+        ⚠️ 重要：CAPAROC 不支援標準 Identity Object (Class 0x01)
+        改用直接讀取 Input Assembly (0x65) 來驗證連線
+        
+        Args:
+            driver: CIPDriver 實例
+        
+        Returns:
+            dict: {
+                'connected': bool,  # 是否連線成功
+                'error': str,       # 錯誤訊息 (如果有)
+                'device_info': dict # 設備資訊 (如果連線成功)
+            }
+        """
+        result = {
+            'connected': False,
+            'error': None,
+            'device_info': {}
+        }
+        
+        try:
+            # ✅ 改用讀取 Input Assembly 來驗證連線
+            # 這是 CAPAROC 已知支援的方法
+            response = driver.generic_message(
+                service=0x0E,  # Get Attribute Single
+                class_code=0x04,  # Assembly Object
+                instance=self.input_instance,  # 0x65 (Input Assembly)
+                attribute=3,
+                connected=False
+            )
+            
+            if response and hasattr(response, 'value') and len(response.value) >= 6:
+                result['connected'] = True
+                
+                # 從 Input Assembly 讀取基本資訊
+                data = response.value
+                
+                # 讀取模組數量 (Byte 1)
+                if len(data) > 1:
+                    module_count = data[1]
+                    result['device_info']['module_count'] = module_count
+                    result['device_info']['total_channels'] = module_count * 4
+                
+                # 讀取系統電壓 (Byte 4-5)
+                if len(data) >= 6:
+                    voltage_raw = struct.unpack('<H', data[4:6])[0]
+                    voltage = voltage_raw / 100.0
+                    result['device_info']['voltage'] = f"{voltage:.1f}V"
+                
+                # 標註為 CAPAROC 設備
+                result['device_info']['device_type'] = 'CAPAROC Circuit Breaker'
+                    
+            else:
+                result['error'] = "設備無回應或 Input Assembly 讀取失敗"
+                
+        except Exception as e:
+            result['error'] = f"連線失敗: {str(e)}"
+        
+        return result
+    
     def run(self):
         """主程式"""
         print("🚀 CAPAROC 控制器 (Production)")
@@ -1929,10 +1992,46 @@ class CaparocController:
         print("   2. IP 配置支援 (Phase 3-4)")
         print("   3. GUI 規劃設計 (Phase 3-5)")
         
-        with CIPDriver(self.device_ip) as driver:
-            self.driver = driver
+        # ========== 步驟 0: 裝置連線檢查 ==========
+        print("\n" + "="*60)
+        print("🔌 檢查裝置連線...")
+        print("="*60)
+        
+        try:
+            with CIPDriver(self.device_ip) as driver:
+                self.driver = driver
+                
+                # 執行連線檢查
+                conn_result = self.check_device_connection(driver)
+                
+                if not conn_result['connected']:
+                    print(f"\n❌ 裝置連線失敗!")
+                    print(f"   IP 位址: {self.device_ip}")
+                    if conn_result['error']:
+                        print(f"   錯誤: {conn_result['error']}")
+                    print(f"\n💡 請檢查:")
+                    print(f"   1. 設備是否已開機")
+                    print(f"   2. 網路線是否正確連接")
+                    print(f"   3. IP 位址是否正確 (當前: {self.device_ip})")
+                    print(f"   4. 電腦與設備是否在同一網段")
+                    print(f"   5. 防火牆是否阻擋連線")
+                    return
+                
+                # 連線成功，顯示設備資訊
+                print(f"✅ 裝置連線成功!")
+                print(f"   IP 位址: {self.device_ip}")
+                
+                if conn_result['device_info']:
+                    if 'device_type' in conn_result['device_info']:
+                        print(f"   設備類型: {conn_result['device_info']['device_type']}")
+                    if 'module_count' in conn_result['device_info']:
+                        print(f"   模組數量: {conn_result['device_info']['module_count']} 個 ({conn_result['device_info'].get('total_channels', 0)} 通道)")
+                    if 'voltage' in conn_result['device_info']:
+                        print(f"   系統電壓: {conn_result['device_info']['voltage']}")
+                
+                print("="*60)
             
-            # ========== Phase 3: 步驟 0 - 全域系統狀態檢查 ==========
+                # ========== Phase 3: 步驟 0 - 全域系統狀態檢查 ==========
             print("\n" + "="*60)
             print("🔍 Phase 3: 全域系統狀態檢查")
             print("="*60)
@@ -2063,6 +2162,7 @@ class CaparocController:
             print("  monitor stop                 - 停止監控")
             print("  monitor status               - 顯示監控狀態")
             print("\n【系統】")
+            print("  reconnect                    - 重新連線設備")
             print("  q                            - 退出程式")
             print("="*60)
             print("💡 快速開始:")
@@ -2081,6 +2181,13 @@ class CaparocController:
                         if self.monitor_running:
                             self.stop_monitor()
                         break
+                    
+                    elif cmd == 'reconnect':
+                        print("\n🔄 嘗試重新連線...")
+                        # 停止監控 (如果運行中)
+                        if self.monitor_running:
+                            self.stop_monitor()
+                        return 'reconnect'
                     
                     elif cmd == 's':
                         self.show_status()
@@ -2197,10 +2304,28 @@ class CaparocController:
                     break
                 except Exception as e:
                     print(f"❌ 錯誤: {e}")
+        
+        except Exception as e:
+            # 處理 CIPDriver 連線失敗
+            print(f"\n❌ 裝置連線失敗!")
+            print(f"   IP 位址: {self.device_ip}")
+            print(f"   錯誤: 無法建立連線")
+            print(f"\n💡 請檢查:")
+            print(f"   1. 設備是否已開機")
+            print(f"   2. 網路線是否正確連接")
+            print(f"   3. IP 位址是否正確 (當前: {self.device_ip})")
+            print(f"   4. 電腦與設備是否在同一網段")
+            print(f"   5. 防火牆是否阻擋連線 (Port 44818)")
+            return
 
 def main():
     controller = CaparocController()
-    controller.run()
+    while True:
+        result = controller.run()
+        if result == 'reconnect':
+            print("\n[系統] 重新啟動連線與初始化流程...\n")
+            continue
+        break
 
 if __name__ == "__main__":
     main()

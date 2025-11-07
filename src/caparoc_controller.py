@@ -2030,280 +2030,280 @@ class CaparocController:
                         print(f"   系統電壓: {conn_result['device_info']['voltage']}")
                 
                 print("="*60)
-            
-                # ========== Phase 3: 步驟 0 - 全域系統狀態檢查 ==========
-            print("\n" + "="*60)
-            print("🔍 Phase 3: 全域系統狀態檢查")
-            print("="*60)
-            
-            status = self.check_global_system_status()
-            
-            # 儲存模組數量到實例變數（供後續動態使用）
-            self.module_count = status['module_count']
-            
-            # 顯示檢查結果
-            print(f"\n📊 系統狀態:")
-            print(f"   電壓: {status['voltage']:.2f} V")
-            print(f"   總電流: {status['total_current']:.2f} A")
-            print(f"   模組數量: {status['module_count']} 個 ({self.get_total_channels()} 通道)")
-            print(f"   狀態位元組: 0x{status['global_status_byte']:02X}")
-            
-            # 顯示錯誤訊息
-            if status['errors']:
-                print(f"\n❌ 發現 {len(status['errors'])} 個錯誤:")
-                for error in status['errors']:
-                    print(f"   {error}")
-            
-            # 顯示警告訊息
-            if status['warnings']:
-                print(f"\n⚠️  發現 {len(status['warnings'])} 個警告:")
-                for warning in status['warnings']:
-                    print(f"   {warning}")
-            
-            # 顯示正常狀態
-            if not status['errors'] and not status['warnings']:
-                print(f"\n✅ 系統狀態正常")
-            
-            # 如果有嚴重錯誤，詢問是否繼續
-            if not status['safe']:
-                print("\n" + "="*60)
-                print("⚠️  警告: 系統狀態異常")
-                print("="*60)
-                while True:
-                    user_choice = input("\n是否仍要繼續? [y/N]: ").strip().lower()
-                    if user_choice in ['y', 'yes']:
-                        print("⚠️  使用者選擇繼續 (風險自負)")
-                        break
-                    elif user_choice in ['', 'n', 'no']:
-                        print("✅ 安全退出")
-                        return
-                    else:
-                        print("   請輸入 y (繼續) 或 N (退出)")
-            
-            print("\n" + "="*60)
-            
-            # 步驟 1: 從設備讀取實際狀態並同步 (避免誤關閉運行中的通道)
-            print("\n[啟動] 讀取設備實際狀態並同步...")
-            try:
-                # ✅ 正確做法: 從 Input Assembly 讀取實際狀態
-                response = driver.generic_message(
-                    service=0x0E,  # Get Attribute Single
-                    class_code=0x04,
-                    instance=self.input_instance,  # 0x65 (Input Assembly)
-                    attribute=3,
-                    connected=False
-                )
                 
-                if response and hasattr(response, 'value') and len(response.value) >= 18:
-                    data = response.value
-                    
-                    # 讀取各通道實際狀態 (從 Byte 6, 9, 12, 15)
-                    channel_offsets = [6, 9, 12, 15]
-                    actual_states = {}
-                    
-                    print("   設備當前狀態:")
-                    for ch in range(1, 5):
-                        offset = channel_offsets[ch - 1]
-                        if len(data) > offset:
-                            status_byte = data[offset]
-                            is_on = bool(status_byte & 0x01)  # bit 0 = on/off
-                            actual_states[ch] = is_on
-                            
-                            current_byte = data[offset + 2] if len(data) > offset + 2 else 0
-                            current = current_byte / 10.0
-                            
-                            state_icon = "🟢 開" if is_on else "🔴 關"
-                            print(f"     CH{ch}: {state_icon} ({current:.1f}A)")
-                    
-                    # 根據實際狀態重建 Output Assembly buffer
-                    self.current_output_data = bytearray(18)
-                    byte1_value = 0x80  # bit7=1 (release)
-                    
-                    for ch, is_on in actual_states.items():
-                        if is_on:
-                            byte1_value |= (1 << (ch - 1))
-                    
-                    self.current_output_data[1] = byte1_value
-                    
-                    print(f"\n   ✅ 已同步控制狀態 (byte[1]=0x{byte1_value:02X})")
-                    print(f"   現在可以安全地控制通道,不會影響其他已開啟的通道")
-                else:
-                    print("⚠️  無法讀取設備狀態,使用空白狀態")
-                    
-            except Exception as e:
-                print(f"⚠️  讀取設備狀態失敗: {e}")
-                print("   將使用空白狀態 (可能會關閉運行中的通道)")
-            
-            # 標記為已初始化 (允許控制)
-            self.channels_initialized = True
-            
-            # 嘗試建立 Implicit Messaging (靜默模式,CAPAROC 不支援)
-            self._establish_implicit_messaging(driver)
-            
-            print("\n" + "="*60)
-            print("📋 可用命令:")
-            print("="*60)
-            print("\n【標稱電流設定】")
-            print("  init <ch> <amps>             - 設定通道標稱電流")
-            print("                                 範例: init 2 4  (設定 CH2 為 4A)")
-            print("  verify <ch>                  - 驗證通道標稱電流設定")
-            print("\n【通道控制】")
-            print("  on <ch>                      - 開啟通道 (例: on 1)")
-            print("  off <ch>                     - 關閉通道")
-            print("\n【狀態查詢】")
-            print("  s                            - 顯示完整狀態")
-            print("  scan                         - 掃描所有 Assembly Instance")
-            print("  limits                       - 顯示通道配置限制")
-            print("\n【即時監控】")
-            print("  monitor start [interval] [mode]  - 啟動監控")
-            print("                                     interval: 更新頻率(秒), 預設2")
-            print("                                     mode: silent/display, 預設silent")
-            print("                                     範例: monitor start 5 silent")
-            print("  monitor stop                 - 停止監控")
-            print("  monitor status               - 顯示監控狀態")
-            print("\n【系統】")
-            print("  reconnect                    - 重新連線設備")
-            print("  q                            - 退出程式")
-            print("="*60)
-            print("💡 快速開始:")
-            print("  1. 使用 'init <ch> <amps>' 設定標稱電流 (如: init 1 4)")
-            print("  2. 使用 'on <ch>' 開啟通道 (如: on 1)")
-            print("  3. 使用 's' 查看狀態")
-            print("  4. 使用 'monitor start 2 silent' 啟動監控")
-            print("="*60)
-            
-            while True:
+                # ========== Phase 3: 步驟 0 - 全域系統狀態檢查 ==========
+                print("\n" + "="*60)
+                print("🔍 Phase 3: 全域系統狀態檢查")
+                print("="*60)
+                
+                status = self.check_global_system_status()
+                
+                # 儲存模組數量到實例變數（供後續動態使用）
+                self.module_count = status['module_count']
+                
+                # 顯示檢查結果
+                print(f"\n📊 系統狀態:")
+                print(f"   電壓: {status['voltage']:.2f} V")
+                print(f"   總電流: {status['total_current']:.2f} A")
+                print(f"   模組數量: {status['module_count']} 個 ({self.get_total_channels()} 通道)")
+                print(f"   狀態位元組: 0x{status['global_status_byte']:02X}")
+                
+                # 顯示錯誤訊息
+                if status['errors']:
+                    print(f"\n❌ 發現 {len(status['errors'])} 個錯誤:")
+                    for error in status['errors']:
+                        print(f"   {error}")
+                
+                # 顯示警告訊息
+                if status['warnings']:
+                    print(f"\n⚠️  發現 {len(status['warnings'])} 個警告:")
+                    for warning in status['warnings']:
+                        print(f"   {warning}")
+                
+                # 顯示正常狀態
+                if not status['errors'] and not status['warnings']:
+                    print(f"\n✅ 系統狀態正常")
+                
+                # 如果有嚴重錯誤，詢問是否繼續
+                if not status['safe']:
+                    print("\n" + "="*60)
+                    print("⚠️  警告: 系統狀態異常")
+                    print("="*60)
+                    while True:
+                        user_choice = input("\n是否仍要繼續? [y/N]: ").strip().lower()
+                        if user_choice in ['y', 'yes']:
+                            print("⚠️  使用者選擇繼續 (風險自負)")
+                            break
+                        elif user_choice in ['', 'n', 'no']:
+                            print("✅ 安全退出")
+                            return
+                        else:
+                            print("   請輸入 y (繼續) 或 N (退出)")
+                
+                print("\n" + "="*60)
+                
+                # 步驟 1: 從設備讀取實際狀態並同步 (避免誤關閉運行中的通道)
+                print("\n[啟動] 讀取設備實際狀態並同步...")
                 try:
-                    cmd = input("\n> ").strip().lower()
+                    # ✅ 正確做法: 從 Input Assembly 讀取實際狀態
+                    response = driver.generic_message(
+                        service=0x0E,  # Get Attribute Single
+                        class_code=0x04,
+                        instance=self.input_instance,  # 0x65 (Input Assembly)
+                        attribute=3,
+                        connected=False
+                    )
                     
-                    if cmd == 'q':
-                        # 停止監控 (如果運行中)
+                    if response and hasattr(response, 'value') and len(response.value) >= 18:
+                        data = response.value
+                        
+                        # 讀取各通道實際狀態 (從 Byte 6, 9, 12, 15)
+                        channel_offsets = [6, 9, 12, 15]
+                        actual_states = {}
+                        
+                        print("   設備當前狀態:")
+                        for ch in range(1, 5):
+                            offset = channel_offsets[ch - 1]
+                            if len(data) > offset:
+                                status_byte = data[offset]
+                                is_on = bool(status_byte & 0x01)  # bit 0 = on/off
+                                actual_states[ch] = is_on
+                                
+                                current_byte = data[offset + 2] if len(data) > offset + 2 else 0
+                                current = current_byte / 10.0
+                                
+                                state_icon = "🟢 開" if is_on else "🔴 關"
+                                print(f"     CH{ch}: {state_icon} ({current:.1f}A)")
+                        
+                        # 根據實際狀態重建 Output Assembly buffer
+                        self.current_output_data = bytearray(18)
+                        byte1_value = 0x80  # bit7=1 (release)
+                        
+                        for ch, is_on in actual_states.items():
+                            if is_on:
+                                byte1_value |= (1 << (ch - 1))
+                        
+                        self.current_output_data[1] = byte1_value
+                        
+                        print(f"\n   ✅ 已同步控制狀態 (byte[1]=0x{byte1_value:02X})")
+                        print(f"   現在可以安全地控制通道,不會影響其他已開啟的通道")
+                    else:
+                        print("⚠️  無法讀取設備狀態,使用空白狀態")
+                        
+                except Exception as e:
+                    print(f"⚠️  讀取設備狀態失敗: {e}")
+                    print("   將使用空白狀態 (可能會關閉運行中的通道)")
+                
+                # 標記為已初始化 (允許控制)
+                self.channels_initialized = True
+                
+                # 嘗試建立 Implicit Messaging (靜默模式,CAPAROC 不支援)
+                self._establish_implicit_messaging(driver)
+                
+                print("\n" + "="*60)
+                print("📋 可用命令:")
+                print("="*60)
+                print("\n【標稱電流設定】")
+                print("  init <ch> <amps>             - 設定通道標稱電流")
+                print("                                 範例: init 2 4  (設定 CH2 為 4A)")
+                print("  verify <ch>                  - 驗證通道標稱電流設定")
+                print("\n【通道控制】")
+                print("  on <ch>                      - 開啟通道 (例: on 1)")
+                print("  off <ch>                     - 關閉通道")
+                print("\n【狀態查詢】")
+                print("  s                            - 顯示完整狀態")
+                print("  scan                         - 掃描所有 Assembly Instance")
+                print("  limits                       - 顯示通道配置限制")
+                print("\n【即時監控】")
+                print("  monitor start [interval] [mode]  - 啟動監控")
+                print("                                     interval: 更新頻率(秒), 預設2")
+                print("                                     mode: silent/display, 預設silent")
+                print("                                     範例: monitor start 5 silent")
+                print("  monitor stop                 - 停止監控")
+                print("  monitor status               - 顯示監控狀態")
+                print("\n【系統】")
+                print("  reconnect                    - 重新連線設備")
+                print("  q                            - 退出程式")
+                print("="*60)
+                print("💡 快速開始:")
+                print("  1. 使用 'init <ch> <amps>' 設定標稱電流 (如: init 1 4)")
+                print("  2. 使用 'on <ch>' 開啟通道 (如: on 1)")
+                print("  3. 使用 's' 查看狀態")
+                print("  4. 使用 'monitor start 2 silent' 啟動監控")
+                print("="*60)
+                
+                while True:
+                    try:
+                        cmd = input("\n> ").strip().lower()
+                        
+                        if cmd == 'q':
+                            # 停止監控 (如果運行中)
+                            if self.monitor_running:
+                                self.stop_monitor()
+                            break
+                        
+                        elif cmd == 'reconnect':
+                            print("\n🔄 嘗試重新連線...")
+                            # 停止監控 (如果運行中)
+                            if self.monitor_running:
+                                self.stop_monitor()
+                            return 'reconnect'
+                        
+                        elif cmd == 's':
+                            self.show_status()
+                        elif cmd == 'scan':
+                            self.scan_assemblies()
+                        elif cmd == 'limits':
+                            self.show_channel_limits()
+                        elif cmd.startswith('init '):
+                            # ✅ 使用正確的 Config Assembly 方法設定標稱電流
+                            try:
+                                parts = cmd.split()
+                                if len(parts) != 3:
+                                    print("⚠️  用法: init <通道編號> <電流值>")
+                                    print("   範例: init 2 4  (設定 CH2 為 4A)")
+                                    continue
+                                
+                                ch = int(parts[1])
+                                amps = int(parts[2])
+                                
+                                if not (1 <= ch <= self.get_total_channels()):
+                                    print(f"⚠️  通道編號超出範圍 (1-{self.get_total_channels()})")
+                                    continue
+                                
+                                if not (1 <= amps <= 20):
+                                    print(f"⚠️  電流值超出範圍 (1-20A)")
+                                    continue
+                                
+                                module, channel = self.get_module_and_channel(ch)
+                                
+                                if self.module_count > 1:
+                                    print(f"\n[設定] M{module}.CH{channel} (#{ch}): 標稱電流 {amps}A")
+                                else:
+                                    print(f"\n[設定] CH{ch}: 標稱電流 {amps}A")
+                                
+                                # 使用正確的 Config Assembly 讀取-修改-寫入方法
+                                success = self._set_nominal_current_config_assembly(driver, module, channel, amps)
+                                
+                                if success:
+                                    print(f"✅ CH{ch} 設定完成")
+                                else:
+                                    print(f"❌ CH{ch} 設定失敗")
+                                    print(f"💡 請檢查:")
+                                    print(f"   1. 設備旋轉開關是否在 'RC' 位置")
+                                    print(f"   2. 硬體鎖是否已解除 (長按 PWR 3秒)")
+                            
+                            except (ValueError, IndexError) as e:
+                                print(f"⚠️  命令格式錯誤: {e}")
+                                print("   用法: init <通道編號> <電流值>")
+                        
+                        elif cmd.startswith('verify '):
+                            try:
+                                ch = int(cmd.split()[1])
+                                if 1 <= ch <= self.get_total_channels():
+                                    module, channel = self.get_module_and_channel(ch)
+                                    actual = self._verify_nominal_current(driver, module, channel)
+                                    if actual is not None:
+                                        if self.module_count > 1:
+                                            print(f"✅ M{module}.CH{channel} (#{ch}) 標稱電流: {actual}A")
+                                        else:
+                                            print(f"✅ CH{ch} 標稱電流: {actual}A")
+                                    else:
+                                        print(f"❌ 無法讀取 CH{ch} 的標稱電流")
+                                else:
+                                    print(f"⚠️  通道編號超出範圍 (1-{self.get_total_channels()})")
+                            except (ValueError, IndexError):
+                                print("⚠️  用法: verify <通道編號>")
+                        elif cmd.startswith('on '):
+                            ch = int(cmd.split()[1])
+                            self.set_channel(ch, True)
+                        elif cmd.startswith('off '):
+                            ch = int(cmd.split()[1])
+                            self.set_channel(ch, False)
+                        elif cmd.startswith('monitor'):
+                            parts = cmd.split()
+                            if len(parts) < 2:
+                                print("⚠️  請指定 monitor 子命令: start, stop, status")
+                                continue
+                            
+                            subcmd = parts[1]
+                            
+                            if subcmd == 'start':
+                                # 解析間隔和模式參數
+                                interval = None
+                                mode = None
+                                
+                                if len(parts) >= 3:
+                                    try:
+                                        interval = float(parts[2])
+                                    except ValueError:
+                                        print(f"⚠️  無效的更新頻率: {parts[2]}")
+                                        continue
+                                
+                                if len(parts) >= 4:
+                                    mode = parts[3]
+                                    if mode not in ['silent', 'display']:
+                                        print(f"⚠️  模式必須是 'silent' 或 'display'")
+                                        continue
+                                
+                                self.start_monitor(interval, mode)
+                            
+                            elif subcmd == 'stop':
+                                self.stop_monitor()
+                            
+                            elif subcmd == 'status':
+                                self.show_monitor_info()
+                            
+                            else:
+                                print(f"⚠️  未知的 monitor 子命令: {subcmd}")
+                        
+                    except KeyboardInterrupt:
+                        print("\n⚠️  收到中斷訊號")
                         if self.monitor_running:
                             self.stop_monitor()
                         break
-                    
-                    elif cmd == 'reconnect':
-                        print("\n🔄 嘗試重新連線...")
-                        # 停止監控 (如果運行中)
-                        if self.monitor_running:
-                            self.stop_monitor()
-                        return 'reconnect'
-                    
-                    elif cmd == 's':
-                        self.show_status()
-                    elif cmd == 'scan':
-                        self.scan_assemblies()
-                    elif cmd == 'limits':
-                        self.show_channel_limits()
-                    elif cmd.startswith('init '):
-                        # ✅ 使用正確的 Config Assembly 方法設定標稱電流
-                        try:
-                            parts = cmd.split()
-                            if len(parts) != 3:
-                                print("⚠️  用法: init <通道編號> <電流值>")
-                                print("   範例: init 2 4  (設定 CH2 為 4A)")
-                                continue
-                            
-                            ch = int(parts[1])
-                            amps = int(parts[2])
-                            
-                            if not (1 <= ch <= self.get_total_channels()):
-                                print(f"⚠️  通道編號超出範圍 (1-{self.get_total_channels()})")
-                                continue
-                            
-                            if not (1 <= amps <= 20):
-                                print(f"⚠️  電流值超出範圍 (1-20A)")
-                                continue
-                            
-                            module, channel = self.get_module_and_channel(ch)
-                            
-                            if self.module_count > 1:
-                                print(f"\n[設定] M{module}.CH{channel} (#{ch}): 標稱電流 {amps}A")
-                            else:
-                                print(f"\n[設定] CH{ch}: 標稱電流 {amps}A")
-                            
-                            # 使用正確的 Config Assembly 讀取-修改-寫入方法
-                            success = self._set_nominal_current_config_assembly(driver, module, channel, amps)
-                            
-                            if success:
-                                print(f"✅ CH{ch} 設定完成")
-                            else:
-                                print(f"❌ CH{ch} 設定失敗")
-                                print(f"💡 請檢查:")
-                                print(f"   1. 設備旋轉開關是否在 'RC' 位置")
-                                print(f"   2. 硬體鎖是否已解除 (長按 PWR 3秒)")
-                        
-                        except (ValueError, IndexError) as e:
-                            print(f"⚠️  命令格式錯誤: {e}")
-                            print("   用法: init <通道編號> <電流值>")
-                    
-                    elif cmd.startswith('verify '):
-                        try:
-                            ch = int(cmd.split()[1])
-                            if 1 <= ch <= self.get_total_channels():
-                                module, channel = self.get_module_and_channel(ch)
-                                actual = self._verify_nominal_current(driver, module, channel)
-                                if actual is not None:
-                                    if self.module_count > 1:
-                                        print(f"✅ M{module}.CH{channel} (#{ch}) 標稱電流: {actual}A")
-                                    else:
-                                        print(f"✅ CH{ch} 標稱電流: {actual}A")
-                                else:
-                                    print(f"❌ 無法讀取 CH{ch} 的標稱電流")
-                            else:
-                                print(f"⚠️  通道編號超出範圍 (1-{self.get_total_channels()})")
-                        except (ValueError, IndexError):
-                            print("⚠️  用法: verify <通道編號>")
-                    elif cmd.startswith('on '):
-                        ch = int(cmd.split()[1])
-                        self.set_channel(ch, True)
-                    elif cmd.startswith('off '):
-                        ch = int(cmd.split()[1])
-                        self.set_channel(ch, False)
-                    elif cmd.startswith('monitor'):
-                        parts = cmd.split()
-                        if len(parts) < 2:
-                            print("⚠️  請指定 monitor 子命令: start, stop, status")
-                            continue
-                        
-                        subcmd = parts[1]
-                        
-                        if subcmd == 'start':
-                            # 解析間隔和模式參數
-                            interval = None
-                            mode = None
-                            
-                            if len(parts) >= 3:
-                                try:
-                                    interval = float(parts[2])
-                                except ValueError:
-                                    print(f"⚠️  無效的更新頻率: {parts[2]}")
-                                    continue
-                            
-                            if len(parts) >= 4:
-                                mode = parts[3]
-                                if mode not in ['silent', 'display']:
-                                    print(f"⚠️  模式必須是 'silent' 或 'display'")
-                                    continue
-                            
-                            self.start_monitor(interval, mode)
-                        
-                        elif subcmd == 'stop':
-                            self.stop_monitor()
-                        
-                        elif subcmd == 'status':
-                            self.show_monitor_info()
-                        
-                        else:
-                            print(f"⚠️  未知的 monitor 子命令: {subcmd}")
-                    
-                except KeyboardInterrupt:
-                    print("\n⚠️  收到中斷訊號")
-                    if self.monitor_running:
-                        self.stop_monitor()
-                    break
-                except Exception as e:
-                    print(f"❌ 錯誤: {e}")
+                    except Exception as e:
+                        print(f"❌ 錯誤: {e}")
         
         except Exception as e:
             # 處理 CIPDriver 連線失敗

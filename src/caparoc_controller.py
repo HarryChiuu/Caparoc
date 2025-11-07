@@ -1979,18 +1979,79 @@ class CaparocController:
         
         return result
     
+    def _configure_device_ip(self):
+        """
+        配置設備 IP 位址
+        
+        Returns:
+            str: 新的 IP 位址，或 None (取消)
+        """
+        print("\n" + "="*60)
+        print("📝 IP 位址設定")
+        print("="*60)
+        print("請輸入新的設備 IP 位址")
+        print("格式: xxx.xxx.xxx.xxx (例: 192.168.1.100)")
+        print("或輸入 'cancel' 取消設定")
+        print("="*60)
+        
+        while True:
+            new_ip = input("\n新 IP 位址: ").strip()
+            
+            if new_ip.lower() == 'cancel':
+                return None
+            
+            # 驗證 IP 格式
+            if self._validate_ip(new_ip):
+                # 確認變更
+                print(f"\n⚠️  確認要將 IP 從 {self.device_ip} 變更為 {new_ip} 嗎？")
+                confirm = input("請輸入 [Y]確認 / [N]取消: ").strip().upper()
+                if confirm == 'Y':
+                    return new_ip
+                elif confirm == 'N':
+                    print("已取消變更")
+                    continue
+                else:
+                    print("⚠️  無效的輸入，請重新輸入 IP")
+            else:
+                print(f"⚠️  無效的 IP 格式: {new_ip}")
+                print("   請使用正確格式 (例: 192.168.1.100)")
+    
+    def _validate_ip(self, ip_str):
+        """
+        驗證 IP 位址格式
+        
+        Args:
+            ip_str: IP 位址字串
+        
+        Returns:
+            bool: True=有效, False=無效
+        """
+        try:
+            parts = ip_str.split('.')
+            if len(parts) != 4:
+                return False
+            
+            for part in parts:
+                num = int(part)
+                if num < 0 or num > 255:
+                    return False
+            
+            return True
+        except (ValueError, AttributeError):
+            return False
+    
     def run(self):
         """主程式"""
-        print("🚀 CAPAROC 控制器 (Production)")
-        print(f"設備: {self.device_ip}")
-        print("\n✅ Phase 1 完成: 互動式電流值設定")
-        print("✅ Phase 2 完成: 狀態顯示增強 (全域狀態 + 通道 + 總電流)")
-        print("✅ Phase 3-1 完成: 程式啟動全域狀態檢查")
-        print("✅ Phase 3-2 完成: 即時監控功能")
-        print("⚠️  待實作功能:")
-        print("   1. 通道資訊擴展 (Phase 3-3)")
-        print("   2. IP 配置支援 (Phase 3-4)")
-        print("   3. GUI 規劃設計 (Phase 3-5)")
+        print("🚀 CAPAROC PM EIP Controller v3.7 beta")
+        print(f"Device IP: {self.device_ip}")
+        print("\n1. 開關控制: 各模組通道進行啟閉控制")
+        print("2. 狀態顯示: Global/channel 系統狀態檢查")
+        print("3. 即時監控: 依據設定時間定時回傳系統狀態")
+        print("4. IP 配置: 啟動時可變更設備 IP 位址")
+        print("\n⚠️  待實作功能:")
+        print("   1. 標稱電流修改 (Phase 3-3)")
+        print("   2. 通道資訊擴展 (Phase 3-4)")
+        print("   3. GUI 規劃設計 (Phase 3-6)")
         
         # ========== 步驟 0: 裝置連線檢查 ==========
         print("\n" + "="*60)
@@ -2015,6 +2076,19 @@ class CaparocController:
                     print(f"   3. IP 位址是否正確 (當前: {self.device_ip})")
                     print(f"   4. 電腦與設備是否在同一網段")
                     print(f"   5. 防火牆是否阻擋連線")
+                    
+                    # 提供重新連線選項
+                    print("\n" + "="*60)
+                    while True:
+                        user_choice = input("\n請選擇: [R]重新連線 / [Q]退出程式: ").strip().upper()
+                        if user_choice == 'R':
+                            print("\n🔄 嘗試重新連線...\n")
+                            return 'reconnect'
+                        elif user_choice == 'Q':
+                            print("✅ 退出程式")
+                            return
+                        else:
+                            print("   ⚠️  請輸入 R (重新連線) 或 Q (退出)")
                     return
                 
                 # 連線成功，顯示設備資訊
@@ -2028,6 +2102,37 @@ class CaparocController:
                         print(f"   模組數量: {conn_result['device_info']['module_count']} 個 ({conn_result['device_info'].get('total_channels', 0)} 通道)")
                     if 'voltage' in conn_result['device_info']:
                         print(f"   系統電壓: {conn_result['device_info']['voltage']}")
+                
+                print("="*60)
+                
+                # ========== IP 配置詢問 (Phase 3-5) ==========
+                print("\n" + "="*60)
+                print("🌐 IP 配置設定")
+                print("="*60)
+                print(f"當前連線 IP: {self.device_ip} (預設)")
+                print("\n是否要變更設備 IP 位址？")
+                print("  [Y] 是，我要設定新的 IP")
+                print("  [N] 否，使用預設 IP (192.168.2.111)")
+                
+                while True:
+                    choice = input("\n請選擇 [Y/N]: ").strip().upper()
+                    if choice == 'Y':
+                        new_ip = self._configure_device_ip()
+                        if new_ip and new_ip != self.device_ip:
+                            print(f"\n🔄 正在使用新 IP 重新連線: {new_ip}")
+                            self.device_ip = new_ip
+                            return 'reconnect'  # 重新連線
+                        elif new_ip == self.device_ip:
+                            print(f"\n✅ IP 未變更，繼續使用 {self.device_ip}")
+                            break
+                        else:
+                            print("\n⚠️  IP 設定取消，繼續使用當前 IP")
+                            break
+                    elif choice == 'N':
+                        print(f"\n✅ 使用預設 IP: {self.device_ip}")
+                        break
+                    else:
+                        print("   ⚠️  請輸入 Y 或 N")
                 
                 print("="*60)
                 
@@ -2316,7 +2421,19 @@ class CaparocController:
             print(f"   3. IP 位址是否正確 (當前: {self.device_ip})")
             print(f"   4. 電腦與設備是否在同一網段")
             print(f"   5. 防火牆是否阻擋連線 (Port 44818)")
-            return
+            
+            # 提供重新連線選項
+            print("\n" + "="*60)
+            while True:
+                user_choice = input("\n請選擇: [R]重新連線 / [Q]退出程式: ").strip().upper()
+                if user_choice == 'R':
+                    print("\n🔄 嘗試重新連線...\n")
+                    return 'reconnect'
+                elif user_choice == 'Q':
+                    print("✅ 退出程式")
+                    return
+                else:
+                    print("   ⚠️  請輸入 R (重新連線) 或 Q (退出)")
 
 def main():
     controller = CaparocController()

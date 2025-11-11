@@ -570,6 +570,202 @@ class CaparocController:
             print(f"       [驗證] 讀取失敗: {e}")
             return None
     
+    def diagnose_config_assembly_write(self, driver, test_param3_values=None):
+        """
+        診斷 Config Assembly 寫入問題
+        
+        此函數會嘗試不同的 Param3 值來找出正確的「No Change」設定
+        
+        Args:
+            driver: CIPDriver 實例
+            test_param3_values: 要測試的 Param3 值列表，預設 [0, 10000, 65535]
+        
+        Returns:
+            dict: 測試結果
+        """
+        if test_param3_values is None:
+            test_param3_values = [
+                0,      # 方案1: 0 (可能的 No Change)
+                10000,  # 方案2: 10000 (預設值)
+                65535,  # 方案3: 0xFFFF (INT 最大值)
+            ]
+        
+        print("\n" + "="*70)
+        print("🔬 Config Assembly 寫入診斷測試")
+        print("="*70)
+        print(f"測試目標: 找出 Param3 的正確「No Change」值")
+        print(f"測試值: {test_param3_values}")
+        print("="*70)
+        
+        results = {}
+        
+        for delay_value in test_param3_values:
+            print(f"\n🧪 測試 Param3 = {delay_value} (0x{delay_value:04X})")
+            print("-" * 70)
+            
+            # 建立測試緩衝區
+            config_buffer = bytearray(244)
+            
+            # Param1-2: 先設為 2，後續改為 0
+            config_buffer[0] = 2
+            config_buffer[1] = 2
+            
+            # Param3: 測試值
+            config_buffer[2:4] = struct.pack('<H', delay_value)
+            
+            # Param4-5: 2
+            config_buffer[4] = 2
+            config_buffer[5] = 2
+            
+            # Param6+: 通道參數 (nominal=0, lock=2, status=2)
+            offset = 6
+            for _ in range(64):  # 16 模組 × 4 通道
+                config_buffer[offset] = 0      # nominal = 0 (No change)
+                config_buffer[offset+1] = 2    # lock = 2 (No change)
+                config_buffer[offset+2] = 2    # status = 2 (No change)
+                offset += 3
+            
+            # 填充剩餘
+            for i in range(offset, 244):
+                config_buffer[i] = 2
+            
+            # 解鎖 Param1, Param2
+            config_buffer[0] = 0
+            config_buffer[1] = 0
+            
+            print(f"  緩衝區準備完成: 244 bytes")
+            print(f"  Param1=0, Param2=0, Param3={delay_value}")
+            print(f"  前 16 bytes: {config_buffer[:16].hex()}")
+            
+            # 嘗試寫入
+            print(f"\n  ⏳ 寫入 Config Assembly...")
+            try:
+                write_response = driver.generic_message(
+                    service=0x10,
+                    class_code=0x04,
+                    instance=0x66,
+                    attribute=3,
+                    request_data=bytes(config_buffer),
+                    connected=False
+                )
+                
+                if not write_response:
+                    print(f"  ❌ 無回應 (write_response is None)")
+                    results[delay_value] = {
+                        'success': False,
+                        'error': 'No response',
+                        'detail': 'write_response is None'
+                    }
+                elif hasattr(write_response, 'error') and write_response.error:
+                    print(f"  ❌ 寫入失敗: {write_response.error}")
+                    results[delay_value] = {
+                        'success': False,
+                        'error': str(write_response.error),
+                        'detail': str(write_response.error)
+                    }
+                else:
+                    print(f"  ✅ 寫入成功!")
+                    
+                    # 檢查 Bit 7
+                    print(f"  🔍 檢查 Input Assembly Bit 7...")
+                    time.sleep(0.5)
+                    
+                    input_resp = driver.generic_message(
+                        service=0x0E,
+                        class_code=0x04,
+                        instance=self.input_instance,
+                        attribute=3,
+                        connected=False
+                    )
+                    
+                    if input_resp and hasattr(input_resp, 'value') and len(input_resp.value) > 0:
+                        byte0 = input_resp.value[0]
+                        bit7 = (byte0 >> 7) & 0x01
+                        print(f"  📊 Byte 0 = 0x{byte0:02X}, Bit 7 = {bit7}")
+                        
+                        results[delay_value] = {
+                            'success': True,
+                            'error': None,
+                            'bit7': bit7,
+                            'byte0': byte0
+                        }
+                    else:
+                        results[delay_value] = {
+                            'success': True,
+                            'error': None,
+                            'bit7': 'Unable to read'
+                        }
+                
+            except Exception as e:
+                print(f"  ❌ 異常: {e}")
+                results[delay_value] = {
+                    'success': False,
+                    'error': str(e),
+                    'detail': str(type(e).__name__)
+                }
+        
+        # 顯示結果摘要
+        print("\n" + "="*70)
+        print("📊 測試結果摘要")
+        print("="*70)
+        
+        for value, result in results.items():
+            status = "✅ 成功" if result['success'] else "❌ 失敗"
+            print(f"  Param3 = {value:5d} (0x{value:04X}): {status}")
+            if not result['success']:
+                print(f"    錯誤: {result['error']}")
+        
+        print("="*70)
+        
+        return results
+    
+    def _verify_nominal_current(self, driver, module, channel):
+        """
+        驗證通道的標稱電流設定
+        
+        Args:
+            driver: CIPDriver 實例
+            module: 模組編號
+            channel: 通道編號
+        
+        Returns:
+            int: 實際標稱電流值 (0-20A), 或 None (讀取失敗)
+        """
+        try:
+            # 讀取 Input Assembly 0x65
+            response = driver.generic_message(
+                service=0x0E,
+                class_code=0x04,
+                instance=self.input_instance,
+                attribute=3,
+                connected=False
+            )
+            
+            if response and hasattr(response, 'value'):
+                data = response.value
+                offset = self.get_channel_offset(module, channel)
+                
+                if len(data) > offset + 1:
+                    # Byte 1: Nominal current (0-20A)
+                    nominal_current = data[offset + 1]
+                    
+                    # 🔍 詳細診斷
+                    print(f"       [驗證Debug] Input Assembly offset {offset}:")
+                    print(f"                   Byte 0 (status): 0x{data[offset]:02X}")
+                    print(f"                   Byte 1 (nominal): {nominal_current}A")
+                    if len(data) > offset + 2:
+                        print(f"                   Byte 2: 0x{data[offset+2]:02X}")
+                    if len(data) > offset + 3:
+                        print(f"                   Byte 3: 0x{data[offset+3]:02X}")
+                    
+                    return int(nominal_current)
+            
+            return None
+            
+        except Exception as e:
+            print(f"       [驗證] 讀取失敗: {e}")
+            return None
+    
     def _check_and_unlock_programming(self, driver, module, channel):
         """
         檢查並解鎖通道的 programming lock
@@ -710,10 +906,12 @@ class CaparocController:
             # ========== Step 3: 設定「No Change」預設值 ==========
             print(f"📝 [Step 3/6] 填入 'No Change' 預設值")
             print(f"       🔍 根據 Table 7-11 設定預設值...")
-            print(f"       📖 規則:")
-            print(f"          - Param1,2 (全域鎖定): 暫設 2, 後續改為 0")
-            print(f"          - Param3 (延遲): INT (2 bytes) = 10000 (0x2710)")
-            print(f"          - Param4,5 (全域模式/狀態): 2 (No change)")
+            print(f"       📖 規則 (Default setting = No Change):")
+            print(f"          - Param1 (全域 nominal lock): 2 → 後續改為 0 (解鎖)")
+            print(f"          - Param2 (全域 UI lock): 2 → 後續改為 0 (解鎖)")
+            print(f"          - Param3 (延遲): 10000 (INT, 2 bytes)")
+            print(f"          - Param4 (全域模式): 2 (No change)")
+            print(f"          - Param5 (保留): 2 (No change)")
             print(f"          - Param6,9,12... (標稱電流): 0 (No change)")
             print(f"          - Param7,10,13... (programming lock): 2 (No change)")
             print(f"          - Param8,11,14... (channel status): 2 (No change)\n")
@@ -721,34 +919,42 @@ class CaparocController:
             byte_offset = 0
             param_count = 0
             
-            # Param1: Global nominal current lock (USINT, 1 byte, 暫設 2)
+            # Param1: Global nominal current lock (USINT, 1 byte)
+            # Table 7-11: Default setting = 2 (No change)
+            # 先設為 2，後續在 Step 4 改為 0 (解鎖)
             config_buffer[byte_offset] = 2
-            print(f"       [Param1 @ Offset {byte_offset}] Global nominal lock = 2 (暫時值)")
+            print(f"       [Param1 @ Offset {byte_offset}] Global nominal lock = 2 (暫時值,後續解鎖)")
             param_count += 1
             byte_offset += 1
             
-            # Param2: Global UI lock (USINT, 1 byte, 暫設 2)
+            # Param2: Global UI lock (USINT, 1 byte)
+            # Table 7-11: Default setting = 2 (No change)
+            # 先設為 2，後續在 Step 4 改為 0 (解鎖)
             config_buffer[byte_offset] = 2
-            print(f"       [Param2 @ Offset {byte_offset}] Global UI lock = 2 (暫時值)")
+            print(f"       [Param2 @ Offset {byte_offset}] Global UI lock = 2 (暫時值,後續解鎖)")
             param_count += 1
             byte_offset += 1
             
-            # Param3: Global switch-on delay (INT, 2 bytes, 預設 10000)
-            delay_value = 10000
+            # Param3: Global switch-on delay (INT, 2 bytes)
+            # ✅ 根據 Table 7-11: Default setting = 10000
+            # 「No Change」值 = Default setting = 10000
+            delay_value = 10000  # ✅ 已確認正確
             config_buffer[byte_offset:byte_offset+2] = struct.pack('<H', delay_value)
             print(f"       [Param3 @ Offset {byte_offset}-{byte_offset+1}] Switch-on delay = {delay_value} (0x{delay_value:04X})")
             param_count += 1
             byte_offset += 2
             
-            # Param4: Global operating mode (USINT, 1 byte, 預設 2)
+            # Param4: Global operating mode (USINT, 1 byte)
+            # Table 7-11: Default setting = 2 (No change)
             config_buffer[byte_offset] = 2
             print(f"       [Param4 @ Offset {byte_offset}] Global operating mode = 2 (No change)")
             param_count += 1
             byte_offset += 1
             
-            # Param5: Global status (USINT, 1 byte, 預設 2)
+            # Param5: Reserved (USINT, 1 byte)
+            # Table 7-11: Default setting = 2 (No change)
             config_buffer[byte_offset] = 2
-            print(f"       [Param5 @ Offset {byte_offset}] Global status = 2 (No change)")
+            print(f"       [Param5 @ Offset {byte_offset}] Reserved = 2 (No change)")
             param_count += 1
             byte_offset += 1
             
@@ -816,10 +1022,17 @@ class CaparocController:
             print(f"       [Param2 @ Offset 1] Global UI lock: {old_param2} → 0 (Unlocked)")
             
             # 計算目標通道的參數位置
-            # 公式: Param6 = M1.CH1, Param9 = M1.CH2, ...
-            # ParamN = 6 + (module-1)*12 + (channel-1)*3
+            # 根據 Table 7-11:
+            # Param1-5 佔用 Offset 0-5 (1+1+2+1+1 = 6 bytes)
+            # Param6 (M1.CH1 nominal) 開始於 Offset 6
+            # 公式: ParamN = 6 + (module-1)*12 + (channel-1)*3
             target_param_number = 6 + (module - 1) * 12 + (channel - 1) * 3
-            target_nominal_offset = target_param_number  # 簡化: offset = param_number
+            
+            # ✅ 修正: 計算 Config Assembly 的實際 Byte Offset
+            # Param1 @ Offset 0, Param2 @ Offset 1, Param3 @ Offset 2-3,
+            # Param4 @ Offset 4, Param5 @ Offset 5, Param6 @ Offset 6...
+            # 因為 Param1-5 共佔 6 bytes，所以 Param6+ 的 offset = param_number
+            target_nominal_offset = target_param_number
             target_lock_param = target_param_number + 1
             target_lock_offset = target_lock_param
             
@@ -2268,6 +2481,7 @@ class CaparocController:
                 print("  s                            - 顯示完整狀態")
                 print("  scan                         - 掃描所有 Assembly Instance")
                 print("  limits                       - 顯示通道配置限制")
+                print("  diagnose                     - 診斷 Config Assembly 寫入問題 🔬")
                 print("\n【即時監控】")
                 print("  monitor start [interval] [mode]  - 啟動監控")
                 print("                                     interval: 更新頻率(秒), 預設2")
@@ -2309,6 +2523,10 @@ class CaparocController:
                             self.scan_assemblies()
                         elif cmd == 'limits':
                             self.show_channel_limits()
+                        elif cmd == 'diagnose':
+                            # 🔬 診斷 Config Assembly 寫入問題
+                            print("\n🔬 開始診斷 Config Assembly 寫入...")
+                            self.diagnose_config_assembly_write(driver)
                         elif cmd.startswith('init '):
                             # ✅ 使用正確的 Config Assembly 方法設定標稱電流
                             try:

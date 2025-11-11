@@ -215,12 +215,12 @@ class CaparocController:
                 else:
                     print(f"\n[初始化] CH{ch} ({global_ch}/{total_channels}): 設定額定電流 {current}A")
                 
-                # ✅ 優先使用 Config Assembly 方法 (快速、可靠)
-                success = self._set_nominal_current_config_assembly(driver, module, ch, int(current))
+                # ✅ 優先使用 Parameter Object 方法 (繞過 244-byte 限制)
+                success = self._set_nominal_current_parameter_object(driver, module, ch, int(current))
                 
-                # ⚠️ 如果 Config Assembly 失敗,回退到 LED 按鈕模擬 (舊方法)
+                # ⚠️ 如果 Parameter Object 失敗,回退到 LED 按鈕模擬 (舊方法)
                 if not success:
-                    print(f"       ⚠️  Config Assembly 方法失敗,嘗試 LED 按鈕模擬...")
+                    print(f"       ⚠️  Parameter Object 方法失敗,嘗試 LED 按鈕模擬...")
                     if int(current) <= 10:  # LED 按鈕只支援 1-10A
                         success = self._set_nominal_current_led_button(driver, module, ch, int(current))
                     else:
@@ -1214,6 +1214,246 @@ class CaparocController:
         except Exception as e:
             print(f"       ⚠️  Lock 檢查異常: {e}")
             return True  # 發生錯誤時仍嘗試寫入
+    
+    def _set_nominal_current_parameter_object(self, driver, module, channel, current_amps):
+        """
+        使用 Parameter Object 方法設定標稱電流 (推薦方法!)
+        
+        根據專家建議和 EDS [Params] 定義:
+        - 使用 Class 0x0F (Parameter Object)
+        - 每個參數獨立寫入 (1-4 bytes)
+        - 適用於顯性訊息 (Explicit Messaging)
+        - 不受 244 bytes 封包限制
+        
+        步驟:
+        1. 解除全域電流鎖定 (Param1 = 0)
+        2. 解除全域介面鎖定 (Param2 = 0)
+        3. 解除目標通道 programming lock (ParamN+1 = 0)
+        4. 設定標稱電流 (ParamN = current_amps)
+        5. 驗證結果
+        
+        EDS 路徑格式:
+        - Param1: Class 0x0F, Instance 0x01, Attribute 0x01
+        - Param2: Class 0x0F, Instance 0x02, Attribute 0x01
+        - Param6: Class 0x0F, Instance 0x06, Attribute 0x01
+        
+        Args:
+            driver: CIPDriver 實例
+            module: 模組編號 (1-16)
+            channel: 通道編號 (1-4)
+            current_amps: 標稱電流值 (1-20A)
+        
+        Returns:
+            bool: 成功/失敗
+        """
+        try:
+            print(f"\n{'='*70}")
+            print(f"🔧 使用 Parameter Object 方法設定標稱電流")
+            print(f"   目標: M{module}.CH{channel} → {current_amps}A")
+            print(f"{'='*70}\n")
+            
+            # 驗證電流範圍
+            if not (1 <= current_amps <= 20):
+                print(f"       ❌ 電流值超出範圍: {current_amps}A (必須在 1-20A 之間)")
+                return False
+            
+            print(f"       ✅ 參數驗證通過: {current_amps}A 在有效範圍內 (1-20A)\n")
+            
+            # 計算目標參數編號
+            # Param6 = M1.CH1, Param9 = M1.CH2, Param12 = M1.CH3, Param15 = M1.CH4
+            # Param18 = M2.CH1, ...
+            # 公式: ParamN = 6 + (module-1)*12 + (channel-1)*3
+            target_param_number = 6 + (module - 1) * 12 + (channel - 1) * 3
+            lock_param_number = target_param_number + 1  # programming lock
+            
+            print(f"       📊 參數計算:")
+            print(f"          目標通道: Module {module}, Channel {channel}")
+            print(f"          標稱電流參數: Param{target_param_number}")
+            print(f"          Programming lock: Param{lock_param_number}\n")
+            
+            # ========== Step 1: 解除全域電流鎖定 (Param1) ==========
+            print(f"🔓 [Step 1/5] 解除全域電流鎖定 (Param1)")
+            print(f"       EDS 路徑: Class 0x0F, Instance 0x01, Attribute 0x01")
+            print(f"       寫入資料: 0x00 (Disable)")
+            
+            try:
+                param1_resp = driver.generic_message(
+                    service=0x10,       # Set Attribute Single
+                    class_code=0x0F,    # Parameter Object
+                    instance=0x01,      # Param1
+                    attribute=0x01,     # Value
+                    request_data=bytes([0x00]),  # 0 = Disable
+                    connected=False
+                )
+                
+                if param1_resp is None:
+                    print(f"       ⚠️  無回應，繼續嘗試...")
+                elif hasattr(param1_resp, 'error') and param1_resp.error:
+                    print(f"       ⚠️  錯誤: {param1_resp.error}，繼續嘗試...")
+                else:
+                    print(f"       ✅ Param1 解鎖成功")
+            except Exception as e:
+                print(f"       ⚠️  異常: {e}，繼續嘗試...")
+            
+            time.sleep(0.2)
+            
+            # ========== Step 2: 解除全域介面鎖定 (Param2) ==========
+            print(f"\n🔓 [Step 2/5] 解除全域介面鎖定 (Param2)")
+            print(f"       EDS 路徑: Class 0x0F, Instance 0x02, Attribute 0x01")
+            print(f"       寫入資料: 0x00 (Disable)")
+            
+            try:
+                param2_resp = driver.generic_message(
+                    service=0x10,
+                    class_code=0x0F,
+                    instance=0x02,      # Param2
+                    attribute=0x01,
+                    request_data=bytes([0x00]),
+                    connected=False
+                )
+                
+                if param2_resp is None:
+                    print(f"       ⚠️  無回應，繼續嘗試...")
+                elif hasattr(param2_resp, 'error') and param2_resp.error:
+                    print(f"       ⚠️  錯誤: {param2_resp.error}，繼續嘗試...")
+                else:
+                    print(f"       ✅ Param2 解鎖成功")
+            except Exception as e:
+                print(f"       ⚠️  異常: {e}，繼續嘗試...")
+            
+            time.sleep(0.2)
+            
+            # ========== Step 3: 解除目標通道 programming lock ==========
+            print(f"\n🔓 [Step 3/5] 解除目標通道 programming lock (Param{lock_param_number})")
+            print(f"       EDS 路徑: Class 0x0F, Instance 0x{lock_param_number:02X}, Attribute 0x01")
+            print(f"       寫入資料: 0x00 (Unlocked)")
+            
+            try:
+                lock_resp = driver.generic_message(
+                    service=0x10,
+                    class_code=0x0F,
+                    instance=lock_param_number,
+                    attribute=0x01,
+                    request_data=bytes([0x00]),
+                    connected=False
+                )
+                
+                if lock_resp is None:
+                    print(f"       ⚠️  無回應，繼續嘗試...")
+                elif hasattr(lock_resp, 'error') and lock_resp.error:
+                    print(f"       ⚠️  錯誤: {lock_resp.error}，繼續嘗試...")
+                else:
+                    print(f"       ✅ Param{lock_param_number} 解鎖成功")
+            except Exception as e:
+                print(f"       ⚠️  異常: {e}，繼續嘗試...")
+            
+            time.sleep(0.2)
+            
+            # ========== Step 4: 設定標稱電流 ==========
+            print(f"\n✍️  [Step 4/5] 設定標稱電流 (Param{target_param_number})")
+            print(f"       EDS 路徑: Class 0x0F, Instance 0x{target_param_number:02X}, Attribute 0x01")
+            print(f"       寫入資料: 0x{current_amps:02X} ({current_amps}A)")
+            
+            current_resp = driver.generic_message(
+                service=0x10,
+                class_code=0x0F,
+                instance=target_param_number,
+                attribute=0x01,
+                request_data=bytes([current_amps]),
+                connected=False
+            )
+            
+            if current_resp is None:
+                print(f"       ❌ 無回應")
+                print(f"\n{'='*70}")
+                print(f"❌ 設定失敗: 設備無回應")
+                print(f"{'='*70}\n")
+                return False
+            elif hasattr(current_resp, 'error') and current_resp.error:
+                print(f"       ❌ 錯誤: {current_resp.error}")
+                print(f"\n{'='*70}")
+                print(f"❌ 設定失敗: {current_resp.error}")
+                print(f"{'='*70}\n")
+                return False
+            else:
+                print(f"       ✅ Param{target_param_number} 寫入成功!")
+            
+            time.sleep(0.5)
+            
+            # ========== Step 5: 驗證結果 ==========
+            print(f"\n🔍 [Step 5/5] 驗證設定結果")
+            
+            # 方法1: 讀取 Parameter Object
+            print(f"       方法1: 讀取 Param{target_param_number}...")
+            try:
+                verify_param_resp = driver.generic_message(
+                    service=0x0E,       # Get Attribute Single
+                    class_code=0x0F,
+                    instance=target_param_number,
+                    attribute=0x01,
+                    connected=False
+                )
+                
+                if verify_param_resp and hasattr(verify_param_resp, 'value'):
+                    param_value = verify_param_resp.value[0] if isinstance(verify_param_resp.value, (bytes, bytearray)) else verify_param_resp.value
+                    print(f"       Param{target_param_number} 值: {param_value}A")
+                    
+                    if param_value == current_amps:
+                        print(f"       ✅ Parameter Object 驗證成功!")
+                    else:
+                        print(f"       ⚠️  Parameter Object 值不符: 期望 {current_amps}A, 實際 {param_value}A")
+            except Exception as e:
+                print(f"       ⚠️  Parameter Object 驗證失敗: {e}")
+            
+            # 方法2: 讀取 Input Assembly
+            print(f"\n       方法2: 讀取 Input Assembly (0x65)...")
+            actual_current = self._verify_nominal_current(driver, module, channel)
+            
+            if actual_current is not None:
+                print(f"       Input Assembly 值: {actual_current}A")
+                
+                if actual_current == current_amps:
+                    print(f"       ✅ Input Assembly 驗證成功!")
+                    
+                    print(f"\n{'='*70}")
+                    print(f"✅ 標稱電流設定成功!")
+                    print(f"   M{module}.CH{channel} = {actual_current}A")
+                    print(f"   方法: Parameter Object (Class 0x0F)")
+                    print(f"{'='*70}\n")
+                    return True
+                else:
+                    print(f"       ⚠️  Input Assembly 值不符: 期望 {current_amps}A, 實際 {actual_current}A")
+                    print(f"       💡 可能需要等待設備處理...")
+                    
+                    # 再等待一下再驗證
+                    time.sleep(1.0)
+                    actual_current2 = self._verify_nominal_current(driver, module, channel)
+                    if actual_current2 == current_amps:
+                        print(f"       ✅ 延遲驗證成功: {actual_current2}A")
+                        print(f"\n{'='*70}")
+                        print(f"✅ 標稱電流設定成功!")
+                        print(f"   M{module}.CH{channel} = {actual_current2}A")
+                        print(f"{'='*70}\n")
+                        return True
+            else:
+                print(f"       ⚠️  無法從 Input Assembly 驗證")
+            
+            print(f"\n{'='*70}")
+            print(f"⚠️  設定可能成功，但驗證未通過")
+            print(f"   建議: 使用 's' 命令手動確認通道狀態")
+            print(f"{'='*70}\n")
+            return True  # 寫入成功，即使驗證未通過
+            
+        except Exception as e:
+            print(f"\n{'='*70}")
+            print(f"❌ 設定異常")
+            print(f"{'='*70}")
+            print(f"錯誤訊息: {e}")
+            import traceback
+            print(f"\n堆疊追蹤:")
+            traceback.print_exc()
+            print(f"{'='*70}\n")
+            return False
     
     def _set_nominal_current_config_assembly(self, driver, module, channel, current_amps):
         """

@@ -246,26 +246,55 @@ class CaparocController:
         print("="*60)
         return True
     
-    def _establish_implicit_messaging(self, driver):
-        """建立 Implicit Messaging 連接"""
+    def _establish_implicit_messaging(self, driver, config_data=None):
+        """
+        建立 Implicit Messaging (I/O Connection) 連接
+        
+        根據專家分析，CAPAROC 必須使用 Forward Open 建立 Class 1 Connection。
+        Config Assembly (0x66, 244 bytes) 必須在 Forward Open 時作為 Configuration Path 傳送。
+        
+        Args:
+            driver: CIPDriver 實例
+            config_data: 244-byte Config Assembly 資料 (None = 使用預設值)
+        
+        Returns:
+            bool: True=成功建立 I/O 連線, False=失敗
+        """
+        print("\n" + "="*60)
+        print("🔗 建立 Implicit Messaging (I/O Connection)...")
+        print("="*60)
+        
         try:
-            # 嘗試使用 generic_message 建立 Forward Open
-            forward_open_data = self._build_forward_open_request()
+            # 步驟 1: 準備 244-byte Config Assembly 資料
+            if config_data is None:
+                print("📦 準備 Config Assembly (244 bytes)...")
+                config_data = self._build_default_config_assembly()
+                print(f"   ✅ Config 資料已準備 ({len(config_data)} bytes)")
             
+            # 步驟 2: 建立 Forward Open 請求 (包含 Config)
+            print("🔨 建構 Forward Open 請求...")
+            forward_open_data = self._build_forward_open_request(config_data)
+            print(f"   ✅ Forward Open 請求長度: {len(forward_open_data)} bytes")
+            
+            # 步驟 3: 發送 Forward Open
+            print("📡 發送 Forward Open 到 Connection Manager...")
             response = driver.generic_message(
-                service=0x52,  # Forward Open
+                service=0x54,  # Forward Open (Large)
                 class_code=0x06,  # Connection Manager
                 instance=0x01,
                 request_data=forward_open_data,
-                connected=True,
-                unconnected_send=False
+                connected=False,  # Forward Open 本身是 Explicit Message
+                unconnected_send=True
             )
             
+            # 步驟 4: 檢查回應
             if response and not (hasattr(response, 'error') and response.error):
-                print("[DEBUG] Forward Open 成功")
+                print("   ✅ Forward Open 成功！")
+                print("   🎯 I/O Connection 已建立")
                 self.implicit_mode_enabled = True
                 
-                # 啟動 I/O Worker
+                # 步驟 5: 啟動 I/O Worker (週期性更新 Output/Input)
+                print("🔄 啟動 I/O Worker 執行緒...")
                 self.cip_keep_alive = True
                 self.io_update_thread = threading.Thread(
                     target=self._io_worker,
@@ -274,66 +303,242 @@ class CaparocController:
                 )
                 self.io_update_thread.start()
                 time.sleep(0.5)
+                print("   ✅ I/O Worker 運行中 (20Hz 週期更新)")
                 
+                print("="*60)
+                print("✅ Implicit Messaging 模式已啟用")
+                print("   → Output Assembly (0x64): 20 bytes, 週期發送")
+                print("   → Input Assembly (0x65): 208 bytes, 週期接收")
+                print("   → Config Assembly (0x66): 244 bytes, 已套用")
+                print("="*60)
                 return True
             else:
-                # 設備不支援 Implicit Messaging,使用標準 Explicit 模式
+                # 失敗處理
+                error_msg = response.error if (response and hasattr(response, 'error')) else "無回應"
+                print(f"   ❌ Forward Open 失敗: {error_msg}")
+                print("   ℹ️  回退到 Explicit Messaging 模式")
+                print("="*60)
                 return False
                 
         except Exception as e:
-            print(f"[Implicit] 建立連接異常: {e}")
+            print(f"   ⚠️  建立連接異常: {e}")
+            print(f"   ℹ️  回退到 Explicit Messaging 模式")
+            print("="*60)
             return False
     
-    def _build_forward_open_request(self):
-        """建立 Forward Open 請求"""
+    def _build_forward_open_request(self, config_data):
+        """
+        建立 Forward Open 請求 (Large Forward Open with Config)
+        
+        根據 EDS [Connection Manager] Connection1 定義:
+        - O->T (Output): Assembly 0x64, 20 bytes, RPI=100ms
+        - T->O (Input): Assembly 0x65, 208 bytes, RPI=100ms
+        - Config: Assembly 0x66, 244 bytes (config 2)
+        - Path: "20 04 24 66 2C 64 2C 65"
+        
+        Args:
+            config_data: 244-byte Config Assembly 資料
+        
+        Returns:
+            bytes: Forward Open 請求封包
+        """
         request = bytearray()
-        request.extend(struct.pack('<I', 0x12345678))  # Connection Serial Number
-        request.extend(struct.pack('<H', 0x009A))  # Vendor ID
-        request.extend(struct.pack('<I', 0x87654321))  # Originator Serial Number
-        request.append(0x00)  # Connection Timeout Multiplier
-        request.extend([0x00, 0x00, 0x00])  # Reserved
-        request.extend(struct.pack('<I', 0x20000001))  # O->T Network Connection ID
-        request.extend(struct.pack('<I', 0x20000002))  # T->O Network Connection ID
-        request.extend(struct.pack('<H', 0x07D0))  # Connection Timeout (2000ms)
-        request.extend(struct.pack('<I', 0x43F4))  # O->T Connection Parameters (20ms RPI)
-        request.extend(struct.pack('<I', 0x43F4))  # T->O Connection Parameters (20ms RPI)
-        request.append(0xA3)  # Transport Type/Trigger
-        request.append(0x03)  # Connection Path Size
-        request.extend([0x01, self.output_instance])  # Output Assembly
-        request.extend([0x01, self.input_instance])  # Input Assembly
-        request.extend([0x01, 0x01])  # Config Assembly
+        
+        # Priority/Tick Time (1 byte)
+        request.append(0x0A)  # Priority=5, Tick Time=10ms
+        
+        # Timeout Ticks (1 byte)
+        request.append(0x0E)  # 140 ticks × 10ms = 1400ms timeout
+        
+        # O->T Connection ID (4 bytes)
+        request.extend(struct.pack('<I', 0x20000001))
+        
+        # T->O Connection ID (4 bytes)
+        request.extend(struct.pack('<I', 0x20000002))
+        
+        # Connection Serial Number (2 bytes)
+        request.extend(struct.pack('<H', 0x1234))
+        
+        # Vendor ID (2 bytes) - 根據 EDS [Device Classification] Vendor
+        request.extend(struct.pack('<H', 154))  # 0x009A
+        
+        # Originator Serial Number (4 bytes)
+        request.extend(struct.pack('<I', 0x87654321))
+        
+        # Connection Timeout Multiplier (1 byte)
+        request.append(0x00)  # ×4 multiplier
+        
+        # Reserved (3 bytes)
+        request.extend([0x00, 0x00, 0x00])
+        
+        # O->T RPI (4 bytes) - Request Packet Interval
+        request.extend(struct.pack('<I', 100000))  # 100ms = 100000 µs (根據 EDS Param1000)
+        
+        # O->T Network Connection Parameters (2 bytes)
+        # Bit 0-8: Connection Size = 20 bytes
+        # Bit 9: Fixed/Variable = 1 (Fixed)
+        # Bit 10: Priority = 0 (Low)
+        # Bit 11-12: Connection Type = 01 (Point-to-Point)
+        # Bit 13: Redundant Owner = 0
+        conn_params_ot = 0x4414  # Fixed, 20 bytes, Point-to-Point
+        request.extend(struct.pack('<H', conn_params_ot))
+        
+        # T->O RPI (4 bytes)
+        request.extend(struct.pack('<I', 100000))  # 100ms = 100000 µs
+        
+        # T->O Network Connection Parameters (2 bytes)
+        # Connection Size = 208 bytes
+        conn_params_to = 0x44D0  # Fixed, 208 bytes (0xD0=208), Point-to-Point
+        request.extend(struct.pack('<H', conn_params_to))
+        
+        # Transport Type/Trigger (1 byte)
+        # Bit 0-3: Transport Class = 3 (Class 1)
+        # Bit 4-6: Trigger = 1 (Cyclic)
+        request.append(0x13)  # Class 1, Cyclic
+        
+        # Connection Path Size (1 byte) - 以 WORD 為單位
+        # Path: "20 04 24 66 2C 64 2C 65" = 8 bytes = 4 words
+        request.append(0x04)
+        
+        # Connection Path (8 bytes) - 根據 EDS Connection1
+        # 20 04       = Logical Segment, Class ID (0x04 = Assembly Object)
+        # 24 66       = Instance ID (0x66 = Config Assembly)
+        # 2C 64       = Instance ID (0x64 = Output Assembly)
+        # 2C 65       = Instance ID (0x65 = Input Assembly)
+        request.extend([0x20, 0x04])  # Class: Assembly Object
+        request.extend([0x24, 0x66])  # Config Instance
+        request.extend([0x2C, 0x64])  # Output Instance
+        request.extend([0x2C, 0x65])  # Input Instance
+        
+        # Config Data (244 bytes) - 關鍵！在 Forward Open 時傳送
+        if len(config_data) != 244:
+            raise ValueError(f"Config 資料長度必須是 244 bytes (實際: {len(config_data)})")
+        
+        request.extend(config_data)
+        
         return bytes(request)
     
+    def _build_default_config_assembly(self):
+        """
+        建立預設的 244-byte Config Assembly
+        
+        根據手冊 Table 7-11，使用 "No Change" 值初始化所有參數。
+        
+        Returns:
+            bytes: 244-byte Config Assembly 資料
+        """
+        config = bytearray(244)
+        
+        # 全域參數 (參數 1-5)
+        config[0] = 2   # Param1: Global nominal current lock (2 = No Change)
+        config[1] = 2   # Param2: Global user interface lock (2 = No Change)
+        
+        # Param3: Global switch-on delay (INT, 2 bytes, Default=10000)
+        struct.pack_into('<H', config, 2, 10000)
+        
+        config[4] = 2   # Param4: Global operating mode (2 = No Change)
+        config[5] = 2   # Param5: Reserved (2 = No Change)
+        
+        # 通道參數 (參數 6+, 每個通道 3 參數)
+        # 共 16 模組 × 4 通道 = 64 通道
+        # 64 通道 × 3 參數 = 192 參數
+        # 加上前面 5 個全域參數 = 197 參數
+        
+        for param_idx in range(6, 197):  # Param6 to Param196
+            offset = param_idx
+            
+            # 每 3 個參數一組 (nominal, lock, status)
+            param_type = (param_idx - 6) % 3
+            
+            if param_type == 0:
+                # Nominal current (USINT, 0 = No Change)
+                config[offset] = 0
+            elif param_type == 1:
+                # Programming lock (USINT, 2 = No Change)
+                config[offset] = 2
+            else:
+                # Status (USINT, 2 = No Change)
+                config[offset] = 2
+        
+        # 剩餘參數 (Param197-209, 全域狀態相關)
+        for param_idx in range(197, 210):
+            offset = param_idx
+            if offset < 244:
+                config[offset] = 2  # No Change
+        
+        return bytes(config)
+    
     def _io_worker(self, driver):
-        """I/O Worker - 持續更新"""
+        """
+        I/O Worker - 週期性更新 Output/Input Assembly (Implicit Messaging)
+        
+        在 Forward Open 建立 I/O Connection 後，必須週期性地:
+        1. 發送 Output Assembly (0x64, 20 bytes) 到設備
+        2. 接收 Input Assembly (0x65, 208 bytes) 從設備
+        
+        這是維持 Class 1 Connection 的必要動作。
+        """
         cycle = 0
+        consecutive_errors = 0
+        
+        print("[I/O Worker] 執行緒啟動 (週期: 100ms)")
+        
         while self.cip_keep_alive and self.implicit_mode_enabled:
             try:
                 cycle += 1
                 
+                # 取得當前 Output 資料
                 with self.io_data_lock:
                     output_data = bytes(self.current_output_data)
                 
                 try:
-                    # 寫入 Output Assembly
-                    driver.write(f"Assembly.{self.output_instance}", output_data)
+                    # 🔄 寫入 Output Assembly (週期性控制資料)
+                    write_response = driver.generic_message(
+                        service=0x10,  # Set Attribute Single
+                        class_code=0x04,  # Assembly Object
+                        instance=self.output_instance,  # 0x64
+                        attribute=3,
+                        request_data=output_data,
+                        connected=True,  # ⬅️ 使用已建立的 I/O Connection
+                        unconnected_send=False
+                    )
                     
-                    # 讀取 Input Assembly
-                    input_response = driver.read(f"Assembly.{self.input_instance}")
-                    if input_response and hasattr(input_response, 'value'):
+                    # 🔄 讀取 Input Assembly (週期性狀態資料)
+                    read_response = driver.generic_message(
+                        service=0x0E,  # Get Attribute Single
+                        class_code=0x04,  # Assembly Object
+                        instance=self.input_instance,  # 0x65
+                        attribute=3,
+                        connected=True,  # ⬅️ 使用已建立的 I/O Connection
+                        unconnected_send=False
+                    )
+                    
+                    if read_response and hasattr(read_response, 'value'):
                         with self.io_data_lock:
-                            self.current_input_data = bytearray(input_response.value)
+                            self.current_input_data = bytearray(read_response.value)
                         self.last_io_update = time.time()
-                        
+                        consecutive_errors = 0  # 重置錯誤計數
+                    
                 except Exception as io_e:
-                    if cycle % 500 == 0:
-                        print(f"[I/O Worker] 週期 {cycle} 錯誤: {io_e}")
+                    consecutive_errors += 1
+                    
+                    # 每 500 個週期或連續錯誤時顯示警告
+                    if cycle % 500 == 0 or consecutive_errors == 5:
+                        print(f"[I/O Worker] 週期 {cycle} I/O 錯誤: {io_e}")
+                    
+                    # 連續錯誤過多，可能連線中斷
+                    if consecutive_errors >= 50:
+                        print(f"[I/O Worker] ⚠️  連續 {consecutive_errors} 次錯誤，I/O Connection 可能中斷")
+                        consecutive_errors = 0  # 重置計數
                 
-                time.sleep(0.05)  # 20Hz
+                # 週期延遲 (100ms, 10Hz) - 根據 EDS RPI=100ms
+                time.sleep(0.1)
                 
             except Exception as e:
-                print(f"[I/O Worker] 異常: {e}")
+                print(f"[I/O Worker] 執行緒異常: {e}")
                 time.sleep(0.1)
+        
+        print("[I/O Worker] 執行緒結束")
     
     def _get_config_param_number(self, module, channel):
         """
@@ -3076,7 +3281,9 @@ class CaparocController:
                 # 標記為已初始化 (允許控制)
                 self.channels_initialized = True
                 
-                # 嘗試建立 Implicit Messaging (靜默模式,CAPAROC 不支援)
+                # ========== Phase 3-7: 建立 Implicit Messaging (I/O Connection) ==========
+                # 根據專家分析，CAPAROC 支援 EIP，必須使用 Forward Open 建立 Class 1 連線
+                # Config Assembly (244 bytes) 必須在 Forward Open 時傳送
                 self._establish_implicit_messaging(driver)
                 
                 print("\n" + "="*60)

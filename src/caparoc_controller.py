@@ -570,6 +570,378 @@ class CaparocController:
             print(f"       [驗證] 讀取失敗: {e}")
             return None
     
+    def test_config_write_methods(self, driver):
+        """
+        測試 Config Assembly 的各種寫入方法
+        
+        這個診斷工具會嘗試:
+        1. Service 0x10 (Set Attribute Single) + Attribute 3 - 標準方法
+        2. Service 0x10 + Attribute 4 - 可能的替代屬性
+        3. Service 0x03 (Set Attribute List) - 批次設定
+        4. 不同的資料大小測試
+        5. 測試其他 Instance
+        
+        Args:
+            driver: CIPDriver 實例
+        
+        Returns:
+            dict: 測試結果
+        """
+        print("\n" + "="*70)
+        print("🧪 Config Assembly 寫入方法測試")
+        print("="*70)
+        
+        results = {}
+        
+        # 先讀取當前 Config Assembly
+        print("\n📖 讀取當前 Config Assembly...")
+        try:
+            read_resp = driver.generic_message(
+                service=0x0E,
+                class_code=0x04,
+                instance=0x66,
+                attribute=3,
+                connected=False
+            )
+            if read_resp and hasattr(read_resp, 'value'):
+                config_data = bytearray(read_resp.value)
+                print(f"  ✅ 讀取成功: {len(config_data)} bytes")
+            else:
+                print(f"  ❌ 讀取失敗，使用空白緩衝區")
+                config_data = bytearray(244)
+        except Exception as e:
+            print(f"  ❌ 異常: {e}，使用空白緩衝區")
+            config_data = bytearray(244)
+        
+        # ========== 測試 1: 標準方法 (完整 244 bytes) ==========
+        print("\n🧪 [測試 1] Service 0x10, Attribute 3, 完整 244 bytes (標準方法)")
+        try:
+            resp = driver.generic_message(
+                service=0x10,
+                class_code=0x04,
+                instance=0x66,
+                attribute=3,
+                request_data=bytes(config_data),
+                connected=False
+            )
+            if resp is None:
+                print(f"  ❌ 無回應 (timeout)")
+                results['standard_244'] = 'No response'
+            elif hasattr(resp, 'error') and resp.error:
+                print(f"  ❌ 錯誤: {resp.error}")
+                results['standard_244'] = str(resp.error)
+            else:
+                print(f"  ✅ 成功!")
+                results['standard_244'] = 'Success'
+        except Exception as e:
+            print(f"  ❌ 異常: {e}")
+            results['standard_244'] = str(e)
+        
+        # ========== 測試 2: 部分資料 ==========
+        print("\n🧪 [測試 2] Service 0x10, Attribute 3, 前 32 bytes (部分資料)")
+        try:
+            resp = driver.generic_message(
+                service=0x10,
+                class_code=0x04,
+                instance=0x66,
+                attribute=3,
+                request_data=bytes(config_data[:32]),
+                connected=False
+            )
+            if resp is None:
+                print(f"  ❌ 無回應")
+                results['partial_32'] = 'No response'
+            elif hasattr(resp, 'error') and resp.error:
+                print(f"  ❌ 錯誤: {resp.error}")
+                results['partial_32'] = str(resp.error)
+            else:
+                print(f"  ✅ 成功!")
+                results['partial_32'] = 'Success'
+        except Exception as e:
+            print(f"  ❌ 異常: {e}")
+            results['partial_32'] = str(e)
+        
+        # ========== 測試 3: Attribute 4 ==========
+        print("\n🧪 [測試 3] Service 0x10, Attribute 4")
+        try:
+            resp = driver.generic_message(
+                service=0x10,
+                class_code=0x04,
+                instance=0x66,
+                attribute=4,
+                request_data=bytes(config_data),
+                connected=False
+            )
+            if resp is None:
+                print(f"  ❌ 無回應")
+                results['attr_4'] = 'No response'
+            elif hasattr(resp, 'error') and resp.error:
+                print(f"  ❌ 錯誤: {resp.error}")
+                results['attr_4'] = str(resp.error)
+            else:
+                print(f"  ✅ 成功!")
+                results['attr_4'] = 'Success'
+        except Exception as e:
+            print(f"  ❌ 異常: {e}")
+            results['attr_4'] = str(e)
+        
+        # ========== 結果摘要 ==========
+        print("\n" + "="*70)
+        print("📊 測試結果摘要")
+        print("="*70)
+        
+        all_failed = all(r != 'Success' for r in results.values())
+        
+        for test, result in results.items():
+            status = "✅" if result == 'Success' else "❌"
+            print(f"  {test}: {status} {result}")
+        
+        if all_failed:
+            print("\n💡 所有測試都失敗 - Config Assembly 可能在運行時唯讀")
+            print("   建議使用 Parameter Object (Class 0x0F) 方法")
+        
+        print("="*70)
+        
+        return results
+    
+    def compare_assemblies(self, driver):
+        """
+        對照比較 Input, Output, Config Assembly 的結構差異
+        
+        這個診斷工具會:
+        1. 讀取 Input Assembly (0x65) - 244 bytes
+        2. 讀取 Output Assembly (0x64) - 18 bytes  
+        3. 讀取 Config Assembly (0x66) - 244 bytes
+        4. 嘗試寫入 Output Assembly 驗證寫入功能
+        5. 比較結構並找出差異
+        
+        Args:
+            driver: CIPDriver 實例
+        
+        Returns:
+            dict: 診斷結果
+        """
+        print("\n" + "="*70)
+        print("🔬 Assembly 結構對照診斷")
+        print("="*70)
+        
+        results = {
+            'input': None,
+            'output': None,
+            'config': None,
+            'output_writable': False,
+            'config_writable': False
+        }
+        
+        # ========== 1. 讀取 Input Assembly ==========
+        print("\n📥 [1/5] 讀取 Input Assembly (0x65)...")
+        try:
+            input_resp = driver.generic_message(
+                service=0x0E,
+                class_code=0x04,
+                instance=0x65,
+                attribute=3,
+                connected=False
+            )
+            if input_resp and hasattr(input_resp, 'value'):
+                results['input'] = input_resp.value
+                print(f"  ✅ 成功讀取: {len(input_resp.value)} bytes")
+                print(f"  前 32 bytes: {input_resp.value[:32].hex()}")
+            else:
+                print(f"  ❌ 讀取失敗")
+        except Exception as e:
+            print(f"  ❌ 異常: {e}")
+        
+        # ========== 2. 讀取 Output Assembly ==========
+        print("\n📤 [2/5] 讀取 Output Assembly (0x64)...")
+        try:
+            output_resp = driver.generic_message(
+                service=0x0E,
+                class_code=0x04,
+                instance=0x64,
+                attribute=3,
+                connected=False
+            )
+            if output_resp and hasattr(output_resp, 'value'):
+                results['output'] = output_resp.value
+                print(f"  ✅ 成功讀取: {len(output_resp.value)} bytes")
+                print(f"  完整內容: {output_resp.value.hex()}")
+            else:
+                print(f"  ❌ 讀取失敗")
+        except Exception as e:
+            print(f"  ❌ 異常: {e}")
+        
+        # ========== 3. 讀取 Config Assembly ==========
+        print("\n⚙️  [3/5] 讀取 Config Assembly (0x66)...")
+        try:
+            config_resp = driver.generic_message(
+                service=0x0E,
+                class_code=0x04,
+                instance=0x66,
+                attribute=3,
+                connected=False
+            )
+            if config_resp and hasattr(config_resp, 'value'):
+                results['config'] = config_resp.value
+                print(f"  ✅ 成功讀取: {len(config_resp.value)} bytes")
+                print(f"  前 32 bytes: {config_resp.value[:32].hex()}")
+            else:
+                print(f"  ❌ 讀取失敗")
+        except Exception as e:
+            print(f"  ❌ 異常: {e}")
+        
+        # ========== 4. 測試 Output Assembly 寫入 ==========
+        print("\n🧪 [4/5] 測試 Output Assembly (0x64) 寫入...")
+        if results['output']:
+            try:
+                # 準備寫入資料 (保持原值，不改變任何通道狀態)
+                output_data = bytearray(results['output'])
+                print(f"  準備寫入: {len(output_data)} bytes")
+                print(f"  資料: {output_data.hex()}")
+                
+                write_output_resp = driver.generic_message(
+                    service=0x10,
+                    class_code=0x04,
+                    instance=0x64,
+                    attribute=3,
+                    request_data=bytes(output_data),
+                    connected=False
+                )
+                
+                if write_output_resp is None:
+                    print(f"  ❌ 無回應 (write_response is None)")
+                elif hasattr(write_output_resp, 'error') and write_output_resp.error:
+                    print(f"  ❌ 寫入失敗: {write_output_resp.error}")
+                else:
+                    print(f"  ✅ 寫入成功!")
+                    results['output_writable'] = True
+            except Exception as e:
+                print(f"  ❌ 異常: {e}")
+        else:
+            print(f"  ⏭️  跳過 (Output Assembly 讀取失敗)")
+        
+        # ========== 5. 測試 Config Assembly 寫入 (小型測試) ==========
+        print("\n🧪 [5/5] 測試 Config Assembly (0x66) 寫入...")
+        if results['config']:
+            try:
+                # 準備最小測試緩衝區 (完全使用讀取的原值)
+                config_data = bytearray(results['config'])
+                print(f"  準備寫入: {len(config_data)} bytes (使用讀取的原值)")
+                print(f"  前 32 bytes: {config_data[:32].hex()}")
+                
+                write_config_resp = driver.generic_message(
+                    service=0x10,
+                    class_code=0x04,
+                    instance=0x66,
+                    attribute=3,
+                    request_data=bytes(config_data),
+                    connected=False
+                )
+                
+                if write_config_resp is None:
+                    print(f"  ❌ 無回應 (write_response is None)")
+                    
+                    # 額外診斷: 檢查其他 Attribute
+                    print(f"\n  🔍 診斷: 檢查 Config Assembly 的其他 Attributes...")
+                    for attr in [1, 2, 4, 5]:
+                        try:
+                            attr_resp = driver.generic_message(
+                                service=0x0E,
+                                class_code=0x04,
+                                instance=0x66,
+                                attribute=attr,
+                                connected=False
+                            )
+                            if attr_resp and hasattr(attr_resp, 'value'):
+                                attr_data = attr_resp.value
+                                print(f"    Attribute {attr}: ✅ {len(attr_data) if isinstance(attr_data, (bytes, bytearray)) else type(attr_data)} bytes")
+                        except:
+                            pass
+                    
+                elif hasattr(write_config_resp, 'error') and write_config_resp.error:
+                    print(f"  ❌ 寫入失敗: {write_config_resp.error}")
+                else:
+                    print(f"  ✅ 寫入成功!")
+                    results['config_writable'] = True
+            except Exception as e:
+                print(f"  ❌ 異常: {e}")
+        else:
+            print(f"  ⏭️  跳過 (Config Assembly 讀取失敗)")
+        
+        # ========== 6. 分析比較 ==========
+        print("\n" + "="*70)
+        print("📊 分析結果")
+        print("="*70)
+        
+        print("\n🔍 Assembly 大小比較:")
+        print(f"  Input Assembly (0x65):  {len(results['input']) if results['input'] else 'N/A':>3} bytes {'✅' if results['input'] else '❌'}")
+        print(f"  Output Assembly (0x64): {len(results['output']) if results['output'] else 'N/A':>3} bytes {'✅' if results['output'] else '❌'}")
+        print(f"  Config Assembly (0x66): {len(results['config']) if results['config'] else 'N/A':>3} bytes {'✅' if results['config'] else '❌'}")
+        
+        print("\n🔍 寫入功能測試:")
+        print(f"  Output Assembly (0x64): {'✅ 可寫入' if results['output_writable'] else '❌ 無法寫入'}")
+        print(f"  Config Assembly (0x66): {'✅ 可寫入' if results['config_writable'] else '❌ 無法寫入'}")
+        
+        # 比較 Input 與 Config 的前 32 bytes
+        if results['input'] and results['config']:
+            print("\n🔍 Input vs Config 前 32 bytes 比較:")
+            input_32 = results['input'][:32]
+            config_32 = results['config'][:32]
+            
+            print(f"  Input  (0x65): {input_32.hex()}")
+            print(f"  Config (0x66): {config_32.hex()}")
+            
+            if input_32 == config_32:
+                print(f"  ✅ 完全相同")
+            else:
+                print(f"  ⚠️  有差異:")
+                for i in range(min(32, len(input_32), len(config_32))):
+                    if input_32[i] != config_32[i]:
+                        print(f"    Offset {i}: Input=0x{input_32[i]:02X}, Config=0x{config_32[i]:02X}")
+        
+        # 檢查 Config 是否全為 0
+        if results['config']:
+            is_all_zero = all(b == 0 for b in results['config'])
+            if is_all_zero:
+                print("\n⚠️  警告: Config Assembly 全為 0!")
+                print("  這可能表示:")
+                print("  1. Config Assembly 從未被設定")
+                print("  2. Config Assembly Instance 編號不正確")
+                print("  3. 需要使用其他方法初始化")
+        
+        print("\n" + "="*70)
+        print("💡 診斷結論:")
+        print("="*70)
+        
+        if not results['config_writable']:
+            print("\n❌ Config Assembly (0x66) 無法寫入")
+            print("\n可能原因:")
+            print("  1. 運行時唯讀 (最可能) - 只能在設備啟動時透過配置工具設定")
+            print("  2. 需要特殊權限或模式")
+            print("  3. 使用 Unconnected Send 有封包大小限制")
+            print("  4. 需要使用 Connected Messaging")
+            
+            print("\n建議方案:")
+            print("  ✅ 方案A: 使用 Parameter Object (Class 0x0F) 方法")
+            print("     - 已知可行 (在 lock checking 中使用成功)")
+            print("     - 可以運行時修改個別參數")
+            print("     - 不需要一次寫入 244 bytes")
+            
+            print("\n  ⚙️  方案B: 嘗試 Connected Messaging")
+            print("     - 建立 Forward Open 連接")
+            print("     - 使用 Connected Send 寫入")
+            print("     - 可能繞過 Unconnected 的限制")
+        else:
+            print("\n✅ Config Assembly 可寫入!")
+            print("  之前的寫入失敗可能是:")
+            print("  1. 參數值錯誤")
+            print("  2. 緩衝區內容錯誤")
+            print("  3. 其他暫時性問題")
+        
+        print("\n" + "="*70)
+        
+        return results
+    
     def diagnose_config_assembly_write(self, driver, test_param3_values=None):
         """
         診斷 Config Assembly 寫入問題
@@ -2481,7 +2853,10 @@ class CaparocController:
                 print("  s                            - 顯示完整狀態")
                 print("  scan                         - 掃描所有 Assembly Instance")
                 print("  limits                       - 顯示通道配置限制")
-                print("  diagnose                     - 診斷 Config Assembly 寫入問題 🔬")
+                print("\n【診斷工具 🔬】")
+                print("  compare                      - 對照 Input/Output/Config Assembly")
+                print("  testwrite                    - 測試 Config Assembly 各種寫入方法")
+                print("  diagnose                     - 診斷 Param3 'No Change' 值")
                 print("\n【即時監控】")
                 print("  monitor start [interval] [mode]  - 啟動監控")
                 print("                                     interval: 更新頻率(秒), 預設2")
@@ -2527,6 +2902,14 @@ class CaparocController:
                             # 🔬 診斷 Config Assembly 寫入問題
                             print("\n🔬 開始診斷 Config Assembly 寫入...")
                             self.diagnose_config_assembly_write(driver)
+                        elif cmd == 'compare':
+                            # 🔬 對照比較 Input/Output/Config Assembly
+                            print("\n🔬 開始對照比較 Assemblies...")
+                            self.compare_assemblies(driver)
+                        elif cmd == 'testwrite':
+                            # 🧪 測試 Config Assembly 各種寫入方法
+                            print("\n🧪 開始測試寫入方法...")
+                            self.test_config_write_methods(driver)
                         elif cmd.startswith('init '):
                             # ✅ 使用正確的 Config Assembly 方法設定標稱電流
                             try:

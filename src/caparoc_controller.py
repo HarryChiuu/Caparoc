@@ -250,11 +250,12 @@ class CaparocController:
         """
         建立 Implicit Messaging (I/O Connection) 連接
         
-        重要理解修正：
-        1. Config Assembly (244 bytes) 不是附加在 Forward Open 請求中
-        2. Config 必須先透過 Explicit Message 寫入設備
-        3. Forward Open 的 Connection Path 指定 Config Instance，設備會讀取
-        4. 然後建立週期性的 Output/Input I/O 連線
+        正確流程（根據專家分析）：
+        1. 準備 244-byte Config Assembly 資料
+        2. 建立 Forward Open 請求 (包含 Config 資料)
+        3. 發送 Forward Open 到 Connection Manager
+        4. 設備接收 Config 並建立 I/O Connection
+        5. 啟動 I/O Worker 進行週期性 I/O 更新
         
         Args:
             driver: CIPDriver 實例
@@ -268,46 +269,38 @@ class CaparocController:
         print("="*60)
         
         try:
-            # ========== 步驟 1: 準備並寫入 Config Assembly ==========
+            # ========== 步驟 1: 準備 Config Assembly ==========
             if config_data is None:
-                print("📦 [Step 1/3] 準備 Config Assembly (244 bytes)...")
+                print("📦 [Step 1/2] 準備 Config Assembly (244 bytes)...")
                 config_data = self._build_default_config_assembly()
                 print(f"   ✅ Config 資料已準備 ({len(config_data)} bytes)")
+                print(f"   🔍 Config 前 32 bytes: {config_data[:32].hex()}")
             
-            print(f"\n📤 [Step 2/3] 寫入 Config Assembly 到設備...")
-            print(f"   → 使用 Explicit Message 預先設定")
-            
-            # 先寫入 Config Assembly (使用 Explicit Message)
-            config_write_response = driver.generic_message(
-                service=0x10,  # Set Attribute Single
-                class_code=0x04,  # Assembly Object
-                instance=self.config_instance,  # 0x66
-                attribute=3,  # Data
-                request_data=config_data,
-                connected=False,  # Explicit Message
-                unconnected_send=True
-            )
-            
-            if config_write_response and not (hasattr(config_write_response, 'error') and config_write_response.error):
-                print(f"   ✅ Config Assembly 寫入成功")
-            else:
-                error_msg = config_write_response.error if (config_write_response and hasattr(config_write_response, 'error')) else "無回應"
-                print(f"   ⚠️  Config Assembly 寫入失敗: {error_msg}")
-                print(f"   💡 繼續嘗試 Forward Open (設備可能已有預設 Config)")
-            
-            # ========== 步驟 2: 建立 Forward Open ==========
-            print(f"\n🔨 [Step 3/3] 建立 Forward Open (I/O Connection)...")
+            # ========== 步驟 2: 建立並發送 Forward Open ==========
+            print(f"\n🔨 [Step 2/2] 建構 Forward Open 請求 (包含 Config)...")
             forward_open_data = self._build_forward_open_request(config_data)
             print(f"   ✅ Forward Open 請求長度: {len(forward_open_data)} bytes")
+            print(f"      → 標頭: 44 bytes")
+            print(f"      → Config: 244 bytes")
             
-            # 顯示封包內容 (前 64 bytes)
-            print(f"   🔍 封包內容 (前 64 bytes):")
-            for i in range(0, min(64, len(forward_open_data)), 16):
+            # 顯示封包內容 (標頭 44 bytes + Config 前 32 bytes)
+            print(f"\n   🔍 封包內容:")
+            print(f"      標頭 (前 44 bytes):")
+            for i in range(0, 44, 16):
                 hex_line = ' '.join(f'{b:02X}' for b in forward_open_data[i:i+16])
-                print(f"      {i:04d}: {hex_line}")
+                print(f"        {i:04d}: {hex_line}")
+            
+            print(f"      Config (前 32 bytes):")
+            for i in range(44, min(76, len(forward_open_data)), 16):
+                hex_line = ' '.join(f'{b:02X}' for b in forward_open_data[i:i+16])
+                print(f"        {i:04d}: {hex_line}")
             
             # 發送 Forward Open
             print(f"\n📡 發送 Forward Open 到 Connection Manager...")
+            print(f"   Service: 0x54 (Large Forward Open)")
+            print(f"   Class: 0x06 (Connection Manager)")
+            print(f"   Instance: 0x01")
+            
             response = driver.generic_message(
                 service=0x54,  # Large Forward Open
                 class_code=0x06,  # Connection Manager
@@ -329,16 +322,23 @@ class CaparocController:
                     # 顯示可能的錯誤原因
                     if "Service not supported" in str(response.error):
                         print(f"   💡 可能原因:")
-                        print(f"      1. 設備不支援 Forward Open (不太可能)")
-                        print(f"      2. Service Code 錯誤 (應為 0x54)")
+                        print(f"      1. 設備不支援 Large Forward Open (Service 0x54)")
+                        print(f"      2. 嘗試使用 Service 0x52 (Small Forward Open)")
                     elif "Path" in str(response.error):
                         print(f"   💡 可能原因:")
                         print(f"      1. Connection Path 格式錯誤")
                         print(f"      2. Assembly Instance 不存在")
+                        print(f"      3. EDS Path 解析錯誤")
                     elif "Connection" in str(response.error):
                         print(f"   💡 可能原因:")
                         print(f"      1. Connection Parameters 不符合設備限制")
                         print(f"      2. RPI 值超出範圍")
+                        print(f"      3. Connection Size 錯誤")
+                    elif "Configuration" in str(response.error) or "Config" in str(response.error):
+                        print(f"   💡 可能原因:")
+                        print(f"      1. Config 資料格式錯誤")
+                        print(f"      2. Config 長度不符 (應為 244 bytes)")
+                        print(f"      3. Config 參數值超出範圍")
                     
                     print("="*60)
                     return False
@@ -374,9 +374,10 @@ class CaparocController:
                 print(f"   ❌ Forward Open 失敗: 無回應")
                 print(f"   💡 可能原因:")
                 print(f"      1. 封包格式錯誤，設備直接丟棄")
-                print(f"      2. Connection Path 不符合 EDS 規範")
-                print(f"      3. 網路超時 (檢查設備連線)")
-                print(f"      4. 防火牆阻擋回應")
+                print(f"      2. Connection Path 編碼錯誤")
+                print(f"      3. Config 資料附加方式錯誤")
+                print(f"      4. 網路超時 (檢查設備連線)")
+                print(f"      5. 防火牆阻擋回應")
                 print(f"\n   ℹ️  回退到 Explicit Messaging 模式")
                 print("="*60)
                 return False
@@ -391,42 +392,43 @@ class CaparocController:
     
     def _build_forward_open_request(self, config_data):
         """
-        建立 Forward Open 請求 (CIP Vol1 3-5.5.1)
+        建立 Forward Open 請求 (288 bytes = 44-byte 標頭 + 244-byte Config)
         
         根據 EDS [Connection Manager] Connection1 定義:
         Connection1 = 
-            0x04010002,              $ Trigger and Transport (0x04=Class1, 0x01=Cyclic, 0x0002=Server)
-            0x44640405,              $ Point Multicast (0x4464=Multicast, 0x0405=direction)
+            0x04010002,              $ Trigger and Transport
+            0x44640405,              $ Point Multicast
             Param1000,20,Assem100,   $ O->T RPI, Size, Assembly (Output 0x64, 20 bytes)
             Param1000,208,Assem101,  $ T->O RPI, Size, Assembly (Input 0x65, 208 bytes)
             ,,                       $ config 1 (empty)
-            244,Assem102,            $ config 2 (Config 0x66, 244 bytes)
-            "Exclusive Owner ",      $ connection name
+            244,Assem102,            $ config 2 (Config 0x66, 244 bytes) ⬅️ 必須附加！
+            "Exclusive Owner ",      
             ...
-            "20 04 24 66 2C 64 2C 65"; $ path = Class 0x04, Config 0x66, Output 0x64, Input 0x65
+            "20 04 24 66 2C 64 2C 65"; $ path
         
-        重要發現：
-        - Config 資料 (244 bytes) 不是附加在 Forward Open 請求後面
-        - Config Assembly 是透過 Connection Path 指定，在連線建立時由設備主動讀取
-        - Forward Open 只需要正確的路徑，不需要包含 Config 內容
+        關鍵修正：
+        - config 2 定義了 244,Assem102，表示必須在 Forward Open 中附加 244-byte Config
+        - Connection Path 直接使用 EDS 定義的格式: "20 04 24 66 2C 64 2C 65"
+        - 總長度 = 44 bytes (標頭) + 244 bytes (Config) = 288 bytes
         
         Args:
-            config_data: 244-byte Config Assembly 資料 (先寫入設備，然後由 Forward Open 引用)
+            config_data: 244-byte Config Assembly 資料
         
         Returns:
-            bytes: Forward Open 請求封包
+            bytes: Forward Open 請求封包 (288 bytes)
         """
+        if len(config_data) != 244:
+            raise ValueError(f"Config 資料長度必須是 244 bytes (實際: {len(config_data)})")
+        
         request = bytearray()
         
-        # ========== CIP Forward Open Request Structure ==========
+        # ========== Forward Open Request Header ==========
         
         # Priority/Tick Time (1 byte)
-        # Bit 0-3: Tick Time = 2 (4ms base)
-        # Bit 4-7: Priority = 5 (Low)
-        request.append(0x52)  # Priority=5, Tick Time=2
+        request.append(0x52)  # Priority=5, Tick Time=2 (4ms)
         
-        # Timeout Ticks (1 byte) - Timeout = Ticks × Tick Time
-        request.append(0xF4)  # 244 ticks × 4ms = 976ms
+        # Timeout Ticks (1 byte)
+        request.append(0xFA)  # 250 ticks × 4ms = 1000ms
         
         # O->T Network Connection ID (4 bytes)
         request.extend(struct.pack('<I', 0x20000001))
@@ -437,87 +439,52 @@ class CaparocController:
         # Connection Serial Number (2 bytes)
         request.extend(struct.pack('<H', 0x0001))
         
-        # Vendor ID (2 bytes) - 根據 EDS Vendor=154
-        request.extend(struct.pack('<H', 154))
+        # Vendor ID (2 bytes)
+        request.extend(struct.pack('<H', 154))  # 0x009A
         
         # Originator Serial Number (4 bytes)
         request.extend(struct.pack('<I', 0x00000042))
         
         # Connection Timeout Multiplier (1 byte)
-        request.append(0x01)  # ×4 multiplier = 4 seconds
+        request.append(0x01)  # ×8 = 8 seconds
         
         # Reserved (3 bytes)
         request.extend([0x00, 0x00, 0x00])
         
-        # O->T RPI (4 bytes) - Request Packet Interval (微秒)
-        # EDS Param1000 預設 = 100ms = 100000 µs
+        # O->T RPI (4 bytes) - 100ms = 100000 µs
         request.extend(struct.pack('<I', 100000))
         
         # O->T Network Connection Parameters (2 bytes)
-        # Bit 0-8: Connection Size = 20 bytes (0x0014)
-        # Bit 9: Fixed(1) / Variable(0) = 1
-        # Bit 10: Priority = 0 (Scheduled)
-        # Bit 11-12: Connection Type = 01 (Point-to-Point)
-        # Bit 13: Redundant Owner = 0
-        # 0x4014 = 0100 0000 0001 0100 = Fixed, 20 bytes, P2P
+        # 0x4014 = Fixed, 20 bytes, Point-to-Point
         request.extend(struct.pack('<H', 0x4014))
         
         # T->O RPI (4 bytes)
         request.extend(struct.pack('<I', 100000))
         
         # T->O Network Connection Parameters (2 bytes)
-        # Connection Size = 208 bytes (0x00D0)
-        # 0x40D0 = 0100 0000 1101 0000 = Fixed, 208 bytes, P2P
+        # 0x40D0 = Fixed, 208 bytes, Point-to-Point
         request.extend(struct.pack('<H', 0x40D0))
         
         # Transport Type/Trigger (1 byte)
-        # Bit 0-3: Transport Class = 3 (Class 1)
-        # Bit 4-6: Trigger = 1 (Cyclic)
-        # Bit 7: Direction = 0 (Client)
-        # 0x83 = 1000 0011 = Direction=Server(1), Trigger=Cyclic(0), Class=3
+        # 0x83 = Server, Cyclic, Class 1
         request.append(0x83)
         
-        # ========== Connection Path ==========
-        # 這是關鍵！必須嚴格符合 EDS: "20 04 24 66 2C 64 2C 65"
+        # ========== Connection Path (直接使用 EDS 定義) ==========
+        # EDS Path: "20 04 24 66 2C 64 2C 65" = 8 bytes = 4 words
         
-        # Connection Path Size (1 byte) - 以 WORD (2 bytes) 為單位
-        # Path 長度 = 8 bytes = 4 words
-        request.append(0x04)
+        # Connection Path Size (1 byte) - 以 WORD 為單位
+        request.append(0x04)  # 4 words = 8 bytes
         
-        # Connection Path (8 bytes)
-        # 解析 EDS Path: "20 04 24 66 2C 64 2C 65"
-        # 20 04    = Logical Segment, 8-bit Class ID = 0x04 (Assembly Object)
-        # 24 66    = Logical Segment, 8-bit Instance ID = 0x66 (Config Assembly)
-        # 2C 64    = Logical Segment, 8-bit Attribute ID = 0x64 (???)
-        # 2C 65    = Logical Segment, 8-bit Attribute ID = 0x65 (???)
+        # Connection Path - 直接使用 EDS 的字節序列
+        # 20 04 = Logical Segment: Class 0x04 (Assembly Object)
+        # 24 66 = Logical Segment: Instance 0x66 (Config Assembly)
+        # 2C 64 = Logical Segment: Connection Point 0x64 (Output)
+        # 2C 65 = Logical Segment: Connection Point 0x65 (Input)
+        request.extend([0x20, 0x04, 0x24, 0x66, 0x2C, 0x64, 0x2C, 0x65])
         
-        # ⚠️ 等等，這個 Path 格式不標準！
-        # 標準 Connection Path 應該是:
-        # - Class/Instance/ConnPoint (Output)
-        # - Class/Instance/ConnPoint (Input)
-        # - Class/Instance (Config)
-        
-        # 讓我重新解讀 EDS Path...
-        # "20 04 24 66 2C 64 2C 65" 可能是:
-        # 20 04    = Class 0x04 (Assembly)
-        # 24 66    = Instance 0x66 (Config)
-        # 2C 64    = Connection Point??? 或 Instance 0x64 (Output)
-        # 2C 65    = Connection Point??? 或 Instance 0x65 (Input)
-        
-        # 根據 CIP 標準，Connection Path 應該指向 Config、Output、Input
-        # 讓我採用標準格式：
-        
-        # Segment 1: Class 0x04 (Assembly Object)
-        request.extend([0x20, 0x04])
-        
-        # Segment 2: Instance 0x66 (Config Assembly)
-        request.extend([0x24, 0x66])
-        
-        # Segment 3: Instance 0x64 (Output Assembly)
-        request.extend([0x24, 0x64])
-        
-        # Segment 4: Instance 0x65 (Input Assembly)
-        request.extend([0x24, 0x65])
+        # ========== Configuration Data (244 bytes) ==========
+        # 根據 EDS config 2 定義，附加 244-byte Config 資料
+        request.extend(config_data)
         
         return bytes(request)
     

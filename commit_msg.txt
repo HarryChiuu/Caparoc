@@ -1,49 +1,40 @@
-fix(forward-open): 修正 Forward Open 封包結構與 Config 寫入流程
+fix(forward-open): 恢復 288-byte 請求並使用 EDS 原始 Path
 
-根據專家分析與 CIP 規範修正關鍵錯誤：
+根據專家分析，修正關鍵錯誤：
 
-1. Forward Open 封包結構修正
-   ❌ 錯誤理解：Config 資料 (244 bytes) 附加在 Forward Open 後
-   ✅ 正確做法：Config 先透過 Explicit Message 寫入，Forward Open 只包含 Path
+1. 恢復 288-byte Forward Open 請求 ✅
+   - 44-byte 標頭 (不含 Config) 是錯誤的
+   - 正確 = 44-byte 標頭 + 244-byte Config = 288 bytes
+   - EDS config 2 定義: "244,Assem102" 表示必須附加 Config
+
+2. Connection Path 使用 EDS 原始定義 ✅
+   - EDS Path: "20 04 24 66 2C 64 2C 65"
+   - 直接使用此字節序列，不做修改
+   - 20 04 = Class 0x04 (Assembly Object)
+   - 24 66 = Instance 0x66 (Config)
+   - 2C 64 = Connection Point 0x64 (Output)
+   - 2C 65 = Connection Point 0x65 (Input)
+
+3. 移除錯誤的預先寫入 Config 步驟 ✅
+   - Config 不需要預先寫入
+   - Config 隨 Forward Open 一起傳送
+   - 設備收到 Forward Open 時同時接收 Config
+
+4. 增強除錯輸出 ✅
+   - 顯示標頭 44 bytes
+   - 顯示 Config 前 32 bytes
+   - 詳細的錯誤分類與建議
+   - 逐步流程顯示
+
+5. 關鍵修正說明
+   之前的錯誤理解：
+   ❌ 44-byte 請求 (不含 Config)
+   ❌ Connection Path 改為 "24 64 24 65" (修改 EDS)
+   ❌ 預先寫入 Config Assembly
    
-   - Priority/Tick Time: 0x52 (Priority=5, Tick=2, 4ms base)
-   - Timeout: 244 ticks × 4ms = 976ms
-   - O->T Connection Parameters: 0x4014 (Fixed, 20 bytes, P2P)
-   - T->O Connection Parameters: 0x40D0 (Fixed, 208 bytes, P2P)
-   - Transport Type: 0x83 (Server, Cyclic, Class 1)
-   - RPI: 100000 µs (100ms, 符合 EDS Param1000)
+   正確做法：
+   ✅ 288-byte 請求 (標頭 + Config)
+   ✅ Connection Path 完全按照 EDS 定義
+   ✅ Config 隨 Forward Open 一起傳送
 
-2. Connection Path 修正
-   EDS Path: "20 04 24 66 2C 64 2C 65"
-   解析：
-   - 20 04: Class 0x04 (Assembly Object)
-   - 24 66: Instance 0x66 (Config Assembly)
-   - 24 64: Instance 0x64 (Output Assembly)  ⬅️ 修正為 0x24 (不是 0x2C)
-   - 24 65: Instance 0x65 (Input Assembly)
-   
-   Path Size: 4 words (8 bytes)
-
-3. Config Assembly 寫入流程
-   步驟 1: 準備 244-byte Config 資料
-   步驟 2: 使用 Explicit Message 寫入 Config Assembly (0x66)
-   步驟 3: 建立 Forward Open，Path 指向 Config/Output/Input
-   步驟 4: 設備讀取 Config，建立 I/O Connection
-   步驟 5: 啟動 I/O Worker 週期性更新
-
-4. 除錯輸出增強
-   - 顯示封包前 64 bytes (hex dump)
-   - 詳細的錯誤訊息與可能原因
-   - Forward Open 回應資料解析
-   - 分步驟顯示連線建立過程
-
-5. 關鍵修正
-   - 移除 244-byte Config 從 Forward Open 請求
-   - 封包長度從 288 bytes 降為 44 bytes
-   - 先寫入 Config，再建立連線
-   - Connection Path 使用正確的 Segment Type
-
-此版本解決專家指出的四個關鍵問題：
-1. ✅ Connection Path 格式正確
-2. ✅ RPI 值符合 EDS 規範
-3. ✅ Connection Type 設定為 Exclusive Owner
-4. ✅ Config 資料處理流程正確
+此版本回到正確的 288-byte 請求，並嚴格遵循 EDS 規範

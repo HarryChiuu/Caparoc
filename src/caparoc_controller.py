@@ -3177,8 +3177,8 @@ class CaparocController:
                                 else:
                                     print(f"\n[設定] CH{ch}: 標稱電流 {amps}A")
                                 
-                                # 使用正確的 Config Assembly 讀取-修改-寫入方法
-                                success = self._set_nominal_current_config_assembly(driver, module, channel, amps)
+                                # ✅ 使用 Parameter Object 方法 (繞過 244-byte 限制)
+                                success = self._set_nominal_current_parameter_object(driver, module, channel, amps)
                                 
                                 if success:
                                     print(f"✅ CH{ch} 設定完成")

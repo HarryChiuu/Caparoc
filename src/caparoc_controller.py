@@ -250,243 +250,99 @@ class CaparocController:
         """
         建立 Implicit Messaging (I/O Connection) 連接
         
-        正確流程（根據專家分析）：
-        1. 準備 244-byte Config Assembly 資料
-        2. 建立 Forward Open 請求 (包含 Config 資料)
-        3. 發送 Forward Open 到 Connection Manager
-        4. 設備接收 Config 並建立 I/O Connection
-        5. 啟動 I/O Worker 進行週期性 I/O 更新
+        重要認知：
+        根據專家分析，手動建構 Forward Open 封包是錯誤的做法。
+        正確的 Forward Open 需要：
+        1. 獨立的 O->T Path (Output 0x64)
+        2. 獨立的 T->O Path (Input 0x65)  
+        3. 獨立的 Config Path (0x66)
+        4. 正確的欄位結構
+        
+        pycomm3 的 generic_message 不支援建立完整的 I/O Connection。
+        需要使用專門的 Scanner/Adapter 函式庫。
+        
+        暫時策略：
+        由於 pycomm3 CIPDriver 不是完整的 Scanner，我們無法建立正確的
+        Forward Open I/O Connection。
+        
+        因此，我們改用 Explicit Messaging + Parameter Object 方法來設定
+        標稱電流，這是可行的替代方案。
         
         Args:
             driver: CIPDriver 實例
-            config_data: 244-byte Config Assembly 資料 (None = 使用預設值)
+            config_data: 244-byte Config Assembly 資料 (暫時不使用)
         
         Returns:
-            bool: True=成功建立 I/O 連線, False=失敗
+            bool: False - 不嘗試建立 Implicit Connection
         """
         print("\n" + "="*60)
-        print("🔗 建立 Implicit Messaging (I/O Connection)...")
+        print("ℹ️  Implicit Messaging (I/O Connection) 分析")
         print("="*60)
         
-        try:
-            # ========== 步驟 1: 準備 Config Assembly ==========
-            if config_data is None:
-                print("📦 [Step 1/2] 準備 Config Assembly (244 bytes)...")
-                config_data = self._build_default_config_assembly()
-                print(f"   ✅ Config 資料已準備 ({len(config_data)} bytes)")
-                print(f"   🔍 Config 前 32 bytes: {config_data[:32].hex()}")
-            
-            # ========== 步驟 2: 建立並發送 Forward Open ==========
-            print(f"\n🔨 [Step 2/2] 建構 Forward Open 請求 (包含 Config)...")
-            forward_open_data = self._build_forward_open_request(config_data)
-            print(f"   ✅ Forward Open 請求長度: {len(forward_open_data)} bytes")
-            print(f"      → 標頭: 44 bytes")
-            print(f"      → Config: 244 bytes")
-            
-            # 顯示封包內容 (標頭 44 bytes + Config 前 32 bytes)
-            print(f"\n   🔍 封包內容:")
-            print(f"      標頭 (前 44 bytes):")
-            for i in range(0, 44, 16):
-                hex_line = ' '.join(f'{b:02X}' for b in forward_open_data[i:i+16])
-                print(f"        {i:04d}: {hex_line}")
-            
-            print(f"      Config (前 32 bytes):")
-            for i in range(44, min(76, len(forward_open_data)), 16):
-                hex_line = ' '.join(f'{b:02X}' for b in forward_open_data[i:i+16])
-                print(f"        {i:04d}: {hex_line}")
-            
-            # 發送 Forward Open
-            print(f"\n📡 發送 Forward Open 到 Connection Manager...")
-            print(f"   Service: 0x54 (Large Forward Open)")
-            print(f"   Class: 0x06 (Connection Manager)")
-            print(f"   Instance: 0x01")
-            
-            response = driver.generic_message(
-                service=0x54,  # Large Forward Open
-                class_code=0x06,  # Connection Manager
-                instance=0x01,
-                request_data=forward_open_data,
-                connected=False,  # Forward Open 是 Explicit Message
-                unconnected_send=True
-            )
-            
-            # ========== 步驟 3: 檢查回應 ==========
-            print(f"\n🔍 檢查 Forward Open 回應...")
-            
-            if response:
-                print(f"   ✅ 收到回應")
-                
-                if hasattr(response, 'error') and response.error:
-                    print(f"   ❌ Forward Open 失敗: {response.error}")
-                    
-                    # 顯示可能的錯誤原因
-                    if "Service not supported" in str(response.error):
-                        print(f"   💡 可能原因:")
-                        print(f"      1. 設備不支援 Large Forward Open (Service 0x54)")
-                        print(f"      2. 嘗試使用 Service 0x52 (Small Forward Open)")
-                    elif "Path" in str(response.error):
-                        print(f"   💡 可能原因:")
-                        print(f"      1. Connection Path 格式錯誤")
-                        print(f"      2. Assembly Instance 不存在")
-                        print(f"      3. EDS Path 解析錯誤")
-                    elif "Connection" in str(response.error):
-                        print(f"   💡 可能原因:")
-                        print(f"      1. Connection Parameters 不符合設備限制")
-                        print(f"      2. RPI 值超出範圍")
-                        print(f"      3. Connection Size 錯誤")
-                    elif "Configuration" in str(response.error) or "Config" in str(response.error):
-                        print(f"   💡 可能原因:")
-                        print(f"      1. Config 資料格式錯誤")
-                        print(f"      2. Config 長度不符 (應為 244 bytes)")
-                        print(f"      3. Config 參數值超出範圍")
-                    
-                    print("="*60)
-                    return False
-                
-                # 成功！
-                print(f"   ✅ Forward Open 成功！")
-                
-                if hasattr(response, 'value') and response.value:
-                    print(f"   🔍 回應資料: {response.value.hex()}")
-                
-                self.implicit_mode_enabled = True
-                
-                # 啟動 I/O Worker
-                print(f"\n🔄 啟動 I/O Worker 執行緒...")
-                self.cip_keep_alive = True
-                self.io_update_thread = threading.Thread(
-                    target=self._io_worker,
-                    args=(driver,),
-                    daemon=True
-                )
-                self.io_update_thread.start()
-                time.sleep(0.5)
-                print(f"   ✅ I/O Worker 運行中 (100ms 週期更新)")
-                
-                print("="*60)
-                print("✅ Implicit Messaging 模式已啟用")
-                print("   → Output Assembly (0x64): 20 bytes, 週期發送")
-                print("   → Input Assembly (0x65): 208 bytes, 週期接收")
-                print("   → Config Assembly (0x66): 244 bytes, 已套用")
-                print("="*60)
-                return True
-            else:
-                print(f"   ❌ Forward Open 失敗: 無回應")
-                print(f"   💡 可能原因:")
-                print(f"      1. 封包格式錯誤，設備直接丟棄")
-                print(f"      2. Connection Path 編碼錯誤")
-                print(f"      3. Config 資料附加方式錯誤")
-                print(f"      4. 網路超時 (檢查設備連線)")
-                print(f"      5. 防火牆阻擋回應")
-                print(f"\n   ℹ️  回退到 Explicit Messaging 模式")
-                print("="*60)
-                return False
-                
-        except Exception as e:
-            print(f"   ⚠️  建立連接異常: {e}")
-            import traceback
-            traceback.print_exc()
-            print(f"   ℹ️  回退到 Explicit Messaging 模式")
-            print("="*60)
-            return False
+        print("� 技術限制說明：")
+        print("   1. pycomm3 CIPDriver 不是完整的 EIP Scanner")
+        print("   2. 無法建立正確的 Forward Open I/O Connection")
+        print("   3. Forward Open 需要專門的 Scanner 函式庫")
+        print()
+        print("   Forward Open 正確結構需要：")
+        print("   - 獨立的 O->T Connection Path (Output 0x64)")
+        print("   - 獨立的 T->O Connection Path (Input 0x65)")
+        print("   - 獨立的 Configuration Path (Config 0x66)")
+        print("   - 244-byte Config Data Payload")
+        print("   - 正確的 CIP 封包結構 (不能手動建構)")
+        print()
+        print("✅ 替代方案：使用 Explicit Messaging")
+        print("   - Parameter Object (Class 0x0F) 設定標稱電流")
+        print("   - Output Assembly (0x64) 控制通道開關")
+        print("   - Input Assembly (0x65) 讀取狀態")
+        print("   - 所有操作都使用 generic_message (Explicit)")
+        print()
+        print("💡 此方案已在 initialize_all_channels() 實作")
+        print("   使用 _set_nominal_current_parameter_object() 方法")
+        print("="*60)
+        
+        # 不嘗試建立 Implicit Connection
+        return False
     
     def _build_forward_open_request(self, config_data):
         """
-        建立 Forward Open 請求 (288 bytes = 44-byte 標頭 + 244-byte Config)
+        [已廢棄 - DEPRECATED]
         
-        根據 EDS [Connection Manager] Connection1 定義:
-        Connection1 = 
-            0x04010002,              $ Trigger and Transport
-            0x44640405,              $ Point Multicast
-            Param1000,20,Assem100,   $ O->T RPI, Size, Assembly (Output 0x64, 20 bytes)
-            Param1000,208,Assem101,  $ T->O RPI, Size, Assembly (Input 0x65, 208 bytes)
-            ,,                       $ config 1 (empty)
-            244,Assem102,            $ config 2 (Config 0x66, 244 bytes) ⬅️ 必須附加！
-            "Exclusive Owner ",      
-            ...
-            "20 04 24 66 2C 64 2C 65"; $ path
+        手動建構 Forward Open 封包的嘗試 (不正確)
         
-        關鍵修正：
-        - config 2 定義了 244,Assem102，表示必須在 Forward Open 中附加 244-byte Config
-        - Connection Path 直接使用 EDS 定義的格式: "20 04 24 66 2C 64 2C 65"
-        - 總長度 = 44 bytes (標頭) + 244 bytes (Config) = 288 bytes
+        問題分析（根據專家指導）：
         
-        Args:
-            config_data: 244-byte Config Assembly 資料
+        1. 結構錯誤：
+           ❌ 將 O->T, T->O, Config Path 串接為單一路徑
+           ✅ 應該在標頭中使用獨立欄位分別定義
         
-        Returns:
-            bytes: Forward Open 請求封包 (288 bytes)
+        2. 封包重疊：
+           ❌ Config 資料與標頭重疊
+           ✅ Config 應該作為獨立 Payload
+        
+        3. 函式庫限制：
+           ❌ pycomm3 CIPDriver 不是完整的 EIP Scanner
+           ❌ generic_message 無法建立正確的 I/O Connection
+           ✅ 需要專門的 Scanner/Adapter 函式庫
+        
+        4. 正確做法：
+           Forward Open 封包必須包含：
+           - O->T Connection Path (獨立欄位，指向 Output 0x64)
+           - T->O Connection Path (獨立欄位，指向 Input 0x65)
+           - Configuration Path (獨立欄位，指向 Config 0x66)
+           - Configuration Data (244 bytes Payload)
+           - 正確的 CIP 欄位結構（不能手動拼接）
+        
+        結論：
+        不使用此方法。改用 Explicit Messaging + Parameter Object 方案。
+        
+        保留此方法僅供參考學習之用。
         """
-        if len(config_data) != 244:
-            raise ValueError(f"Config 資料長度必須是 244 bytes (實際: {len(config_data)})")
-        
-        request = bytearray()
-        
-        # ========== Forward Open Request Header ==========
-        
-        # Priority/Tick Time (1 byte)
-        request.append(0x52)  # Priority=5, Tick Time=2 (4ms)
-        
-        # Timeout Ticks (1 byte)
-        request.append(0xFA)  # 250 ticks × 4ms = 1000ms
-        
-        # O->T Network Connection ID (4 bytes)
-        request.extend(struct.pack('<I', 0x20000001))
-        
-        # T->O Network Connection ID (4 bytes)
-        request.extend(struct.pack('<I', 0x20000002))
-        
-        # Connection Serial Number (2 bytes)
-        request.extend(struct.pack('<H', 0x0001))
-        
-        # Vendor ID (2 bytes)
-        request.extend(struct.pack('<H', 154))  # 0x009A
-        
-        # Originator Serial Number (4 bytes)
-        request.extend(struct.pack('<I', 0x00000042))
-        
-        # Connection Timeout Multiplier (1 byte)
-        request.append(0x01)  # ×8 = 8 seconds
-        
-        # Reserved (3 bytes)
-        request.extend([0x00, 0x00, 0x00])
-        
-        # O->T RPI (4 bytes) - 100ms = 100000 µs
-        request.extend(struct.pack('<I', 100000))
-        
-        # O->T Network Connection Parameters (2 bytes)
-        # 0x4014 = Fixed, 20 bytes, Point-to-Point
-        request.extend(struct.pack('<H', 0x4014))
-        
-        # T->O RPI (4 bytes)
-        request.extend(struct.pack('<I', 100000))
-        
-        # T->O Network Connection Parameters (2 bytes)
-        # 0x40D0 = Fixed, 208 bytes, Point-to-Point
-        request.extend(struct.pack('<H', 0x40D0))
-        
-        # Transport Type/Trigger (1 byte)
-        # 0x83 = Server, Cyclic, Class 1
-        request.append(0x83)
-        
-        # ========== Connection Path (直接使用 EDS 定義) ==========
-        # EDS Path: "20 04 24 66 2C 64 2C 65" = 8 bytes = 4 words
-        
-        # Connection Path Size (1 byte) - 以 WORD 為單位
-        request.append(0x04)  # 4 words = 8 bytes
-        
-        # Connection Path - 直接使用 EDS 的字節序列
-        # 20 04 = Logical Segment: Class 0x04 (Assembly Object)
-        # 24 66 = Logical Segment: Instance 0x66 (Config Assembly)
-        # 2C 64 = Logical Segment: Connection Point 0x64 (Output)
-        # 2C 65 = Logical Segment: Connection Point 0x65 (Input)
-        request.extend([0x20, 0x04, 0x24, 0x66, 0x2C, 0x64, 0x2C, 0x65])
-        
-        # ========== Configuration Data (244 bytes) ==========
-        # 根據 EDS config 2 定義，附加 244-byte Config 資料
-        request.extend(config_data)
-        
-        return bytes(request)
+        raise NotImplementedError(
+            "Forward Open 無法透過手動建構封包實作。\n"
+            "需要使用專門的 EIP Scanner 函式庫。\n"
+            "目前使用 Explicit Messaging + Parameter Object 替代方案。"
+        )
     
     def _build_default_config_assembly(self):
         """
@@ -3351,9 +3207,16 @@ class CaparocController:
                 # 標記為已初始化 (允許控制)
                 self.channels_initialized = True
                 
-                # ========== Phase 3-7: 建立 Implicit Messaging (I/O Connection) ==========
-                # 根據專家分析，CAPAROC 支援 EIP，必須使用 Forward Open 建立 Class 1 連線
-                # Config Assembly (244 bytes) 必須在 Forward Open 時傳送
+                # ========== Phase 3-7: 檢查 Implicit Messaging 可行性 ==========
+                # 技術限制：pycomm3 CIPDriver 不支援建立完整的 Forward Open I/O Connection
+                # Forward Open 需要專門的 EIP Scanner 函式庫
+                # 
+                # 當前策略：使用 Explicit Messaging
+                # - Parameter Object (Class 0x0F) 設定標稱電流
+                # - Output Assembly (0x64) 控制通道開關  
+                # - Input Assembly (0x65) 讀取狀態
+                # 
+                # 此方法會顯示技術限制說明，然後返回 False
                 self._establish_implicit_messaging(driver)
                 
                 print("\n" + "="*60)

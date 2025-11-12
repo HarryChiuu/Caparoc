@@ -1,40 +1,83 @@
-fix(forward-open): 恢復 288-byte 請求並使用 EDS 原始 Path
+refactor(implicit): 承認 Forward Open 限制，改用 Explicit Messaging 策略
 
-根據專家分析，修正關鍵錯誤：
+根據專家最終分析，確認技術限制並調整策略：
 
-1. 恢復 288-byte Forward Open 請求 ✅
-   - 44-byte 標頭 (不含 Config) 是錯誤的
-   - 正確 = 44-byte 標頭 + 244-byte Config = 288 bytes
-   - EDS config 2 定義: "244,Assem102" 表示必須附加 Config
-
-2. Connection Path 使用 EDS 原始定義 ✅
-   - EDS Path: "20 04 24 66 2C 64 2C 65"
-   - 直接使用此字節序列，不做修改
-   - 20 04 = Class 0x04 (Assembly Object)
-   - 24 66 = Instance 0x66 (Config)
-   - 2C 64 = Connection Point 0x64 (Output)
-   - 2C 65 = Connection Point 0x65 (Input)
-
-3. 移除錯誤的預先寫入 Config 步驟 ✅
-   - Config 不需要預先寫入
-   - Config 隨 Forward Open 一起傳送
-   - 設備收到 Forward Open 時同時接收 Config
-
-4. 增強除錯輸出 ✅
-   - 顯示標頭 44 bytes
-   - 顯示 Config 前 32 bytes
-   - 詳細的錯誤分類與建議
-   - 逐步流程顯示
-
-5. 關鍵修正說明
-   之前的錯誤理解：
-   ❌ 44-byte 請求 (不含 Config)
-   ❌ Connection Path 改為 "24 64 24 65" (修改 EDS)
-   ❌ 預先寫入 Config Assembly
+1. Forward Open 失敗根本原因 ⚠️
    
-   正確做法：
-   ✅ 288-byte 請求 (標頭 + Config)
-   ✅ Connection Path 完全按照 EDS 定義
-   ✅ Config 隨 Forward Open 一起傳送
+   專家指出的問題：
+   ❌ 錯誤的 Connection Path 結構
+      - 將 Config/Output/Input 串接為單一路徑
+      - 應該使用獨立欄位分別定義
+   
+   ❌ 標頭與 Config 資料重疊
+      - Config 資料覆蓋到標頭末端
+      - 應該作為獨立 Payload 附加
+   
+   ❌ 手動建構封包不可行
+      - CIP Forward Open 有複雜的欄位結構
+      - 需要專門的 Scanner 函式庫處理
 
-此版本回到正確的 288-byte 請求，並嚴格遵循 EDS 規範
+2. pycomm3 CIPDriver 限制 🔍
+   
+   - pycomm3.CIPDriver 不是完整的 EIP Scanner
+   - generic_message() 只支援 Explicit Messaging
+   - 無法建立正確的 Forward Open I/O Connection
+   - 需要專門的 Scanner/Adapter 函式庫
+
+3. 正確的 Forward Open 結構 📋
+   
+   必須包含（無法手動建構）：
+   - 獨立的 O->T Connection Path (Output 0x64)
+   - 獨立的 T->O Connection Path (Input 0x65)
+   - 獨立的 Configuration Path (Config 0x66)
+   - 244-byte Configuration Data Payload
+   - 正確的 CIP 欄位編碼（非字串拼接）
+
+4. 新策略：Explicit Messaging ✅
+   
+   完全使用 Explicit Messaging 方式：
+   - Parameter Object (Class 0x0F) 設定標稱電流
+     * _set_nominal_current_parameter_object()
+     * 逐個參數寫入，1-4 bytes
+   
+   - Output Assembly (0x64) 控制通道開關
+     * set_channel() 使用 generic_message
+     * 18 bytes Output data
+   
+   - Input Assembly (0x65) 讀取狀態
+     * generic_message Service 0x0E
+     * 208 bytes Input data
+   
+   此方案已驗證可行 ✅
+
+5. 程式碼變更
+   
+   - _establish_implicit_messaging()
+     * 不再嘗試建立 Forward Open
+     * 顯示技術限制說明
+     * 說明替代方案
+     * 返回 False
+   
+   - _build_forward_open_request()
+     * 標記為 [已廢棄]
+     * 詳細註解說明錯誤原因
+     * raise NotImplementedError
+     * 保留供學習參考
+   
+   - 更新主程式註解
+     * 說明 pycomm3 限制
+     * 說明當前使用的 Explicit 策略
+
+6. 結論
+   
+   承認限制比錯誤嘗試更好：
+   ✅ Explicit Messaging 方案可行且穩定
+   ✅ Parameter Object 方法符合 CIP 規範
+   ✅ 所有功能都可以實現
+   
+   未來改進方向：
+   - 使用支援 Scanner 功能的函式庫（如 pylogix）
+   - 或使用硬體 EIP Scanner (PLC)
+   - 但對當前需求，Explicit Messaging 已足夠
+
+感謝專家的詳細指導，讓我們理解了正確的 EIP 通訊原理。

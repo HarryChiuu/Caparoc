@@ -1,83 +1,75 @@
-refactor(implicit): 承認 Forward Open 限制，改用 Explicit Messaging 策略
+fix(forward-open): 修正 Large Forward Open 封包結構
 
-根據專家最終分析，確認技術限制並調整策略：
+根據專家分析，完全重構 Forward Open 請求：
 
-1. Forward Open 失敗根本原因 ⚠️
+1. 關鍵錯誤修正 ✅
    
-   專家指出的問題：
-   ❌ 錯誤的 Connection Path 結構
-      - 將 Config/Output/Input 串接為單一路徑
-      - 應該使用獨立欄位分別定義
+   之前的錯誤：
+   ❌ 將 Config/Output/Input 路徑串接: "20 04 24 66 2C 64 2C 65"
+   ❌ 路徑指向錯誤的物件
+   ❌ Header 與 Config 資料重疊
    
-   ❌ 標頭與 Config 資料重疊
-      - Config 資料覆蓋到標頭末端
-      - 應該作為獨立 Payload 附加
-   
-   ❌ 手動建構封包不可行
-      - CIP Forward Open 有複雜的欄位結構
-      - 需要專門的 Scanner 函式庫處理
+   正確結構：
+   ✅ Connection Path → Connection Manager (Class 0x06, Instance 0x01)
+   ✅ Configuration Path → Assembly 0x66 (Config)
+   ✅ Consuming Path → Assembly 0x64 (Output, O->T)
+   ✅ Producing Path → Assembly 0x65 (Input, T->O)
+   ✅ Config Data 獨立附加 (244 bytes)
 
-2. pycomm3 CIPDriver 限制 🔍
+2. Large Forward Open 完整結構 ✅
    
-   - pycomm3.CIPDriver 不是完整的 EIP Scanner
-   - generic_message() 只支援 Explicit Messaging
-   - 無法建立正確的 Forward Open I/O Connection
-   - 需要專門的 Scanner/Adapter 函式庫
+   Standard Header (36 bytes):
+   - Priority/Tick, Timeout, Connection IDs
+   - Vendor ID, Serial Numbers, Multiplier
+   - O->T/T->O RPI, Connection Parameters
+   - Transport Type
+   
+   Connection Path (4 bytes):
+   - Size: 1 word
+   - Path: Class 0x06, Instance 0x01 (Connection Manager)
+   
+   Configuration Application Path (5 bytes):
+   - Size: 2 words
+   - Path: Class 0x04, Instance 0x66 (Config Assembly)
+   
+   Consuming Connection Path (5 bytes):
+   - Size: 2 words  
+   - Path: Class 0x04, Instance 0x64 (Output Assembly)
+   
+   Producing Connection Path (5 bytes):
+   - Size: 2 words
+   - Path: Class 0x04, Instance 0x65 (Input Assembly)
+   
+   Configuration Data (246 bytes):
+   - Size: 2 bytes (244)
+   - Data: 244 bytes
 
-3. 正確的 Forward Open 結構 📋
-   
-   必須包含（無法手動建構）：
-   - 獨立的 O->T Connection Path (Output 0x64)
-   - 獨立的 T->O Connection Path (Input 0x65)
-   - 獨立的 Configuration Path (Config 0x66)
-   - 244-byte Configuration Data Payload
-   - 正確的 CIP 欄位編碼（非字串拼接）
+3. 封包長度計算 ✅
+   - Standard Header: 36 bytes
+   - Connection Path: 4 bytes
+   - Config Path: 5 bytes
+   - Consuming Path: 5 bytes
+   - Producing Path: 5 bytes
+   - Config Data: 246 bytes (2 + 244)
+   - 總計: 301 bytes (不是 288!)
 
-4. 新策略：Explicit Messaging ✅
-   
-   完全使用 Explicit Messaging 方式：
-   - Parameter Object (Class 0x0F) 設定標稱電流
-     * _set_nominal_current_parameter_object()
-     * 逐個參數寫入，1-4 bytes
-   
-   - Output Assembly (0x64) 控制通道開關
-     * set_channel() 使用 generic_message
-     * 18 bytes Output data
-   
-   - Input Assembly (0x65) 讀取狀態
-     * generic_message Service 0x0E
-     * 208 bytes Input data
-   
-   此方案已驗證可行 ✅
+4. 除錯輸出增強 ✅
+   - 顯示每個欄位的偏移量和內容
+   - 結構化顯示各個 Path
+   - Config Data 位置正確標示
+   - 避免 Header/Data 重疊問題
 
-5. 程式碼變更
+5. 關鍵修正說明
    
-   - _establish_implicit_messaging()
-     * 不再嘗試建立 Forward Open
-     * 顯示技術限制說明
-     * 說明替代方案
-     * 返回 False
+   問題根源：
+   - 手動串接路徑是錯誤的
+   - 必須使用 Large Forward Open 的多路徑結構
+   - 每個路徑必須獨立定義，有自己的 Size 欄位
    
-   - _build_forward_open_request()
-     * 標記為 [已廢棄]
-     * 詳細註解說明錯誤原因
-     * raise NotImplementedError
-     * 保留供學習參考
-   
-   - 更新主程式註解
-     * 說明 pycomm3 限制
-     * 說明當前使用的 Explicit 策略
+   解決方案：
+   - 按照 CIP Vol1 3-5.5.1 規範建構
+   - Connection Path → Connection Manager
+   - 三個獨立的 Application Path (Config/Consuming/Producing)
+   - Config Data 正確附加在最後
 
-6. 結論
-   
-   承認限制比錯誤嘗試更好：
-   ✅ Explicit Messaging 方案可行且穩定
-   ✅ Parameter Object 方法符合 CIP 規範
-   ✅ 所有功能都可以實現
-   
-   未來改進方向：
-   - 使用支援 Scanner 功能的函式庫（如 pylogix）
-   - 或使用硬體 EIP Scanner (PLC)
-   - 但對當前需求，Explicit Messaging 已足夠
-
-感謝專家的詳細指導，讓我們理解了正確的 EIP 通訊原理。
+此版本解決封包結構錯誤，避免設備丟棄請求

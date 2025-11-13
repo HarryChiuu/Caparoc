@@ -1,5 +1,88 @@
 # Changelog
 
+## [2025-11-13] 重構與文檔完善 📚
+
+### 🎯 重大重構
+分離診斷工具，精簡主程式，完善文檔體系
+
+### 📝 新增文檔
+1. **MAIN_PROGRAM_FLOW.md**
+   - 主程式完整流程說明
+   - 6 大啟動步驟詳解
+   - 核心功能流程（init, on/off, monitor）
+   - Assembly 通訊機制
+   - 多模組支援機制
+
+2. **PROGRAM_FLOWCHART.md**
+   - Mermaid 格式流程圖
+   - 主程式啟動流程圖
+   - 標稱電流設定流程圖
+   - 通道控制流程圖
+   - 即時監控流程圖
+   - 重連機制流程圖
+
+3. **DIAGNOSTIC_TOOLS_GUIDE.md**
+   - 5 個診斷工具完整說明
+   - 常見診斷情境與解決方案
+   - 輸出解讀指南
+   - Assembly 資料格式解析
+
+### 🗂️ 檔案整理
+1. **分離診斷工具**
+   - 創建 `tests/diagnostic_tools.py` (549 行)
+   - 從主程式移除 7 個診斷方法
+   - 主程式精簡：3299 → 2090 行 (-36.6%)
+
+2. **檔案重組**
+   - ✅ 刪除 `src/caparoc_controller_clean.py` (重複檔案)
+   - ✅ 移動 `tests/caparoc_implicit_test.py` → `archive/`
+   - ✅ 移動 `check_connection.py` → `tests/`
+   - ✅ 保留 `src/caparoc_controller_old.py` (舊版備份)
+
+### 🐛 Bug 修復
+**修復幫助信息重複顯示問題**
+- 新增 `help_shown` 標記避免重複顯示
+- 添加 `h`/`help` 命令隨時查看幫助
+- 重新連線時顯示簡短提示
+
+### 🎨 改進項目
+1. **主程式精簡**
+   - 刪除重複的 `_verify_nominal_current` 方法
+   - 移除診斷命令處理（scan, limits, diagnose, compare, testwrite）
+   - 更新幫助信息，移除診斷命令說明
+
+2. **文檔體系**
+   - 重新組織 docs/README.md
+   - 新增快速導航分類
+   - 添加文檔關係圖
+   - 更新文檔更新規範
+
+### 📂 當前專案結構
+```
+Caparoc5/
+├── src/
+│   ├── caparoc_controller.py      # 主程式 (2090 行) ✅
+│   └── caparoc_controller_old.py  # 舊版備份
+├── tests/
+│   ├── diagnostic_tools.py        # 診斷工具 (549 行) 🆕
+│   └── check_connection.py        # 連線檢查 🆕
+├── archive/
+│   └── caparoc_implicit_test.py   # 舊測試 🆕
+└── docs/
+    ├── MAIN_PROGRAM_FLOW.md       # 主程式流程 🆕
+    ├── PROGRAM_FLOWCHART.md       # 流程圖 🆕
+    ├── DIAGNOSTIC_TOOLS_GUIDE.md  # 診斷工具指南 🆕
+    └── README.md                   # 文檔索引（已更新）
+```
+
+### 📊 統計數據
+- 主程式代碼減少: 1209 行 (36.6%)
+- 新增文檔: 3 份
+- 診斷工具獨立: 549 行
+- Git commits: 3 個
+
+---
+
 ## [2025-10-21 v4] 完整多通道獨立控制 ⭐
 
 ### 🎉 重大改進

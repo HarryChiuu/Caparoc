@@ -1951,65 +1951,20 @@ class CaparocController:
                         
                         elif cmd == 's' or cmd == 'status':
                             self.show_status()
+                        
                         elif cmd.startswith('init '):
-                            # ✅ 使用正確的 Config Assembly 方法設定標稱電流
-                            try:
-                                parts = cmd.split()
-                                if len(parts) != 3:
-                                    print("⚠️  用法: init <通道編號> <電流值>")
-                                    print("   範例: init 2 4  (設定 CH2 為 4A)")
-                                    continue
-                                
-                                ch = int(parts[1])
-                                amps = int(parts[2])
-                                
-                                if not (1 <= ch <= self.get_total_channels()):
-                                    print(f"⚠️  通道編號超出範圍 (1-{self.get_total_channels()})")
-                                    continue
-                                
-                                if not (1 <= amps <= 20):
-                                    print(f"⚠️  電流值超出範圍 (1-20A)")
-                                    continue
-                                
-                                module, channel = self.get_module_and_channel(ch)
-                                
-                                if self.module_count > 1:
-                                    print(f"\n[設定] M{module}.CH{channel} (#{ch}): 標稱電流 {amps}A")
-                                else:
-                                    print(f"\n[設定] CH{ch}: 標稱電流 {amps}A")
-                                
-                                # ✅ 使用 Parameter Object 方法 (繞過 244-byte 限制)
-                                success = self._set_nominal_current_parameter_object(driver, module, channel, amps)
-                                
-                                if success:
-                                    print(f"✅ CH{ch} 設定完成")
-                                else:
-                                    print(f"❌ CH{ch} 設定失敗")
-                                    print(f"💡 請檢查:")
-                                    print(f"   1. 設備旋轉開關是否在 'RC' 位置")
-                                    print(f"   2. 硬體鎖是否已解除 (長按 PWR 3秒)")
-                            
-                            except (ValueError, IndexError) as e:
-                                print(f"⚠️  命令格式錯誤: {e}")
-                                print("   用法: init <通道編號> <電流值>")
+                            # ⚠️ 標稱電流設定功能尚未實作
+                            print("\n⚠️  標稱電流設定功能尚未實作")
+                            print("   此功能將在未來版本中提供")
+                            print("   用法: init <通道編號> <電流值>")
+                            print("   範例: init 2 4  (設定 CH2 為 4A)")
                         
                         elif cmd.startswith('verify '):
-                            try:
-                                ch = int(cmd.split()[1])
-                                if 1 <= ch <= self.get_total_channels():
-                                    module, channel = self.get_module_and_channel(ch)
-                                    actual = self._verify_nominal_current(driver, module, channel)
-                                    if actual is not None:
-                                        if self.module_count > 1:
-                                            print(f"✅ M{module}.CH{channel} (#{ch}) 標稱電流: {actual}A")
-                                        else:
-                                            print(f"✅ CH{ch} 標稱電流: {actual}A")
-                                    else:
-                                        print(f"❌ 無法讀取 CH{ch} 的標稱電流")
-                                else:
-                                    print(f"⚠️  通道編號超出範圍 (1-{self.get_total_channels()})")
-                            except (ValueError, IndexError):
-                                print("⚠️  用法: verify <通道編號>")
+                            # ⚠️ 標稱電流驗證功能尚未實作
+                            print("\n⚠️  標稱電流驗證功能尚未實作")
+                            print("   此功能將在未來版本中提供")
+                            print("   用法: verify <通道編號>")
+                        
                         elif cmd.startswith('on '):
                             ch = int(cmd.split()[1])
                             self.set_channel(ch, True)

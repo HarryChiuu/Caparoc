@@ -1486,10 +1486,23 @@ class CaparocController:
                             print("   範例: init 2 4  (設定 CH2 為 4A)")
                         
                         elif cmd.startswith('verify '):
-                            # ⚠️ 標稱電流驗證功能尚未實作
-                            print("\n⚠️  標稱電流驗證功能尚未實作")
-                            print("   此功能將在未來版本中提供")
-                            print("   用法: verify <通道編號>")
+                            # 驗證通道標稱電流
+                            try:
+                                ch = int(cmd.split()[1])
+                                if 1 <= ch <= self.get_total_channels():
+                                    module, channel = self.get_module_and_channel(ch)
+                                    actual = self._verify_nominal_current(driver, module, channel)
+                                    if actual is not None:
+                                        if self.module_count > 1:
+                                            print(f"✅ M{module}.CH{channel} (#{ch}) 標稱電流: {actual}A")
+                                        else:
+                                            print(f"✅ CH{ch} 標稱電流: {actual}A")
+                                    else:
+                                        print(f"❌ 無法讀取 CH{ch} 的標稱電流")
+                                else:
+                                    print(f"⚠️  通道編號超出範圍 (1-{self.get_total_channels()})")
+                            except (ValueError, IndexError):
+                                print("⚠️  用法: verify <通道編號>")
                         
                         elif cmd.startswith('on '):
                             ch = int(cmd.split()[1])

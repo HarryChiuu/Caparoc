@@ -78,6 +78,7 @@ class CaparocController:
         
         # 初始化標記
         self.channels_initialized = False
+        self.help_shown = False  # 標記是否已顯示幫助信息（避免重複）
         
         # 即時監控 (Phase 3-2)
         self.monitor_thread = None
@@ -1892,35 +1893,40 @@ class CaparocController:
                 # 嘗試建立 Implicit Messaging (靜默模式,CAPAROC 不支援)
                 self._establish_implicit_messaging(driver)
                 
-                print("\n" + "="*60)
-                print("📋 可用命令:")
-                print("="*60)
-                print("\n【標稱電流設定】")
-                print("  init <ch> <amps>             - 設定通道標稱電流")
-                print("                                 範例: init 2 4  (設定 CH2 為 4A)")
-                print("  verify <ch>                  - 驗證通道標稱電流設定")
-                print("\n【通道控制】")
-                print("  on <ch>                      - 開啟通道 (例: on 1)")
-                print("  off <ch>                     - 關閉通道")
-                print("\n【狀態查詢】")
-                print("  s                            - 顯示完整狀態")
-                print("\n【即時監控】")
-                print("  monitor start [interval] [mode]  - 啟動監控")
-                print("                                     interval: 更新頻率(秒), 預設2")
-                print("                                     mode: silent/display, 預設silent")
-                print("                                     範例: monitor start 5 silent")
-                print("  monitor stop                 - 停止監控")
-                print("  monitor status               - 顯示監控狀態")
-                print("\n【系統】")
-                print("  reconnect                    - 重新連線設備")
-                print("  q                            - 退出程式")
-                print("="*60)
-                print("💡 快速開始:")
-                print("  1. 使用 'init <ch> <amps>' 設定標稱電流 (如: init 1 4)")
-                print("  2. 使用 'on <ch>' 開啟通道 (如: on 1)")
-                print("  3. 使用 's' 查看狀態")
-                print("  4. 使用 'monitor start 2 silent' 啟動監控")
-                print("="*60)
+                # 只在第一次連線時顯示幫助信息
+                if not self.help_shown:
+                    print("\n" + "="*60)
+                    print("📋 可用命令:")
+                    print("="*60)
+                    print("\n【標稱電流設定】")
+                    print("  init <ch> <amps>             - 設定通道標稱電流")
+                    print("                                 範例: init 2 4  (設定 CH2 為 4A)")
+                    print("  verify <ch>                  - 驗證通道標稱電流設定")
+                    print("\n【通道控制】")
+                    print("  on <ch>                      - 開啟通道 (例: on 1)")
+                    print("  off <ch>                     - 關閉通道")
+                    print("\n【狀態查詢】")
+                    print("  s                            - 顯示完整狀態")
+                    print("\n【即時監控】")
+                    print("  monitor start [interval] [mode]  - 啟動監控")
+                    print("                                     interval: 更新頻率(秒), 預設2")
+                    print("                                     mode: silent/display, 預設silent")
+                    print("                                     範例: monitor start 5 silent")
+                    print("  monitor stop                 - 停止監控")
+                    print("  monitor status               - 顯示監控狀態")
+                    print("\n【系統】")
+                    print("  reconnect                    - 重新連線設備")
+                    print("  q                            - 退出程式")
+                    print("="*60)
+                    print("💡 快速開始:")
+                    print("  1. 使用 'init <ch> <amps>' 設定標稱電流 (如: init 1 4)")
+                    print("  2. 使用 'on <ch>' 開啟通道 (如: on 1)")
+                    print("  3. 使用 's' 查看狀態")
+                    print("  4. 使用 'monitor start 2 silent' 啟動監控")
+                    print("="*60)
+                    self.help_shown = True
+                else:
+                    print("\n✅ 重新連線成功，可繼續使用命令（輸入 'h' 查看幫助）")
                 
                 while True:
                     try:
@@ -1931,6 +1937,39 @@ class CaparocController:
                             if self.monitor_running:
                                 self.stop_monitor()
                             break
+                        
+                        elif cmd == 'h' or cmd == 'help':
+                            # 顯示幫助信息
+                            print("\n" + "="*60)
+                            print("📋 可用命令:")
+                            print("="*60)
+                            print("\n【標稱電流設定】")
+                            print("  init <ch> <amps>             - 設定通道標稱電流")
+                            print("                                 範例: init 2 4  (設定 CH2 為 4A)")
+                            print("  verify <ch>                  - 驗證通道標稱電流設定")
+                            print("\n【通道控制】")
+                            print("  on <ch>                      - 開啟通道 (例: on 1)")
+                            print("  off <ch>                     - 關閉通道")
+                            print("\n【狀態查詢】")
+                            print("  s                            - 顯示完整狀態")
+                            print("\n【即時監控】")
+                            print("  monitor start [interval] [mode]  - 啟動監控")
+                            print("                                     interval: 更新頻率(秒), 預設2")
+                            print("                                     mode: silent/display, 預設silent")
+                            print("                                     範例: monitor start 5 silent")
+                            print("  monitor stop                 - 停止監控")
+                            print("  monitor status               - 顯示監控狀態")
+                            print("\n【系統】")
+                            print("  h / help                     - 顯示此幫助信息")
+                            print("  reconnect                    - 重新連線設備")
+                            print("  q                            - 退出程式")
+                            print("="*60)
+                            print("💡 快速開始:")
+                            print("  1. 使用 'init <ch> <amps>' 設定標稱電流 (如: init 1 4)")
+                            print("  2. 使用 'on <ch>' 開啟通道 (如: on 1)")
+                            print("  3. 使用 's' 查看狀態")
+                            print("  4. 使用 'monitor start 2 silent' 啟動監控")
+                            print("="*60)
                         
                         elif cmd == 'reconnect':
                             print("\n🔄 嘗試重新連線...")

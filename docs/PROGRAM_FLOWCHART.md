@@ -574,7 +574,7 @@ flowchart LR
 ### 如何檢視 Mermaid 圖表
 
 1. **GitHub**: 直接在 GitHub 上檢視此檔案，自動渲染
-2. **VS Code**: 安裝 "Markdown Preview Mermaid Support" 擴展
+2. **VS Code**: 安裝 "Markdown Preview Mermaid Support" 擴展 (Ctrl+Shift+V)
 3. **在線工具**: 複製到 [Mermaid Live Editor](https://mermaid.live/)
 4. **其他編輯器**: 尋找支援 Mermaid 的 Markdown 預覽外掛
 

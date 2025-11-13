@@ -54,7 +54,7 @@ import threading
 class CaparocController:
     """CAPAROC  - 基於手冊規範"""
     
-    def __init__(self, device_ip="192.168.2.111"): #預設 IP
+    def __init__(self, device_ip="192.168.2.111"): # 預設 IP
         self.device_ip = device_ip
         self.output_instance = 0x64  # Output Assembly (EDS Assem100)
         self.input_instance = 0x65   # Input Assembly (EDS Assem101)
@@ -787,7 +787,6 @@ class CaparocController:
             self.current_output_data[byte_offset] = new_value
             
             print(f"[控制] CH{channel} -> {'開啟' if state else '關閉'}")
-            print(f"[控制] CH{channel} -> {'開啟' if state else '關閉'}")
             print(f"       byte[1]: 0x{current_value:02X} -> 0x{new_value:02X}")
             
             # ⚠️ 關鍵：寫入方式取決於是否使用 Implicit Messaging
@@ -801,10 +800,10 @@ class CaparocController:
                 try:
                     output_data = bytes(self.current_output_data)
                     
-                    # DEBUG: 顯示要寫入的完整資料
-                    print(f"       [DEBUG] 寫入資料長度: {len(output_data)} bytes")
-                    print(f"       [DEBUG] byte[0]: 0x{output_data[0]:02X}, byte[1]: 0x{output_data[1]:02X}")
-                    print(f"       [DEBUG] 寫入 Assembly.0x{self.output_instance:02X}")
+                    # DEBUG: 除錯模式（需要時取消註解）
+                    # print(f"       [DEBUG] 寫入資料長度: {len(output_data)} bytes")
+                    # print(f"       [DEBUG] byte[0]: 0x{output_data[0]:02X}, byte[1]: 0x{output_data[1]:02X}")
+                    # print(f"       [DEBUG] 寫入 Assembly.0x{self.output_instance:02X}")
                     
                     response = self.driver.generic_message(
                         service=0x10,  # Set Attribute Single
@@ -815,20 +814,18 @@ class CaparocController:
                         connected=False
                     )
                     
-                    # DEBUG: 顯示回應詳情
-                    if response:
-                        print(f"       [DEBUG] Response 物件: {response}")
-                        if hasattr(response, 'error'):
-                            error_status = response.error if response.error else "None (成功)"
-                            print(f"       [DEBUG] Error: {error_status}")
-                        if hasattr(response, 'value'):
-                            value_str = response.value if response.value else "b'' (空回應，正常)"
-                            print(f"       [DEBUG] Value: {value_str}")
-                            print(f"       [說明] Set 操作成功時通常回傳空值")
+                    # DEBUG: 除錯模式（需要時取消註解）
+                    # if response:
+                    #     print(f"       [DEBUG] Response 物件: {response}")
+                    #     if hasattr(response, 'error'):
+                    #         error_status = response.error if response.error else "None (成功)"
+                    #         print(f"       [DEBUG] Error: {error_status}")
+                    #     if hasattr(response, 'value'):
+                    #         value_str = response.value if response.value else "b'' (空回應，正常)"
+                    #         print(f"       [DEBUG] Value: {value_str}")
+                    #         print(f"       [說明] Set 操作成功時通常回傳空值")
                     
                     if response and not (hasattr(response, 'error') and response.error):
-                        print(f"       ✅ 已寫入設備")
-                        
                         # 驗證: 讀取回來確認
                         try:
                             verify_resp = self.driver.generic_message(
@@ -840,17 +837,15 @@ class CaparocController:
                             )
                             if verify_resp and hasattr(verify_resp, 'value') and len(verify_resp.value) >= 2:
                                 actual_byte1 = verify_resp.value[1]
-                                print(f"       [驗證] 設備實際 byte[1] = 0x{actual_byte1:02X}")
                                 if actual_byte1 == new_value:
-                                    print(f"       ✅ 驗證成功：設備狀態與預期一致")
+                                    print(f"       ✅ 驗證成功 (設備 byte[1]=0x{actual_byte1:02X})")
                                 else:
-                                    print(f"       ⚠️ 警告：設備 byte[1]=0x{actual_byte1:02X}, 預期=0x{new_value:02X}")
+                                    print(f"       ⚠️ 驗證警告：設備 byte[1]=0x{actual_byte1:02X}, 預期=0x{new_value:02X}")
                         except Exception as ve:
-                            print(f"       [驗證] 無法驗證: {ve}")
+                            print(f"       ⚠️ 無法驗證: {ve}")
                     else:
                         error_msg = response.error if hasattr(response, 'error') else '未知'
-                        print(f"       ⚠️ 寫入失敗: {error_msg}")
-                        print(f"       [提示] 可能需要 Implicit Messaging 模式")
+                        print(f"       ❌ 寫入失敗: {error_msg}")
                         return False
                         
                 except Exception as e:
@@ -1054,6 +1049,39 @@ class CaparocController:
             }
     
     # ==================== 即時監控功能 (Phase 3-2) ====================
+    
+    def _show_help_message(self):
+        """顯示幫助信息（統一方法）"""
+        print("\n" + "="*60)
+        print("📋 可用命令:")
+        print("="*60)
+        print("\n【標稱電流設定】")
+        print("  init <ch> <amps>             - 設定通道標稱電流")
+        print("                                 範例: init 2 4  (設定 CH2 為 4A)")
+        print("  verify <ch>                  - 驗證通道標稱電流設定")
+        print("\n【通道控制】")
+        print("  on <ch>                      - 開啟通道 (例: on 1)")
+        print("  off <ch>                     - 關閉通道")
+        print("\n【狀態查詢】")
+        print("  s                            - 顯示完整狀態")
+        print("\n【即時監控】")
+        print("  monitor start [interval] [mode]  - 啟動監控")
+        print("                                     interval: 更新頻率(秒), 預設2")
+        print("                                     mode: silent/display, 預設silent")
+        print("                                     範例: monitor start 5 silent")
+        print("  monitor stop                 - 停止監控")
+        print("  monitor status               - 顯示監控狀態")
+        print("\n【系統】")
+        print("  h / help                     - 顯示此幫助信息")
+        print("  reconnect                    - 重新連線設備")
+        print("  q                            - 退出程式")
+        print("="*60)
+        print("💡 快速開始:")
+        print("  1. 使用 'init <ch> <amps>' 設定標稱電流 (如: init 1 4)")
+        print("  2. 使用 'on <ch>' 開啟通道 (如: on 1)")
+        print("  3. 使用 's' 查看狀態")
+        print("  4. 使用 'monitor start 2 silent' 啟動監控")
+        print("="*60)
     
     def _monitor_worker(self):
         """即時監控背景執行緒"""
@@ -1617,7 +1645,7 @@ class CaparocController:
                     result['device_info']['voltage'] = f"{voltage:.1f}V"
                 
                 # 標註為 CAPAROC 設備
-                result['device_info']['device_type'] = 'CAPAROC Circuit Breaker'
+                result['device_info']['device_type'] = 'CAPAROC PM EIP'
                     
             else:
                 result['error'] = "設備無回應或 Input Assembly 讀取失敗"
@@ -1699,7 +1727,7 @@ class CaparocController:
         print("\n⚠️  待實作功能:")
         print("   1. 標稱電流修改 (Phase 3-3)")
         print("   2. 通道資訊擴展 (Phase 3-4)")
-        print("   3. GUI 規劃設計 (Phase 3-6)")
+        print("   3. GUI 規劃設計 (Phase 3-5)")
         
         # ========== 步驟 0: 裝置連線檢查 ==========
         print("\n" + "="*60)
@@ -1895,35 +1923,7 @@ class CaparocController:
                 
                 # 只在第一次連線時顯示幫助信息
                 if not self.help_shown:
-                    print("\n" + "="*60)
-                    print("📋 可用命令:")
-                    print("="*60)
-                    print("\n【標稱電流設定】")
-                    print("  init <ch> <amps>             - 設定通道標稱電流")
-                    print("                                 範例: init 2 4  (設定 CH2 為 4A)")
-                    print("  verify <ch>                  - 驗證通道標稱電流設定")
-                    print("\n【通道控制】")
-                    print("  on <ch>                      - 開啟通道 (例: on 1)")
-                    print("  off <ch>                     - 關閉通道")
-                    print("\n【狀態查詢】")
-                    print("  s                            - 顯示完整狀態")
-                    print("\n【即時監控】")
-                    print("  monitor start [interval] [mode]  - 啟動監控")
-                    print("                                     interval: 更新頻率(秒), 預設2")
-                    print("                                     mode: silent/display, 預設silent")
-                    print("                                     範例: monitor start 5 silent")
-                    print("  monitor stop                 - 停止監控")
-                    print("  monitor status               - 顯示監控狀態")
-                    print("\n【系統】")
-                    print("  reconnect                    - 重新連線設備")
-                    print("  q                            - 退出程式")
-                    print("="*60)
-                    print("💡 快速開始:")
-                    print("  1. 使用 'init <ch> <amps>' 設定標稱電流 (如: init 1 4)")
-                    print("  2. 使用 'on <ch>' 開啟通道 (如: on 1)")
-                    print("  3. 使用 's' 查看狀態")
-                    print("  4. 使用 'monitor start 2 silent' 啟動監控")
-                    print("="*60)
+                    self._show_help_message()
                     self.help_shown = True
                 else:
                     print("\n✅ 重新連線成功，可繼續使用命令（輸入 'h' 查看幫助）")
@@ -1932,7 +1932,7 @@ class CaparocController:
                     try:
                         cmd = input("\n> ").strip().lower()
                         
-                        if cmd == 'q':
+                        if cmd == 'q' or cmd == 'quit':
                             # 停止監控 (如果運行中)
                             if self.monitor_running:
                                 self.stop_monitor()
@@ -1940,36 +1940,7 @@ class CaparocController:
                         
                         elif cmd == 'h' or cmd == 'help':
                             # 顯示幫助信息
-                            print("\n" + "="*60)
-                            print("📋 可用命令:")
-                            print("="*60)
-                            print("\n【標稱電流設定】")
-                            print("  init <ch> <amps>             - 設定通道標稱電流")
-                            print("                                 範例: init 2 4  (設定 CH2 為 4A)")
-                            print("  verify <ch>                  - 驗證通道標稱電流設定")
-                            print("\n【通道控制】")
-                            print("  on <ch>                      - 開啟通道 (例: on 1)")
-                            print("  off <ch>                     - 關閉通道")
-                            print("\n【狀態查詢】")
-                            print("  s                            - 顯示完整狀態")
-                            print("\n【即時監控】")
-                            print("  monitor start [interval] [mode]  - 啟動監控")
-                            print("                                     interval: 更新頻率(秒), 預設2")
-                            print("                                     mode: silent/display, 預設silent")
-                            print("                                     範例: monitor start 5 silent")
-                            print("  monitor stop                 - 停止監控")
-                            print("  monitor status               - 顯示監控狀態")
-                            print("\n【系統】")
-                            print("  h / help                     - 顯示此幫助信息")
-                            print("  reconnect                    - 重新連線設備")
-                            print("  q                            - 退出程式")
-                            print("="*60)
-                            print("💡 快速開始:")
-                            print("  1. 使用 'init <ch> <amps>' 設定標稱電流 (如: init 1 4)")
-                            print("  2. 使用 'on <ch>' 開啟通道 (如: on 1)")
-                            print("  3. 使用 's' 查看狀態")
-                            print("  4. 使用 'monitor start 2 silent' 啟動監控")
-                            print("="*60)
+                            self._show_help_message()
                         
                         elif cmd == 'reconnect':
                             print("\n🔄 嘗試重新連線...")
@@ -1978,7 +1949,7 @@ class CaparocController:
                                 self.stop_monitor()
                             return 'reconnect'
                         
-                        elif cmd == 's':
+                        elif cmd == 's' or cmd == 'status':
                             self.show_status()
                         elif cmd.startswith('init '):
                             # ✅ 使用正確的 Config Assembly 方法設定標稱電流

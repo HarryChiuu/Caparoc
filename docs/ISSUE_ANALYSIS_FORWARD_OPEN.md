@@ -114,11 +114,25 @@
    - 有 Forward Open 請求 → 設備動作 ✅
    - 無 Forward Open 請求 → 設備不動作 ❌
 
+4. **⚠️ 重要發現：Forward Open 請求的特殊參數**
+   ```python
+   response = driver.generic_message(
+       service=0x52,  # Forward Open
+       class_code=0x06,  # Connection Manager
+       instance=0x01,
+       request_data=forward_open_data,
+       connected=True,        # ← 關鍵！建立連線
+       unconnected_send=False # ← 關鍵！使用連線模式
+   )
+   ```
+   
+   **pycomm3 的 `connected=True` 參數可能觸發底層 CIP 連線建立！**
+
 ---
 
-## 根本原因分析
+## 根本原因分析（更新）
 
-### 假設 1: 設備狀態機重置（最可能）
+### 假設 1: 設備狀態機重置（最可能）✅
 
 **Forward Open 請求觸發了 CAPAROC 內部狀態機的重置或初始化**
 
@@ -128,9 +142,10 @@
    - 將設備從「部分連線」狀態切換到「完全激活」狀態
    - 清除任何殘留的內部 buffer 或 flag
 
-2. **建立 CIP 連線上下文**
-   - 雖然 Implicit Messaging 失敗，但可能建立了必要的 session context
-   - 讓後續的 Explicit Messaging 在正確的 context 下執行
+2. **建立 CIP 連線上下文** ⭐ **最關鍵**
+   - pycomm3 的 `connected=True` 參數可能在底層建立某種連線
+   - 即使 Forward Open 服務失敗，但**連線建立過程本身**可能觸發設備初始化
+   - 這個連線上下文讓後續的 Explicit Messaging 在「正確的連線環境」下執行
 
 3. **初始化 Assembly 對象**
    - Forward Open 請求包含 Assembly 路徑資訊：
@@ -143,6 +158,39 @@
 4. **時序同步**
    - 請求-回應過程引入約 100-200ms 延遲
    - 讓設備有時間完成內部初始化
+
+### 假設 1A: pycomm3 底層連線機制（新增）⭐
+
+**最可能的機制：`connected=True` 觸發 CIP 連線建立**
+
+pycomm3 的行為推測：
+```python
+# 當 connected=True 時
+generic_message(service=0x52, ..., connected=True):
+    1. 檢查是否已有 CIP 連線
+    2. 如果沒有，建立新的 CIP 連線（可能發送 Register Session 等）
+    3. 發送 Forward Open 請求
+    4. 收到 "Service not supported" 回應
+    5. 但連線已經建立並保持
+    6. 後續的 Explicit Messaging 使用這個已建立的連線
+```
+
+**測試證據**：
+```python
+# 測試中觀察到的 Driver 內部狀態
+Driver 屬性: {
+    '_session': 2382561281,           # ← 已建立 Session
+    '_connection_opened': True,       # ← 連線已開啟！
+    '_target_is_connected': True,     # ← 目標已連線！
+    '_target_cid': b'\x0e\x15\x1a\xd5',  # ← Connection ID
+    ...
+}
+```
+
+**結論**：Forward Open 請求雖然失敗，但 `connected=True` 參數可能觸發了：
+1. Session 註冊（Register Session）
+2. Connection 建立（即使 Forward Open 失敗）
+3. 設備內部狀態轉換到「Ready for Explicit Messaging」模式
 
 ---
 

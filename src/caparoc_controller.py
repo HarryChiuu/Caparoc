@@ -150,6 +150,112 @@ class CaparocController:
         channel = ((global_channel - 1) % self.channels_per_module) + 1
         return (module, channel)
     
+    def _establish_implicit_messaging(self, driver):
+        """
+        嘗試建立 Implicit Messaging 連接
+        
+        ⚠️ 重要: 即使 CAPAROC 不支援 Implicit Messaging（會返回失敗），
+        這個 Forward Open 請求仍然是必要的！
+        
+        原因: Forward Open 請求似乎觸發了設備的 Assembly 對象初始化或
+        狀態機重置。沒有這個請求，後續的 Explicit Messaging 雖然寫入
+        成功，但設備不會執行實際的硬體動作。
+        
+        測試證據:
+        - 有 Forward Open: on/off 控制正常 ✅
+        - 無 Forward Open: 寫入成功但設備不動作 ❌
+        
+        參考: docs/ISSUE_ANALYSIS_FORWARD_OPEN.md
+        """
+        try:
+            # 嘗試使用 generic_message 建立 Forward Open
+            forward_open_data = self._build_forward_open_request()
+            
+            response = driver.generic_message(
+                service=0x52,  # Forward Open
+                class_code=0x06,  # Connection Manager
+                instance=0x01,
+                request_data=forward_open_data,
+                connected=True,
+                unconnected_send=False
+            )
+            
+            if response and not (hasattr(response, 'error') and response.error):
+                # 不太可能執行到這裡（CAPAROC 不支援 Implicit Messaging）
+                print("[Implicit] Forward Open 成功，啟動 I/O Worker 模式")
+                self.implicit_mode_enabled = True
+                
+                # 啟動 I/O Worker
+                self.cip_keep_alive = True
+                self.io_update_thread = threading.Thread(
+                    target=self._io_worker,
+                    args=(driver,),
+                    daemon=True
+                )
+                self.io_update_thread.start()
+                time.sleep(0.5)
+                
+                return True
+            else:
+                # CAPAROC 預期會執行到這裡（回應 "Service not supported"）
+                # 即使失敗，這個請求已經完成了必要的設備初始化
+                return False
+                
+        except Exception as e:
+            # 靜默失敗，不影響後續 Explicit Messaging 使用
+            return False
+    
+    def _build_forward_open_request(self):
+        """建立 Forward Open 請求"""
+        request = bytearray()
+        request.extend(struct.pack('<I', 0x12345678))  # Connection Serial Number
+        request.extend(struct.pack('<H', 0x009A))  # Vendor ID
+        request.extend(struct.pack('<I', 0x87654321))  # Originator Serial Number
+        request.append(0x00)  # Connection Timeout Multiplier
+        request.extend([0x00, 0x00, 0x00])  # Reserved
+        request.extend(struct.pack('<I', 0x20000001))  # O->T Network Connection ID
+        request.extend(struct.pack('<I', 0x20000002))  # T->O Network Connection ID
+        request.extend(struct.pack('<H', 0x07D0))  # Connection Timeout (2000ms)
+        request.extend(struct.pack('<I', 0x43F4))  # O->T Connection Parameters (20ms RPI)
+        request.extend(struct.pack('<I', 0x43F4))  # T->O Connection Parameters (20ms RPI)
+        request.append(0xA3)  # Transport Type/Trigger
+        request.append(0x03)  # Connection Path Size
+        request.extend([0x01, self.output_instance])  # Output Assembly
+        request.extend([0x01, self.input_instance])  # Input Assembly
+        request.extend([0x01, 0x01])  # Config Assembly
+        return bytes(request)
+    
+    def _io_worker(self, driver):
+        """I/O Worker - 背景執行"""
+        cycle = 0
+        while self.cip_keep_alive and self.implicit_mode_enabled:
+            try:
+                cycle += 1
+                
+                with self.io_data_lock:
+                    output_data = bytes(self.current_output_data)
+                
+                try:
+                    # 寫入 Output Assembly
+                    driver.write(f"Assembly.{self.output_instance}", output_data)
+                    
+                    # 讀取 Input Assembly
+                    input_response = driver.read(f"Assembly.{self.input_instance}")
+                    if input_response and hasattr(input_response, 'value'):
+                        with self.io_data_lock:
+                            self.current_input_data = bytearray(input_response.value)
+                        self.last_io_update = time.time()
+                
+                except Exception as io_e:
+                    if cycle % 500 == 0:
+                        print(f"[I/O Worker] 週期 {cycle} 錯誤: {io_e}")
+                
+                time.sleep(0.05)  # 20Hz
+                
+            except Exception as e:
+                print(f"[I/O Worker] 異常: {e}")
+                time.sleep(0.1)
+    
     def _verify_nominal_current(self, driver, module, channel):
         """
         驗證通道的標稱電流設定
@@ -226,63 +332,70 @@ class CaparocController:
             print(f"[控制] CH{channel} -> {'開啟' if state else '關閉'}")
             print(f"       byte[1]: 0x{current_value:02X} -> 0x{new_value:02X}")
             
-            # 直接使用 generic_message 寫入 (Explicit Messaging)
-            try:
-                output_data = bytes(self.current_output_data)
-                
-                # DEBUG: 除錯模式（需要時取消註解）
-                # print(f"       [DEBUG] 寫入資料長度: {len(output_data)} bytes")
-                # print(f"       [DEBUG] byte[0]: 0x{output_data[0]:02X}, byte[1]: 0x{output_data[1]:02X}")
-                # print(f"       [DEBUG] 寫入 Assembly.0x{self.output_instance:02X}")
-                
-                response = self.driver.generic_message(
-                    service=0x10,  # Set Attribute Single
-                    class_code=0x04,  # Assembly Object
-                    instance=self.output_instance,
-                    attribute=3,
-                    request_data=output_data,
-                    connected=False
-                )
-                
-                # DEBUG: 除錯模式（需要時取消註解）
-                # if response:
-                #     print(f"       [DEBUG] Response 物件: {response}")
-                #     if hasattr(response, 'error'):
-                #         error_status = response.error if response.error else "None (成功)"
-                #         print(f"       [DEBUG] Error: {error_status}")
-                #     if hasattr(response, 'value'):
-                #         value_str = response.value if response.value else "b'' (空回應，正常)"
-                #         print(f"       [DEBUG] Value: {value_str}")
-                #         print(f"       [說明] Set 操作成功時通常回傳空值")
-                
-                if response and not (hasattr(response, 'error') and response.error):
-                    # 驗證: 讀取回來確認
-                    try:
-                        verify_resp = self.driver.generic_message(
-                            service=0x0E,  # Get Attribute Single
-                            class_code=0x04,
-                            instance=self.output_instance,
-                            attribute=3,
-                            connected=False
-                        )
-                        if verify_resp and hasattr(verify_resp, 'value') and len(verify_resp.value) >= 2:
-                            actual_byte1 = verify_resp.value[1]
-                            if actual_byte1 == new_value:
-                                print(f"       ✅ 驗證成功 (設備 byte[1]=0x{actual_byte1:02X})")
-                            else:
-                                print(f"       ⚠️ 驗證警告：設備 byte[1]=0x{actual_byte1:02X}, 預期=0x{new_value:02X}")
-                    except Exception as ve:
-                        print(f"       ⚠️ 無法驗證: {ve}")
-                else:
-                    error_msg = response.error if hasattr(response, 'error') else '未知'
-                    print(f"       ❌ 寫入失敗: {error_msg}")
-                    return False
+            # 雙模式：優先嘗試快速的 Implicit Messaging
+            if self.implicit_mode_enabled:
+                # 使用 I/O Worker 背景寫入
+                print(f"       [Implicit] 更新到 buffer，等待 I/O Worker 寫入...")
+                time.sleep(0.2)  # 等待至少一次 I/O 週期
+                print(f"       ✅ 控制命令已提交")
+            else:
+                # 直接使用 generic_message 寫入
+                try:
+                    output_data = bytes(self.current_output_data)
                     
-            except Exception as e:
-                print(f"       ❌ 寫入異常: {e}")
-                import traceback
-                traceback.print_exc()
-                return False
+                    # DEBUG: 除錯模式（需要時取消註解）
+                    # print(f"       [DEBUG] 寫入資料長度: {len(output_data)} bytes")
+                    # print(f"       [DEBUG] byte[0]: 0x{output_data[0]:02X}, byte[1]: 0x{output_data[1]:02X}")
+                    # print(f"       [DEBUG] 寫入 Assembly.0x{self.output_instance:02X}")
+                    
+                    response = self.driver.generic_message(
+                        service=0x10,  # Set Attribute Single
+                        class_code=0x04,  # Assembly Object
+                        instance=self.output_instance,
+                        attribute=3,
+                        request_data=output_data,
+                        connected=False
+                    )
+                    
+                    # DEBUG: 除錯模式（需要時取消註解）
+                    # if response:
+                    #     print(f"       [DEBUG] Response 物件: {response}")
+                    #     if hasattr(response, 'error'):
+                    #         error_status = response.error if response.error else "None (成功)"
+                    #         print(f"       [DEBUG] Error: {error_status}")
+                    #     if hasattr(response, 'value'):
+                    #         value_str = response.value if response.value else "b'' (空回應，正常)"
+                    #         print(f"       [DEBUG] Value: {value_str}")
+                    #         print(f"       [說明] Set 操作成功時通常回傳空值")
+                    
+                    if response and not (hasattr(response, 'error') and response.error):
+                        # 驗證: 讀取回來確認
+                        try:
+                            verify_resp = self.driver.generic_message(
+                                service=0x0E,  # Get Attribute Single
+                                class_code=0x04,
+                                instance=self.output_instance,
+                                attribute=3,
+                                connected=False
+                            )
+                            if verify_resp and hasattr(verify_resp, 'value') and len(verify_resp.value) >= 2:
+                                actual_byte1 = verify_resp.value[1]
+                                if actual_byte1 == new_value:
+                                    print(f"       ✅ 驗證成功 (設備 byte[1]=0x{actual_byte1:02X})")
+                                else:
+                                    print(f"       ⚠️ 驗證警告：設備 byte[1]=0x{actual_byte1:02X}, 預期=0x{new_value:02X}")
+                        except Exception as ve:
+                            print(f"       ⚠️ 無法驗證: {ve}")
+                    else:
+                        error_msg = response.error if hasattr(response, 'error') else '未知'
+                        print(f"       ❌ 寫入失敗: {error_msg}")
+                        return False
+                        
+                except Exception as e:
+                    print(f"       ❌ 寫入異常: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    return False
         
         time.sleep(0.5)  # 等待設備反應
         
@@ -1347,6 +1460,9 @@ class CaparocController:
                 
                 # 標記為已初始化 (允許控制)
                 self.channels_initialized = True
+                
+                # 嘗試建立 Implicit Messaging (靜默模式,CAPAROC 不支援)
+                self._establish_implicit_messaging(driver)
                 
                 # 只在第一次連線時顯示幫助信息
                 if not self.help_shown:

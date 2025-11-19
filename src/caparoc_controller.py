@@ -87,6 +87,12 @@ class CaparocController:
         self.monitor_mode = 'silent'  # 'silent' (靜默) 或 'display' (顯示)
         self.monitor_lock = threading.Lock()
         self.last_status_snapshot = {}  # 儲存上次狀態,用於變化檢測
+        
+        # 心跳機制 (保持連線)
+        self.heartbeat_thread = None
+        self.heartbeat_running = False
+        self.heartbeat_interval = 300.0  # 預設 300 秒發送一次心跳
+        self.last_activity_time = time.time()  # 記錄最後活動時間
 
     
     def get_channel_offset(self, module, channel):
@@ -152,7 +158,7 @@ class CaparocController:
     
     def _activate_connection_state(self, driver):
         """
-        激活 CIP 連線狀態
+        啟動 CIP 連線狀態
         
         關鍵發現：CAPAROC 設備需要在初始化時執行一次帶有 connected=True 
         參數的請求，才能使後續的控制命令生效。
@@ -163,22 +169,91 @@ class CaparocController:
         - 不需要 Forward Open 或 Implicit Messaging
         - 任何 service 都可以，只要 connected=True
         
-        實作：使用讀取 Input Assembly 的請求，既激活連線又讀取狀態
+        實作：使用讀取 Input Assembly 的請求，既啟動連線又讀取狀態
         """
         try:
+            print("\n[CIP 連線] 正在建立 CIP 連線狀態...")
+            
             response = driver.generic_message(
                 service=0x0E,                      # Get Attribute Single
                 class_code=0x04,                   # Assembly Object
                 instance=self.input_instance,      # 0x65 Input Assembly
                 attribute=3,
-                connected=True,                    # ⚠️ 關鍵：激活連線狀態
+                connected=True,                    # ⚠️ 關鍵：啟動連線狀態
                 unconnected_send=False
             )
             
-            return response and not (hasattr(response, 'error') and response.error)
+            if response and not (hasattr(response, 'error') and response.error):
+                print("✅ CIP 連線已建立 (WEB UI 應顯示 'connected')")
+                return True
+            else:
+                print("⚠️ CIP 連線建立失敗")
+                return False
                 
         except Exception as e:
+            print(f"❌ CIP 連線異常: {e}")
             return False
+    
+    def _heartbeat_worker(self, driver):
+        """
+        心跳執行緒：定期發送請求保持連線活躍
+        
+        策略：
+        - 只在閒置時發送（如果有其他操作則跳過）
+        - 使用輕量級的讀取請求
+        - 靜默執行，不干擾用戶操作
+        """
+        while self.heartbeat_running:
+            try:
+                # 計算閒置時間
+                idle_time = time.time() - self.last_activity_time
+                
+                # 如果閒置超過心跳間隔，發送心跳
+                if idle_time >= self.heartbeat_interval:
+                    try:
+                        # 發送輕量級讀取請求作為心跳
+                        driver.generic_message(
+                            service=0x0E,                  # Get Attribute Single
+                            class_code=0x04,               # Assembly Object
+                            instance=self.input_instance,  # Input Assembly
+                            attribute=3,
+                            connected=True,                # 保持 connected 狀態
+                            unconnected_send=False
+                        )
+                        # 更新活動時間
+                        self.last_activity_time = time.time()
+                    except Exception as e:
+                        # 心跳失敗不影響主程式
+                        pass
+                
+                # 每 5 秒檢查一次
+                time.sleep(5.0)
+                
+            except Exception as e:
+                time.sleep(5.0)
+    
+    def _start_heartbeat(self, driver):
+        """啟動心跳機制"""
+        if not self.heartbeat_running:
+            self.heartbeat_running = True
+            self.last_activity_time = time.time()
+            self.heartbeat_thread = threading.Thread(
+                target=self._heartbeat_worker, 
+                args=(driver,), 
+                daemon=True
+            )
+            self.heartbeat_thread.start()
+    
+    def _stop_heartbeat(self):
+        """停止心跳機制"""
+        if self.heartbeat_running:
+            self.heartbeat_running = False
+            if self.heartbeat_thread:
+                self.heartbeat_thread.join(timeout=2)
+    
+    def _update_activity(self):
+        """更新最後活動時間（在每次用戶操作時調用）"""
+        self.last_activity_time = time.time()
     
     def _verify_nominal_current(self, driver, module, channel):
         """
@@ -1183,10 +1258,10 @@ class CaparocController:
         except (ValueError, AttributeError):
             return False
     
+# ========== 主程式入口 ==========
     def run(self):
-        """主程式"""
         print("🚀 CAPAROC PM EIP Controller v3.7 beta")
-        print("\n✅目前可用功能:")
+        print("\n✅  目前可用功能:")
         print("1. 開關控制: 各模組通道進行啟閉控制")
         print("2. 狀態顯示: Global/channel 系統狀態檢查")
         print("3. 即時監控: 依據設定時間定時回傳系統狀態")
@@ -1235,7 +1310,7 @@ class CaparocController:
                     return
                 
                 # 連線成功，顯示設備資訊
-                print(f"✅ 裝置連線成功!")
+                print(f"✅ Pycomm3 TCP 連線成功! (尚未建立 CIP 連線)")
                 print(f"   IP 位址: {self.device_ip}")
                 
                 if conn_result['device_info']:
@@ -1281,7 +1356,7 @@ class CaparocController:
                 
                 # ========== Phase 3: 步驟 0 - 全域系統狀態檢查 ==========
                 print("\n" + "="*60)
-                print("🔍 Phase 3: 全域系統狀態檢查")
+                print("🔍 Phase 3: Check global system status")
                 print("="*60)
                 
                 status = self.check_global_system_status()
@@ -1385,8 +1460,12 @@ class CaparocController:
                 # 標記為已初始化 (允許控制)
                 self.channels_initialized = True
                 
-                # 激活 CIP 連線狀態（必須執行，否則控制命令無效）
+                # 啟動 CIP 連線狀態（必須執行，否則控制命令無效）
+                # 💡 此時才真正建立 CIP 連線，WEB UI 才會顯示 connected
                 self._activate_connection_state(driver)
+                
+                # 啟動心跳機制（保持連線活躍）
+                self._start_heartbeat(driver)
                 
                 # 只在第一次連線時顯示幫助信息
                 if not self.help_shown:
@@ -1403,6 +1482,8 @@ class CaparocController:
                             # 停止監控 (如果運行中)
                             if self.monitor_running:
                                 self.stop_monitor()
+                            # 停止心跳
+                            self._stop_heartbeat()
                             break
                         
                         elif cmd == 'h' or cmd == 'help':
@@ -1414,9 +1495,12 @@ class CaparocController:
                             # 停止監控 (如果運行中)
                             if self.monitor_running:
                                 self.stop_monitor()
+                            # 停止心跳
+                            self._stop_heartbeat()
                             return 'reconnect'
                         
                         elif cmd == 's' or cmd == 'status':
+                            self._update_activity()
                             self.show_status()
                         
                         elif cmd.startswith('init '):
@@ -1446,9 +1530,11 @@ class CaparocController:
                                 print("⚠️  用法: verify <通道編號>")
                         
                         elif cmd.startswith('on '):
+                            self._update_activity()
                             ch = int(cmd.split()[1])
                             self.set_channel(ch, True)
                         elif cmd.startswith('off '):
+                            self._update_activity()
                             ch = int(cmd.split()[1])
                             self.set_channel(ch, False)
                         elif cmd.startswith('monitor'):
@@ -1492,6 +1578,7 @@ class CaparocController:
                         print("\n⚠️  收到中斷訊號")
                         if self.monitor_running:
                             self.stop_monitor()
+                        self._stop_heartbeat()
                         break
                     except Exception as e:
                         print(f"❌ 錯誤: {e}")

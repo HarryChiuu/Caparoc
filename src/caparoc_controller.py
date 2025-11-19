@@ -418,7 +418,10 @@ class CaparocController:
         - 每個通道在 Config Assembly 中有 3 bytes
         - Byte 0: Nominal Current (USINT, 1-20A)
         - Byte 1: Programming Lock
-        - Byte 2: Status
+        - Byte 2: Status (可能包含通道開關狀態)
+        
+        ⚠️ 重要：修改 Config Assembly 後，設備會套用新配置，
+        這可能會導致所有通道關閉（安全保護機制）
         
         Args:
             module: 模組編號 (1-16)
@@ -475,10 +478,15 @@ class CaparocController:
         
         print(f"   ✅ Config Assembly 已更新")
         
+        # 警告訊息
+        print(f"\n   ⚠️  注意: 設備正在套用新配置...")
+        print(f"   ℹ️  CAPAROC 安全保護機制可能會關閉所有通道")
+        print(f"   ℹ️  這是正常行為，請使用 'on' 命令重新開啟需要的通道")
+        
         # 驗證設定
         if verify:
-            print(f"   [驗證] 等待設備應用設定...")
-            time.sleep(0.5)
+            print(f"\n   [驗證] 等待設備應用設定...")
+            time.sleep(1.0)  # 增加等待時間，確保設備完成配置
             
             actual = self._verify_nominal_current(self.driver, module, channel)
             if actual is not None:

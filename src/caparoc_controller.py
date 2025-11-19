@@ -152,109 +152,96 @@ class CaparocController:
     
     def _establish_implicit_messaging(self, driver):
         """
-        嘗試建立 Implicit Messaging 連接
+        ⚠️ 關鍵發現：觸發設備控制的真正原因
         
-        ⚠️ 重要: 即使 CAPAROC 不支援 Implicit Messaging（會返回失敗），
-        這個 Forward Open 請求仍然是必要的！
+        經過系統性測試發現：
+        1. ❌ 不需要 Forward Open (Service 0x52)
+        2. ❌ 不需要完整的請求數據包
+        3. ❌ 不需要 _io_worker() 或 _build_forward_open_request()
+        4. ✅ **只需要任何 connected=True 的 generic_message 調用**
         
-        原因: Forward Open 請求似乎觸發了設備的 Assembly 對象初始化或
-        狀態機重置。沒有這個請求，後續的 Explicit Messaging 雖然寫入
-        成功，但設備不會執行實際的硬體動作。
+        測試證據：
+        - Service 0x52 + connected=True + 空數據 → ✅ 可控制
+        - Service 0x52 + connected=False + 空數據 → ❌ 不可控制
+        - Service 0x0E + connected=True → ✅ 可控制
+        - 完全不調用 → ❌ 不可控制
         
-        測試證據:
-        - 有 Forward Open: on/off 控制正常 ✅
-        - 無 Forward Open: 寫入成功但設備不動作 ❌
-        
-        參考: docs/ISSUE_ANALYSIS_FORWARD_OPEN.md
+        結論：pycomm3 的 connected=True 參數會在底層建立某種連線狀態，
+        這個狀態是設備後續能夠響應控制命令的前提條件。
         """
         try:
-            # 嘗試使用 generic_message 建立 Forward Open
-            forward_open_data = self._build_forward_open_request()
-            
+            # 使用最簡單的請求：讀取 Input Assembly，但設置 connected=True
+            # 這樣既完成了必要的連線初始化，又順便讀取了設備狀態
             response = driver.generic_message(
-                service=0x52,  # Forward Open
-                class_code=0x06,  # Connection Manager
-                instance=0x01,
-                request_data=forward_open_data,
-                connected=True,
+                service=0x0E,              # Get Attribute Single
+                class_code=0x04,           # Assembly Object  
+                instance=self.input_instance,  # 0x65 Input Assembly
+                attribute=3,
+                connected=True,            # ⚠️ 關鍵參數
                 unconnected_send=False
             )
             
+            # 這個請求會成功，不像 Forward Open 總是失敗
             if response and not (hasattr(response, 'error') and response.error):
-                # 不太可能執行到這裡（CAPAROC 不支援 Implicit Messaging）
-                print("[Implicit] Forward Open 成功，啟動 I/O Worker 模式")
-                self.implicit_mode_enabled = True
-                
-                # 啟動 I/O Worker
-                self.cip_keep_alive = True
-                self.io_update_thread = threading.Thread(
-                    target=self._io_worker,
-                    args=(driver,),
-                    daemon=True
-                )
-                self.io_update_thread.start()
-                time.sleep(0.5)
-                
                 return True
-            else:
-                # CAPAROC 預期會執行到這裡（回應 "Service not supported"）
-                # 即使失敗，這個請求已經完成了必要的設備初始化
-                return False
+            
+            return False
                 
         except Exception as e:
-            # 靜默失敗，不影響後續 Explicit Messaging 使用
             return False
     
-    def _build_forward_open_request(self):
-        """建立 Forward Open 請求"""
-        request = bytearray()
-        request.extend(struct.pack('<I', 0x12345678))  # Connection Serial Number
-        request.extend(struct.pack('<H', 0x009A))  # Vendor ID
-        request.extend(struct.pack('<I', 0x87654321))  # Originator Serial Number
-        request.append(0x00)  # Connection Timeout Multiplier
-        request.extend([0x00, 0x00, 0x00])  # Reserved
-        request.extend(struct.pack('<I', 0x20000001))  # O->T Network Connection ID
-        request.extend(struct.pack('<I', 0x20000002))  # T->O Network Connection ID
-        request.extend(struct.pack('<H', 0x07D0))  # Connection Timeout (2000ms)
-        request.extend(struct.pack('<I', 0x43F4))  # O->T Connection Parameters (20ms RPI)
-        request.extend(struct.pack('<I', 0x43F4))  # T->O Connection Parameters (20ms RPI)
-        request.append(0xA3)  # Transport Type/Trigger
-        request.append(0x03)  # Connection Path Size
-        request.extend([0x01, self.output_instance])  # Output Assembly
-        request.extend([0x01, self.input_instance])  # Input Assembly
-        request.extend([0x01, 0x01])  # Config Assembly
-        return bytes(request)
+    # ========== 實驗 2: 註解 _build_forward_open_request() 測試是否必要 ==========
+    # def _build_forward_open_request(self):
+    #     """建立 Forward Open 請求"""
+    #     request = bytearray()
+    #     request.extend(struct.pack('<I', 0x12345678))  # Connection Serial Number
+    #     request.extend(struct.pack('<H', 0x009A))  # Vendor ID
+    #     request.extend(struct.pack('<I', 0x87654321))  # Originator Serial Number
+    #     request.append(0x00)  # Connection Timeout Multiplier
+    #     request.extend([0x00, 0x00, 0x00])  # Reserved
+    #     request.extend(struct.pack('<I', 0x20000001))  # O->T Network Connection ID
+    #     request.extend(struct.pack('<I', 0x20000002))  # T->O Network Connection ID
+    #     request.extend(struct.pack('<H', 0x07D0))  # Connection Timeout (2000ms)
+    #     request.extend(struct.pack('<I', 0x43F4))  # O->T Connection Parameters (20ms RPI)
+    #     request.extend(struct.pack('<I', 0x43F4))  # T->O Connection Parameters (20ms RPI)
+    #     request.append(0xA3)  # Transport Type/Trigger
+    #     request.append(0x03)  # Connection Path Size
+    #     request.extend([0x01, self.output_instance])  # Output Assembly
+    #     request.extend([0x01, self.input_instance])  # Input Assembly
+    #     request.extend([0x01, 0x01])  # Config Assembly
+    #     return bytes(request)
     
-    def _io_worker(self, driver):
-        """I/O Worker - 背景執行"""
-        cycle = 0
-        while self.cip_keep_alive and self.implicit_mode_enabled:
-            try:
-                cycle += 1
-                
-                with self.io_data_lock:
-                    output_data = bytes(self.current_output_data)
-                
-                try:
-                    # 寫入 Output Assembly
-                    driver.write(f"Assembly.{self.output_instance}", output_data)
-                    
-                    # 讀取 Input Assembly
-                    input_response = driver.read(f"Assembly.{self.input_instance}")
-                    if input_response and hasattr(input_response, 'value'):
-                        with self.io_data_lock:
-                            self.current_input_data = bytearray(input_response.value)
-                        self.last_io_update = time.time()
-                
-                except Exception as io_e:
-                    if cycle % 500 == 0:
-                        print(f"[I/O Worker] 週期 {cycle} 錯誤: {io_e}")
-                
-                time.sleep(0.05)  # 20Hz
-                
-            except Exception as e:
-                print(f"[I/O Worker] 異常: {e}")
-                time.sleep(0.1)
+    # ========== 實驗：註解 _io_worker() 測試是否必要 ==========
+    # def _io_worker(self, driver):
+    #     """I/O Worker - 背景執行"""
+    #     cycle = 0
+    #     while self.cip_keep_alive and self.implicit_mode_enabled:
+    #         try:
+    #             cycle += 1
+    #             
+    #             with self.io_data_lock:
+    #                 output_data = bytes(self.current_output_data)
+    #             
+    #             try:
+    #                 # 寫入 Output Assembly
+    #                 driver.write(f"Assembly.{self.output_instance}", output_data)
+    #                 
+    #                 # 讀取 Input Assembly
+    #                 input_response = driver.read(f"Assembly.{self.input_instance}")
+    #                 if input_response and hasattr(input_response, 'value'):
+    #                     with self.io_data_lock:
+    #                         self.current_input_data = bytearray(input_response.value)
+    #                     self.last_io_update = time.time()
+    #             
+    #             except Exception as io_e:
+    #                 if cycle % 500 == 0:
+    #                     print(f"[I/O Worker] 週期 {cycle} 錯誤: {io_e}")
+    #             
+    #             time.sleep(0.05)  # 20Hz
+    #             
+    #         except Exception as e:
+    #             print(f"[I/O Worker] 異常: {e}")
+    #             time.sleep(0.1)
     
     def _verify_nominal_current(self, driver, module, channel):
         """
@@ -1461,7 +1448,7 @@ class CaparocController:
                 # 標記為已初始化 (允許控制)
                 self.channels_initialized = True
                 
-                # 嘗試建立 Implicit Messaging (靜默模式,CAPAROC 不支援)
+                # ========== 實驗 4: 測試關鍵參數 ==========
                 self._establish_implicit_messaging(driver)
                 
                 # 只在第一次連線時顯示幫助信息

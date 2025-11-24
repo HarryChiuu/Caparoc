@@ -414,14 +414,15 @@ class CaparocController:
         """
         設定通道的標稱電流（使用 Config Assembly）
         
-        根據手冊 Table 7-11:
+        根據手冊 Table 7-11 & 7-18:
         - 每個通道在 Config Assembly 中有 3 bytes
         - Byte 0: Nominal Current (USINT, 1-20A)
         - Byte 1: Programming Lock
-        - Byte 2: Status (可能包含通道開關狀態)
+        - Byte 2: Status (0=Off, 1=On, 2=No Change)
         
-        ⚠️ 重要：修改 Config Assembly 後，設備會套用新配置，
-        這可能會導致所有通道關閉（安全保護機制）
+        ⚠️ 關鍵修正：
+        使用 Status Byte = 2 (No Change) 保護所有通道不被意外關閉！
+        這樣只會修改電流，不會影響通道開關狀態。
         
         Args:
             module: 模組編號 (1-16)
@@ -449,58 +450,137 @@ class CaparocController:
             print(f"❌ 標稱電流超出範圍 (1-20A): {current_amps}")
             return False
         
-        # 計算 Config Assembly 中的偏移
-        byte_offset = self.get_config_channel_offset(module, channel)
-        
-        # 顯示資訊
-        global_ch = (module - 1) * self.channels_per_module + channel
-        if self.module_count > 1:
-            ch_label = f"M{module}.CH{channel} (#{global_ch})"
-        else:
-            ch_label = f"CH{global_ch}"
-        
-        print(f"\n[標稱電流設定] {ch_label}")
-        print(f"   目標電流: {current_amps}A")
-        print(f"   Config Offset: Byte {byte_offset}")
-        
-        # 使用 Read-Modify-Write 方法更新
-        success = self.update_config_parameter(
-            self.driver,
-            byte_offset,
-            current_amps,
-            data_type='USINT',
-            debug=False
-        )
-        
-        if not success:
-            print(f"   ❌ 設定失敗")
-            return False
-        
-        print(f"   ✅ Config Assembly 已更新")
-        
-        # 警告訊息
-        print(f"\n   ⚠️  注意: 設備正在套用新配置...")
-        print(f"   ℹ️  CAPAROC 安全保護機制可能會關閉所有通道")
-        print(f"   ℹ️  這是正常行為，請使用 'on' 命令重新開啟需要的通道")
-        
-        # 驗證設定
-        if verify:
-            print(f"\n   [驗證] 等待設備應用設定...")
-            time.sleep(1.0)  # 增加等待時間，確保設備完成配置
+        try:
+            # 計算 Config Assembly 中的偏移
+            base_offset = self.get_config_channel_offset(module, channel)
+            offset_current = base_offset      # Nominal Current Byte
+            offset_lock = base_offset + 1     # Programming Lock Byte  
+            offset_status = base_offset + 2   # Status Byte
             
-            actual = self._verify_nominal_current(self.driver, module, channel)
-            if actual is not None:
-                if actual == current_amps:
-                    print(f"   ✅ 驗證成功: {actual}A")
-                    return True
-                else:
-                    print(f"   ⚠️  驗證警告: 設備顯示 {actual}A，設定值 {current_amps}A")
-                    return True  # 仍視為成功，可能是設備延遲
+            # 顯示資訊
+            global_ch = (module - 1) * self.channels_per_module + channel
+            if self.module_count > 1:
+                ch_label = f"M{module}.CH{channel} (#{global_ch})"
             else:
-                print(f"   ⚠️  無法驗證（讀取失敗）")
-                return True  # 寫入成功但無法驗證
-        
-        return True
+                ch_label = f"CH{global_ch}"
+            
+            print(f"\n[標稱電流設定] {ch_label}")
+            print(f"   目標電流: {current_amps}A")
+            print(f"   Config Offset: Byte {offset_current} (Current), {offset_status} (Status)")
+            
+            # ==========================================
+            # STEP 1: READ - 讀取完整設定
+            # ==========================================
+            print(f"   [步驟1] 讀取 Config Assembly...")
+            
+            response = self.driver.generic_message(
+                service=0x0E,
+                class_code=0x04,
+                instance=self.config_instance,
+                attribute=3,
+                connected=True
+            )
+            
+            if not response or (hasattr(response, 'error') and response.error):
+                error_msg = response.error if hasattr(response, 'error') else '未知錯誤'
+                print(f"   ❌ 讀取失敗: {error_msg}")
+                return False
+            
+            config_data = bytearray(response.value)
+            print(f"   ✅ 讀取成功 (長度: {len(config_data)} bytes)")
+            
+            # ==========================================
+            # STEP 2: MODIFY - 修改電流值
+            # ==========================================
+            print(f"   [步驟2] 修改設定...")
+            
+            # 檢查偏移是否越界
+            if offset_status >= len(config_data):
+                print(f"   ❌ Offset 超出範圍")
+                return False
+            
+            # 讀取舊值
+            old_current = config_data[offset_current]
+            old_status = config_data[offset_status]
+            
+            # 修改 Nominal Current
+            struct.pack_into('<B', config_data, offset_current, current_amps)
+            
+            # ⚠️ 關鍵修正：將 Status 設為 2 (No Change)
+            # 這樣只會更新電流，不會影響通道開關狀態
+            struct.pack_into('<B', config_data, offset_status, 2)
+            
+            print(f"   Nominal Current: {old_current}A -> {current_amps}A")
+            print(f"   Status: {old_status} -> 2 (No Change - 保持現狀)")
+            
+            # 進階保護：確保所有通道的 Status 都是 2 (No Change)
+            # 這樣可以防止任何意外的 0 值關閉其他通道
+            print(f"   [保護] 設定所有通道 Status = 2 (No Change)...")
+            
+            # 遍歷所有模組和通道
+            for m in range(1, 17):  # 最多 16 個模組
+                for ch in range(1, 5):  # 每個模組 4 通道
+                    ch_offset = self.get_config_channel_offset(m, ch)
+                    ch_status_offset = ch_offset + 2
+                    
+                    # 確保不越界
+                    if ch_status_offset < len(config_data):
+                        # 如果是 0，改成 2 (No Change)
+                        if config_data[ch_status_offset] == 0:
+                            struct.pack_into('<B', config_data, ch_status_offset, 2)
+            
+            print(f"   ✅ 所有通道已保護")
+            
+            # ==========================================
+            # STEP 3: WRITE - 寫回完整設定
+            # ==========================================
+            print(f"   [步驟3] 寫回 Config Assembly...")
+            
+            write_response = self.driver.generic_message(
+                service=0x10,
+                class_code=0x04,
+                instance=self.config_instance,
+                attribute=3,
+                request_data=bytes(config_data),
+                connected=True
+            )
+            
+            if hasattr(write_response, 'error') and write_response.error:
+                print(f"   ❌ 寫入失敗: {write_response.error}")
+                return False
+            
+            print(f"   ✅ Config Assembly 已更新")
+            
+            # 說明
+            print(f"\n   💡 機制說明:")
+            print(f"   - 使用 Status Byte = 2 (No Change) 保護所有通道")
+            print(f"   - 只會修改 {ch_label} 的標稱電流")
+            print(f"   - 其他通道的開關狀態不會被影響！")
+            
+            # 驗證設定
+            if verify:
+                print(f"\n   [驗證] 等待設備應用設定...")
+                time.sleep(0.5)
+                
+                actual = self._verify_nominal_current(self.driver, module, channel)
+                if actual is not None:
+                    if actual == current_amps:
+                        print(f"   ✅ 驗證成功: {actual}A")
+                        return True
+                    else:
+                        print(f"   ⚠️  驗證警告: 設備顯示 {actual}A，設定值 {current_amps}A")
+                        return True
+                else:
+                    print(f"   ⚠️  無法驗證（讀取失敗）")
+                    return True
+            
+            return True
+            
+        except Exception as e:
+            print(f"   ❌ 發生異常: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
     def _verify_nominal_current(self, driver, module, channel):
         """

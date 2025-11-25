@@ -567,22 +567,30 @@ class CaparocController:
             
             # 驗證設定
             if verify:
-                # 給設備短暫時間應用配置（實測發現幾乎是即時的）
-                time.sleep(0.3)
-                print(f"\n   [驗證] 讀取修改後的標稱電流...")
+                print(f"\n   [驗證] 等待設備應用配置...")
                 
-                actual = self._read_nominal_current_silent(self.driver, module, channel)
-                if actual is not None:
-                    if actual == current_amps:
-                        print(f"✅ 變更已執行: {ch_label} 目前為 {actual}A")
+                # 漸進式重試驗證（最多 3 秒）
+                max_attempts = 6  # 6 次嘗試
+                for attempt in range(1, max_attempts + 1):
+                    time.sleep(0.5)  # 每次等 500ms
+                    
+                    actual = self._read_nominal_current_silent(self.driver, module, channel)
+                    if actual is not None and actual == current_amps:
+                        # 驗證成功
+                        elapsed = attempt * 0.5
+                        print(f"✅ 變更已執行: {ch_label} 目前為 {actual}A (耗時: {elapsed:.1f}s)")
                         return True
+                    elif attempt < max_attempts:
+                        # 還沒成功，繼續等待
+                        continue
                     else:
-                        print(f"⚠️  驗證警告: 設備顯示 {actual}A，設定值 {current_amps}A")
-                        print(f"   建議: 請使用 'verify {global_ch}' 命令再次確認")
+                        # 最後一次仍失敗
+                        if actual is not None:
+                            print(f"⚠️  驗證警告: 設備顯示 {actual}A，設定值 {current_amps}A")
+                            print(f"   建議: 請使用 'verify {global_ch}' 命令再次確認")
+                        else:
+                            print(f"⚠️  無法驗證（讀取失敗），但設定已寫入")
                         return True
-                else:
-                    print(f"⚠️  無法驗證（讀取失敗），但設定已寫入")
-                    return True
             
             return True
             

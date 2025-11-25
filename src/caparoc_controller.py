@@ -256,7 +256,7 @@ class CaparocController:
         if self.heartbeat_running:
             self.heartbeat_running = False
             if self.heartbeat_thread:
-                self.heartbeat_thread.join(timeout=2)
+                self.heartbeat_thread.join(timeout=1)
     
     def _update_activity(self):
         """更新最後活動時間（在每次用戶操作時調用）"""
@@ -567,7 +567,7 @@ class CaparocController:
             
             # 驗證設定
             if verify:
-                print(f"\n   [驗證] 等待設備應用配置...")
+                print(f"\n[驗證] 等待設備應用配置...")
                 
                 # 漸進式重試驗證（最多 3 秒）
                 max_attempts = 6  # 6 次嘗試
@@ -578,7 +578,7 @@ class CaparocController:
                     if actual is not None and actual == current_amps:
                         # 驗證成功
                         elapsed = attempt * 0.5
-                        print(f"✅ 變更已執行: {ch_label} 目前為 {actual}A (耗時: {elapsed:.1f}s)")
+                        print(f"✅ 變更成功: {ch_label} 目前為 {actual}A (耗時: {elapsed:.1f}s)")
                         return True
                     elif attempt < max_attempts:
                         # 還沒成功，繼續等待
@@ -1397,7 +1397,7 @@ class CaparocController:
         
         # 等待執行緒結束
         if self.monitor_thread:
-            self.monitor_thread.join(timeout=5)
+            self.monitor_thread.join(timeout=1)
         
         print("✅ 監控已停止")
         return True
@@ -1929,11 +1929,13 @@ class CaparocController:
                         cmd = input("\n> ").strip().lower()
                         
                         if cmd == 'q' or cmd == 'quit':
+                            print("\n🛑 正在退出程式...")
                             # 停止監控 (如果運行中)
                             if self.monitor_running:
                                 self.stop_monitor()
                             # 停止心跳
                             self._stop_heartbeat()
+                            print("✅ 退出程式")
                             break
                         
                         elif cmd == 'h' or cmd == 'help':

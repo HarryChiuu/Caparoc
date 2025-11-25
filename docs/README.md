@@ -5,22 +5,21 @@
 ## 📚 快速導航
 
 ### 🎯 使用者文檔
-適合一般操作人員查閱
-- **[CLI_USER_GUIDE.md](CLI_USER_GUIDE.md)** - 命令列使用指南
-- **[DIAGNOSTIC_TOOLS_GUIDE.md](DIAGNOSTIC_TOOLS_GUIDE.md)** - 診斷工具使用指南 🆕
+- **[CLI_USER_GUIDE.md](CLI_USER_GUIDE.md)** - 命令列使用指南（包含互動式測試）
+- **[DIAGNOSTIC_TOOLS_GUIDE.md](DIAGNOSTIC_TOOLS_GUIDE.md)** - 診斷工具使用指南
 
 ### 💻 開發文檔
-適合開發人員和技術人員
-- **[MAIN_PROGRAM_FLOW.md](MAIN_PROGRAM_FLOW.md)** - 主程式運作流程詳解 🆕
-- **[PROGRAM_FLOWCHART.md](PROGRAM_FLOWCHART.md)** - 程式流程圖（Mermaid） 🆕
-- **[PROGRAM_FLOW.md](PROGRAM_FLOW.md)** - 程式執行流程圖（舊版）
+- **[PROGRAM_FLOW.md](PROGRAM_FLOW.md)** - 完整程式流程（v4.0，最新）
+- **[INIT_COMMAND_FLOW.md](INIT_COMMAND_FLOW.md)** - 標稱電流設定流程
+- **[NOMINAL_CURRENT_IMPLEMENTATION.md](NOMINAL_CURRENT_IMPLEMENTATION.md)** - 實作細節
 - **[DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md)** - 開發筆記
 
 ### 🔧 維護文檔
-適合專案維護
 - **[CHANGELOG.md](CHANGELOG.md)** - 版本更新歷史
 - **[TODO.md](TODO.md)** - 開發計畫與功能路線圖
-- **[TROUBLESHOOTING_CONNECTION.md](TROUBLESHOOTING_CONNECTION.md)** - 連線故障排除
+
+### 📦 歷史文檔
+- **[history/](history/)** - 過時文檔歸檔
 
 ---
 

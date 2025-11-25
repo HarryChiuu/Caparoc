@@ -40,7 +40,11 @@ init 4 10    # 設定 CH4 為 10A
 └─────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────┐
-│  Step 4: 等待設備應用設定 (0.5秒)                   │
+│  Step 4: 監測 Bit 7 (Config Processing)             │
+│  ├─ 讀取 Input Assembly Byte 0                      │
+│  ├─ Bit 7 = 1: 設備處理中                           │
+│  ├─ Bit 7 = 0: 處理完成                             │
+│  └─ 最多等待 10 秒                                  │
 └─────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────┐
@@ -80,7 +84,11 @@ init 4 10    # 設定 CH4 為 10A
    - 只會修改 CH4 的標稱電流
    - 其他通道的開關狀態不會被影響！
 
-   [驗證] 等待設備應用設定...
+   [監測] 等待設備處理配置...
+   ⏳ 設備處理中 (Bit 7 = 1)...
+   ✅ 處理完成 (耗時: 0.35s)
+
+   [驗證] 讀取修改後的標稱電流...
 ✅ 變更已執行: CH4 目前為 10A
 ```
 
@@ -112,6 +120,46 @@ init 4 10    # 設定 CH4 為 10A
 ```
 
 ## 🔍 關鍵方法
+
+### `_wait_for_config_processing()`
+
+**用途**: 監測 Input Assembly Byte 0 Bit 7，等待配置處理完成
+
+```python
+def _wait_for_config_processing(self, driver, max_wait=10.0):
+    """監測 Bit 7 (Config Processing)"""
+    while time.time() - start_time < max_wait:
+        response = driver.generic_message(
+            service=0x0E,
+            instance=self.input_instance,  # 0x65
+            ...
+        )
+        
+        byte0 = response.value[0]
+        bit7 = (byte0 >> 7) & 0x01
+        
+        if bit7 == 1:
+            # 設備處理中
+            print("⏳ 設備處理中 (Bit 7 = 1)...")
+        elif bit7 == 0:
+            # 處理完成
+            print("✅ 處理完成")
+            return True
+```
+
+**根據手冊**：
+- **Bit 7 = 1**: Processing of the config assembly（處理中）
+- **Bit 7 = 0**: Complete（完成）
+
+**為什麼需要監測？**
+
+Config Assembly 寫入後，設備需要時間來應用配置：
+1. 寫入成功 ≠ 配置已應用
+2. 必須等待 Bit 7 從 1 變為 0
+3. 否則驗證會讀到舊值
+
+**調用時機**:
+- Config Assembly 寫入後，驗證前
 
 ### `_read_nominal_current_silent()`
 

@@ -565,10 +565,13 @@ class CaparocController:
             print(f"   - 只會修改 {ch_label} 的標稱電流")
             print(f"   - 其他通道的開關狀態不會被影響！")
             
+            # 監測 Bit 7 (Config Processing)
+            print(f"\n   [監測] 等待設備處理配置...")
+            self._wait_for_config_processing(self.driver)
+            
             # 驗證設定
             if verify:
-                print(f"\n   [驗證] 等待設備應用設定...")
-                time.sleep(0.5)
+                print(f"\n   [驗證] 讀取修改後的標稱電流...")
                 
                 actual = self._read_nominal_current_silent(self.driver, module, channel)
                 if actual is not None:
@@ -626,6 +629,71 @@ class CaparocController:
             
         except Exception as e:
             return None
+    
+    def _wait_for_config_processing(self, driver, max_wait=10.0):
+        """
+        監測 Input Assembly Byte 0 Bit 7，等待配置處理完成
+        
+        根據手冊：
+        - Bit 7 = 1: 設備正在處理配置 (Processing)
+        - Bit 7 = 0: 處理完成 (Complete)
+        
+        Args:
+            driver: CIPDriver 實例
+            max_wait: 最長等待時間（秒）
+        
+        Returns:
+            bool: True = 處理完成, False = 超時
+        """
+        start_time = time.time()
+        check_count = 0
+        processing_detected = False
+        
+        while time.time() - start_time < max_wait:
+            check_count += 1
+            elapsed = time.time() - start_time
+            
+            try:
+                # 讀取 Input Assembly
+                response = driver.generic_message(
+                    service=0x0E,
+                    class_code=0x04,
+                    instance=self.input_instance,
+                    attribute=3,
+                    connected=False
+                )
+                
+                if not response or not hasattr(response, 'value') or len(response.value) == 0:
+                    time.sleep(0.2)
+                    continue
+                
+                byte0 = response.value[0]
+                bit7 = (byte0 >> 7) & 0x01
+                
+                if bit7 == 1:
+                    # 處理中
+                    if not processing_detected:
+                        print(f"   ⏳ 設備處理中 (Bit 7 = 1)...")
+                        processing_detected = True
+                elif bit7 == 0 and processing_detected:
+                    # 從處理中變為完成
+                    print(f"   ✅ 處理完成 (耗時: {elapsed:.2f}s)")
+                    return True
+                elif bit7 == 0 and not processing_detected:
+                    # 從來沒偵測到 processing，可能已經處理完了
+                    if check_count >= 3:  # 連續3次都是0，認為已完成
+                        print(f"   ✅ 配置已應用")
+                        return True
+                
+                time.sleep(0.2)
+                
+            except Exception as e:
+                time.sleep(0.2)
+                continue
+        
+        # 超時
+        print(f"   ⚠️  監測超時 ({max_wait}s)")
+        return False
     
     def _verify_nominal_current(self, driver, module, channel):
         """

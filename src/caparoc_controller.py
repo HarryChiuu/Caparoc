@@ -472,14 +472,14 @@ class CaparocController:
             current_value = self._read_nominal_current_silent(self.driver, module, channel)
             if current_value is not None:
                 print(f"⚠️  變更警告: {ch_label} 目前為 {current_value}A，修改設定為 {current_amps}A")
-            else:
-                print(f"   目標電流: {current_amps}A")
-            print(f"   Config Offset: Byte {offset_current} (Current), {offset_status} (Status)")
+            # else:
+            #     print(f"   目標電流: {current_amps}A")
+            # print(f"   Config Offset: Byte {offset_current} (Current), {offset_status} (Status)")
             
             # ==========================================
             # STEP 1: READ - 讀取完整設定
             # ==========================================
-            print(f"   [步驟1] 讀取 Config Assembly...")
+            # print(f"   [步驟1] 讀取 Config Assembly...")
             
             response = self.driver.generic_message(
                 service=0x0E,
@@ -495,12 +495,12 @@ class CaparocController:
                 return False
             
             config_data = bytearray(response.value)
-            print(f"   ✅ 讀取成功 (長度: {len(config_data)} bytes)")
+            # print(f"   ✅ 讀取成功 (長度: {len(config_data)} bytes)")
             
             # ==========================================
             # STEP 2: MODIFY - 修改電流值
             # ==========================================
-            print(f"   [步驟2] 修改設定...")
+            # print(f"   [步驟2] 修改設定...")
             
             # 檢查偏移是否越界
             if offset_status >= len(config_data):
@@ -518,12 +518,12 @@ class CaparocController:
             # 這樣只會更新電流，不會影響通道開關狀態
             struct.pack_into('<B', config_data, offset_status, 2)
             
-            print(f"   Nominal Current: {old_current}A -> {current_amps}A")
-            print(f"   Status: {old_status} -> 2 (No Change - 保持現狀)")
+            # print(f"   Nominal Current: {old_current}A -> {current_amps}A")
+            # print(f"   Status: {old_status} -> 2 (No Change - 保持現狀)")
             
             # 進階保護：確保所有通道的 Status 都是 2 (No Change)
             # 這樣可以防止任何意外的 0 值關閉其他通道
-            print(f"   [保護] 設定所有通道 Status = 2 (No Change)...")
+            # print(f"   [保護] 設定所有通道 Status = 2 (No Change)...")
             
             # 遍歷所有模組和通道
             for m in range(1, 17):  # 最多 16 個模組
@@ -537,12 +537,12 @@ class CaparocController:
                         if config_data[ch_status_offset] == 0:
                             struct.pack_into('<B', config_data, ch_status_offset, 2)
             
-            print(f"   ✅ 所有通道已保護")
+            # print(f"   ✅ 所有通道已保護")
             
             # ==========================================
             # STEP 3: WRITE - 寫回完整設定
             # ==========================================
-            print(f"   [步驟3] 寫回 Config Assembly...")
+            # print(f"   [步驟3] 寫回 Config Assembly...")
             
             write_response = self.driver.generic_message(
                 service=0x10,
@@ -557,13 +557,13 @@ class CaparocController:
                 print(f"   ❌ 寫入失敗: {write_response.error}")
                 return False
             
-            print(f"   ✅ Config Assembly 已更新")
+            # print(f"   ✅ Config Assembly 已更新")
             
             # 說明
-            print(f"\n   💡 機制說明:")
-            print(f"   - 使用 Status Byte = 2 (No Change) 保護所有通道")
-            print(f"   - 只會修改 {ch_label} 的標稱電流")
-            print(f"   - 其他通道的開關狀態不會被影響！")
+            # print(f"\n   💡 機制說明:")
+            # print(f"   - 使用 Status Byte = 2 (No Change) 保護所有通道")
+            # print(f"   - 只會修改 {ch_label} 的標稱電流")
+            # print(f"   - 其他通道的開關狀態不會被影響！")
             
             # 驗證設定
             if verify:

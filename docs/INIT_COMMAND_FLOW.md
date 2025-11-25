@@ -40,16 +40,13 @@ init 4 10    # 設定 CH4 為 10A
 └─────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────┐
-│  Step 4: 監測 Bit 7 (Config Processing)             │
-│  ├─ 讀取 Input Assembly Byte 0                      │
-│  ├─ Bit 7 = 1: 設備處理中                           │
-│  ├─ Bit 7 = 0: 處理完成                             │
-│  └─ 最多等待 10 秒                                  │
+│  Step 4: 短暫等待應用配置 (0.3秒)                   │
+│  └─ 給設備時間應用（實測發現幾乎是即時的）           │
 └─────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────┐
 │  Step 5: 讀取修改後的標稱電流值                      │
-│  ├─ 再次使用 _read_nominal_current_silent()          │
+│  ├─ 使用 _read_nominal_current_silent()              │
 │  └─ 驗證設定是否成功                                 │
 └─────────────────────────────────────────────────────┘
                         ↓
@@ -84,10 +81,6 @@ init 4 10    # 設定 CH4 為 10A
    - 只會修改 CH4 的標稱電流
    - 其他通道的開關狀態不會被影響！
 
-   [監測] 等待設備處理配置...
-   ⏳ 設備處理中 (Bit 7 = 1)...
-   ✅ 處理完成 (耗時: 0.35s)
-
    [驗證] 讀取修改後的標稱電流...
 ✅ 變更已執行: CH4 目前為 10A
 ```
@@ -121,49 +114,31 @@ init 4 10    # 設定 CH4 為 10A
 
 ## 🔍 關鍵方法
 
-### `_wait_for_config_processing()`
-
-**用途**: 監測 Input Assembly Byte 0 Bit 7，等待配置處理完成
-
-```python
-def _wait_for_config_processing(self, driver, max_wait=10.0):
-    """監測 Bit 7 (Config Processing)"""
-    while time.time() - start_time < max_wait:
-        response = driver.generic_message(
-            service=0x0E,
-            instance=self.input_instance,  # 0x65
-            ...
-        )
-        
-        byte0 = response.value[0]
-        bit7 = (byte0 >> 7) & 0x01
-        
-        if bit7 == 1:
-            # 設備處理中
-            print("⏳ 設備處理中 (Bit 7 = 1)...")
-        elif bit7 == 0:
-            # 處理完成
-            print("✅ 處理完成")
-            return True
-```
-
-**根據手冊**：
-- **Bit 7 = 1**: Processing of the config assembly（處理中）
-- **Bit 7 = 0**: Complete（完成）
-
-**為什麼需要監測？**
-
-Config Assembly 寫入後，設備需要時間來應用配置：
-1. 寫入成功 ≠ 配置已應用
-2. 必須等待 Bit 7 從 1 變為 0
-3. 否則驗證會讀到舊值
-
-**調用時機**:
-- Config Assembly 寫入後，驗證前
+## 🔍 關鍵方法
 
 ### `_read_nominal_current_silent()`
 
 **用途**: 靜默讀取標稱電流值，不顯示調試訊息
+
+**調用時機**:
+1. 修改前：讀取舊值並顯示警告
+2. 修改後：讀取新值並確認
+
+### ~~`_wait_for_config_processing()`~~ (已移除)
+
+**原本用途**: 監測 Input Assembly Byte 0 Bit 7
+
+**移除原因**:
+- 監測耗時 5 秒（太慢）
+- 實測發現 Config Assembly 寫入後設備立即應用
+- 使用 `status` 命令可立即看到新值
+- 改用 `sleep(0.3)` + 直接驗證更快
+
+**保留方法**: 代碼中保留了 `_wait_for_config_processing()` 方法以備將來需要
+
+### `_verify_nominal_current()`
+
+**用途**: 驗證標稱電流值，顯示詳細調試訊息
 
 ```python
 def _read_nominal_current_silent(self, driver, module, channel):

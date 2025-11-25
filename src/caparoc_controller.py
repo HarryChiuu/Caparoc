@@ -465,7 +465,15 @@ class CaparocController:
                 ch_label = f"CH{global_ch}"
             
             print(f"\n[標稱電流設定] {ch_label}")
-            print(f"   目標電流: {current_amps}A")
+            
+            # ==========================================
+            # 讀取當前標稱電流值
+            # ==========================================
+            current_value = self._read_nominal_current_silent(self.driver, module, channel)
+            if current_value is not None:
+                print(f"⚠️  變更警告: {ch_label} 目前為 {current_value}A，修改設定為 {current_amps}A")
+            else:
+                print(f"   目標電流: {current_amps}A")
             print(f"   Config Offset: Byte {offset_current} (Current), {offset_status} (Status)")
             
             # ==========================================
@@ -562,16 +570,17 @@ class CaparocController:
                 print(f"\n   [驗證] 等待設備應用設定...")
                 time.sleep(0.5)
                 
-                actual = self._verify_nominal_current(self.driver, module, channel)
+                actual = self._read_nominal_current_silent(self.driver, module, channel)
                 if actual is not None:
                     if actual == current_amps:
-                        print(f"   ✅ 驗證成功: {actual}A")
+                        print(f"✅ 變更已執行: {ch_label} 目前為 {actual}A")
                         return True
                     else:
-                        print(f"   ⚠️  驗證警告: 設備顯示 {actual}A，設定值 {current_amps}A")
+                        print(f"⚠️  驗證警告: 設備顯示 {actual}A，設定值 {current_amps}A")
+                        print(f"   建議: 請使用 'verify {global_ch}' 命令再次確認")
                         return True
                 else:
-                    print(f"   ⚠️  無法驗證（讀取失敗）")
+                    print(f"⚠️  無法驗證（讀取失敗），但設定已寫入")
                     return True
             
             return True
@@ -582,9 +591,45 @@ class CaparocController:
             traceback.print_exc()
             return False
     
+    def _read_nominal_current_silent(self, driver, module, channel):
+        """
+        靜默讀取通道的標稱電流設定（不顯示調試信息）
+        
+        Args:
+            driver: CIPDriver 實例
+            module: 模組編號
+            channel: 通道編號
+        
+        Returns:
+            int: 實際標稱電流值 (0-20A), 或 None (讀取失敗)
+        """
+        try:
+            # 讀取 Input Assembly 0x65
+            response = driver.generic_message(
+                service=0x0E,
+                class_code=0x04,
+                instance=self.input_instance,
+                attribute=3,
+                connected=False
+            )
+            
+            if response and hasattr(response, 'value'):
+                data = response.value
+                offset = self.get_channel_offset(module, channel)
+                
+                if len(data) > offset + 1:
+                    # Byte 1: Nominal current (0-20A)
+                    nominal_current = data[offset + 1]
+                    return int(nominal_current)
+            
+            return None
+            
+        except Exception as e:
+            return None
+    
     def _verify_nominal_current(self, driver, module, channel):
         """
-        驗證通道的標稱電流設定
+        驗證通道的標稱電流設定（顯示詳細調試信息）
         
         Args:
             driver: CIPDriver 實例

@@ -646,7 +646,377 @@ instance = 0x66  # 不是 0x01
 
 ---
 
+## 附錄：失敗歷史與成功關鍵對比
+
+### 🔄 開發歷程時間軸
+
+#### **第一階段：初始嘗試（2025-11-10）**
+
+**Commit**: `a8b0842` - feat(config-assembly): 實作標稱 Config Assembly 標稱電流設定方法
+
+**方法**：使用 Parameter Object (Class 0x0F)
+```python
+# 嘗試使用 Parameter Object
+service=0x10  # Set Attribute Single
+class_code=0x0F  # Parameter Object
+instance=param_number
+```
+
+**結果**：❌ 失敗
+- 錯誤：Path segment error
+- 原因：CAPAROC 不支援 Parameter Object 方法
+
+---
+
+#### **第二階段：Config Assembly 建構式方法（2025-11-10）**
+
+**Commit**: `3996300` - feat(config): 實作 Config Assembly 完整六步驟流程與診斷功能
+
+**方法**：從頭建立 244-byte 緩衝區
+```python
+# Step 1: 建立空緩衝區
+config_data = bytearray(244)
+
+# Step 2: 填入 'No Change' 預設值
+# Param1-5 全設為 0 (No Change)
+# 各通道參數設為預設值
+
+# Step 3: 解除軟體鎖定
+config_data[0] = 0  # Global lock
+config_data[1] = 0  # UI lock
+
+# Step 4: 設定目標電流值
+offset = 6 + (module-1)*12 + (channel-1)*3
+config_data[offset] = current_amps
+
+# Step 5: 寫入
+driver.generic_message(
+    service=0x10,
+    class_code=0x04,
+    instance=0x66,
+    request_data=config_data
+)
+```
+
+**結果**：❌ 失敗
+- 問題 1：244-byte 封包太大
+- 問題 2：寫入後所有通道關閉
+- 問題 3：不知道為什麼會關閉
+
+**關鍵錯誤**：
+```python
+# ❌ 錯誤做法：建立空緩衝區
+config_data = bytearray(244)  # 全是 0
+
+# 問題：Status Byte 也是 0
+# Byte 8, 11, 14, 17... = 0
+# 導致所有通道被強制關閉！
+```
+
+---
+
+#### **第三階段：放棄與刪除（2025-11-13）**
+
+**Commit**: `d015545` - refactor: 刪除標稱電流設定(init)相關的底層方法
+
+**決策**：功能太複雜，暫時放棄
+```python
+# 刪除了 470 行代碼
+- initialize_all_channels()
+- _get_config_param_number()
+- _read_config_assembly()
+- _check_and_unlock_programming()
+- _set_nominal_current_parameter_object()
+```
+
+**原因**：
+- 不清楚為什麼會關閉所有通道
+- 嘗試了多種方法都失敗
+- 決定專注在穩定的 on/off 功能
+
+---
+
+#### **第四階段：重新開始（2025-11-19）**
+
+**Commit**: `38518cb` - feat: 實作標稱電流修改功能 (Phase 3-3)
+
+**轉捩點**：發現 Read-Modify-Write 方案
+
+**新方法**：
+```python
+# ✅ 正確做法：先讀取現有配置
+response = driver.generic_message(
+    service=0x0E,  # 先讀取
+    class_code=0x04,
+    instance=0x66
+)
+
+config_data = bytearray(response.value)
+
+# 只修改目標位置
+config_data[offset] = new_value
+
+# 寫回完整數據
+driver.generic_message(
+    service=0x10,  # 再寫入
+    request_data=bytes(config_data)
+)
+```
+
+**結果**：⚠️ 部分成功
+- ✅ 功能可以執行
+- ✅ 電流值可以修改
+- ❌ 但仍然關閉所有通道！
+
+---
+
+#### **第五階段：添加警告（2025-11-24）**
+
+**Commit**: `1e0bd48` - docs: 添加 Config Assembly 安全保護機制說明
+
+**認知**：以為是 CAPAROC 的安全保護機制
+
+```python
+print("⚠️  注意: 設備正在套用新配置...")
+print("ℹ️  CAPAROC 安全保護機制可能會關閉所有通道")
+print("ℹ️  這是正常行為，請使用 'on' 命令重新開啟需要的通道")
+```
+
+**結果**：❌ 錯誤的理解
+- 以為關閉通道是設備的「設計行為」
+- 實際上是代碼的 bug
+- 用戶每次都要重新開啟，體驗很差
+
+---
+
+#### **第六階段：真相大白（2025-11-25）**
+
+**Commit**: `67fbf69` - fix: 使用 Status Byte = 2 (No Change) 保護通道開關狀態
+
+**關鍵發現**：Status Byte 的秘密！
+
+查閱手冊 **Table 7-18** 才發現：
+
+| Status Byte 值 | 意義 | 效果 |
+|---------------|------|------|
+| 0 | Channel off | ❌ 強制關閉 |
+| 1 | Channel on | 強制開啟 |
+| 2 | **No change** | ✅ 保持現狀 |
+
+**真相**：
+```python
+# 問題根源：
+# 即使使用 Read-Modify-Write，讀取回來的 Status Byte 可能是 0
+# 寫回時，Status = 0 就會關閉通道！
+
+# 解決方案：
+struct.pack_into('<B', config_data, offset_status, 2)  # 設為 2!
+
+# 進階保護：
+for m in range(1, 17):
+    for ch in range(1, 5):
+        if config_data[ch_status_offset] == 0:
+            config_data[ch_status_offset] = 2  # 全部改為 2
+```
+
+**結果**：✅ **完美解決！**
+- 只修改電流值
+- 不影響任何通道的開關狀態
+- 已開啟的通道保持開啟
+- 已關閉的通道保持關閉
+
+---
+
+### 🔍 失敗原因深度分析
+
+#### **為什麼第二階段（建構式方法）失敗？**
+
+```python
+# ❌ 錯誤代碼（2025-11-10）
+config_data = bytearray(244)  # 初始化全是 0
+
+# 結構分析：
+# Byte 6:  CH1 Nominal Current = 0
+# Byte 7:  CH1 Programming Lock = 0
+# Byte 8:  CH1 Status = 0  ⚠️ 這會關閉 CH1！
+# Byte 9:  CH2 Nominal Current = 0
+# Byte 10: CH2 Programming Lock = 0
+# Byte 11: CH2 Status = 0  ⚠️ 這會關閉 CH2！
+# ...以此類推，所有通道都被關閉
+```
+
+**為什麼當時沒發現？**
+1. 不知道 Status Byte 的存在
+2. 沒有仔細閱讀 Table 7-18
+3. 以為只要設定 Nominal Current 就好
+4. 沒想到 Status Byte = 0 會關閉通道
+
+#### **為什麼第四階段（Read-Modify-Write）仍然失敗？**
+
+```python
+# 看似正確的代碼（2025-11-19）
+response = driver.generic_message(service=0x0E, ...)
+config_data = bytearray(response.value)
+
+# 只修改 Nominal Current
+config_data[offset_current] = new_value
+
+# 寫回
+driver.generic_message(service=0x10, request_data=config_data)
+```
+
+**問題**：讀取回來的 Status Byte 可能就是 0！
+
+**為什麼是 0？**
+1. 設備出廠預設可能是 0
+2. 之前的操作可能寫入了 0
+3. Config Assembly 可能沒有保存 Status 狀態
+4. 每次讀取都是新的初始值
+
+**關鍵認知**：
+> Read-Modify-Write 只能保證「不破壞現有數據」
+> 但如果現有數據本身就有問題（Status=0），
+> 那寫回去還是會有問題！
+
+---
+
+### ✅ 成功關鍵
+
+#### **關鍵 1：發現 Table 7-18**
+
+沒有這張表，永遠不會知道 Status Byte 有三個值：
+- 之前只知道 0 和 1（開/關）
+- 不知道有 2（No Change）這個選項
+- 這是 EDS 標準的一部分
+
+#### **關鍵 2：理解 "No Change" 的意義**
+
+```python
+# Status = 2 的魔力
+# 告訴設備：「這個欄位我不想改，保持原樣」
+# 就像 SQL 的 UPDATE 不提及某個欄位一樣
+```
+
+#### **關鍵 3：主動設定而非被動讀取**
+
+```python
+# ❌ 錯誤思維：
+# 讀取 Status，保持原值，寫回
+# 問題：如果讀回來就是 0 呢？
+
+# ✅ 正確思維：
+# 不管讀回來是什麼，都主動設為 2
+struct.pack_into('<B', config_data, offset_status, 2)
+```
+
+#### **關鍵 4：全通道保護機制**
+
+```python
+# 不只保護目標通道，保護所有通道
+for m in range(1, 17):
+    for ch in range(1, 5):
+        if config_data[ch_status_offset] == 0:
+            config_data[ch_status_offset] = 2
+            
+# 這樣即使代碼有 bug，也不會關閉通道
+```
+
+---
+
+### 📊 前後對比
+
+| 項目 | 失敗版本（v1.0-v1.1） | 成功版本（v2.0） |
+|------|---------------------|-----------------|
+| **方法** | 建構式 / Read-Modify-Write | Read-Modify-Write + Status Protection |
+| **Status 處理** | 忽略 / 保持原值 | 主動設為 2 (No Change) |
+| **保護範圍** | 只有目標通道 | 所有通道 |
+| **代碼量** | 470 行 → 刪除 → 300 行 | 200 行（精簡） |
+| **測試結果** | 關閉所有通道 | 完美運作 ✅ |
+| **用戶體驗** | 每次都要重開 ❌ | 無感修改 ✅ |
+
+---
+
+### 💡 經驗教訓
+
+#### **教訓 1：RTFM (Read The F***ing Manual)**
+
+**問題**：
+- 沒有仔細閱讀 Table 7-18
+- 跳過了 Status Byte 的說明
+- 以為只要知道結構就夠了
+
+**正確做法**：
+- 每個 byte 的意義都要搞清楚
+- 特別注意 "No Change" 這類特殊值
+- 手冊的每個表格都有用
+
+#### **教訓 2：不要猜測設備行為**
+
+**問題**：
+- 以為「關閉通道」是設備的保護機制
+- 沒有深究真正原因
+- 用「正常行為」來合理化 bug
+
+**正確做法**：
+- 工業設備不應該這麼「智慧」
+- 如果行為不合理，一定是代碼有問題
+- 不要用「可能是設計如此」來逃避
+
+#### **教訓 3：從簡單開始**
+
+**問題**：
+- 一開始就想建構完整的 244-byte 封包
+- 太複雜，容易出錯
+- 調試困難
+
+**正確做法**：
+- 先用 Read-Modify-Write 確保基本功能
+- 再加入保護機制
+- 一步一步測試
+
+#### **教訓 4：相信測試結果**
+
+**問題**：
+- 測試發現「所有通道關閉」
+- 但說服自己「這是正常的」
+- 沒有繼續追查
+
+**正確做法**：
+- 測試結果不對就是不對
+- 不要美化 bug
+- 追查到底才是負責任的做法
+
+---
+
+### 🎯 核心差異總結
+
+**失敗的核心原因**：
+```python
+# 不知道 Status Byte 的存在和意義
+# 即使知道，也不知道可以用 2 (No Change)
+# 導致每次寫入都關閉通道
+```
+
+**成功的核心關鍵**：
+```python
+# 發現 Table 7-18
+# 理解 Status Byte = 2 (No Change) 的魔力
+# 主動保護所有通道
+struct.pack_into('<B', config_data, offset_status, 2)
+```
+
+**一行代碼的差異**：
+```python
+# 失敗：
+config_data[offset_status] = 0  # 或根本沒設定
+
+# 成功：
+config_data[offset_status] = 2  # ⭐ 就是這一行！
+```
+
+---
+
 **文檔版本**: 1.0  
-**最後更新**: 2025-11-25  
-**作者**: CAPAROC 開發團隊  
+**最後更新**: 2025-11-25
+**作者**: Harry  
 **狀態**: ✅ 已完成並測試通過

@@ -565,12 +565,10 @@ class CaparocController:
             print(f"   - 只會修改 {ch_label} 的標稱電流")
             print(f"   - 其他通道的開關狀態不會被影響！")
             
-            # 監測 Bit 7 (Config Processing)
-            print(f"\n   [監測] 等待設備處理配置...")
-            self._wait_for_config_processing(self.driver)
-            
             # 驗證設定
             if verify:
+                # 給設備短暫時間應用配置（實測發現幾乎是即時的）
+                time.sleep(0.3)
                 print(f"\n   [驗證] 讀取修改後的標稱電流...")
                 
                 actual = self._read_nominal_current_silent(self.driver, module, channel)

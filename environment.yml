@@ -6,16 +6,12 @@ dependencies:
   - python=3.11
   - pip
   - pip:
-    # Core dependencies
-    # Add your project dependencies here
-    
-    # Testing
-    - pytest>=7.4.0
-    - pytest-cov>=4.1.0
-    
-    # Code quality
-    - flake8>=6.0.0
-    - black>=23.0.0
-    
-    # Development
-    - ipython>=8.12.0
+      # 核心依賴（必須）
+      - pycomm3>=1.2.14
+      
+      # 開發與測試工具（可選，按需安裝）
+      # - pytest>=7.4.0
+      # - pytest-cov>=4.1.0
+      # - flake8>=6.0.0
+      # - black>=23.0.0
+      # - ipython>=8.12.0

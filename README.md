@@ -1,12 +1,154 @@
-# Caparoc Breaker 控制器# Caparoc_breaker_control
+# Caparoc Breaker Control
 
+CAPAROC 電子斷路器遠端控制程式，支援多通道電流監控與控制。
 
+---
 
-CAPAROC 電子斷路器的遠端控制程式，支援通道電流監控與啟閉控制。進行遠端控制Caparoc_breaker，可檢測每一channel的電壓電流值以及啟閉動作
+## 🚀 快速開始
 
+### 1. 安裝依賴
 
+```bash
+# 使用 pip 安裝（推薦）
+pip install -r requirements.txt
 
-## 🚀 快速開始## 快速開始 (Quick Start)
+# 或使用 Conda 環境
+conda env create -f environment.yml
+conda activate caparoc_breaker
+```
+
+### 2. 運行程式
+
+```bash
+python src/caparoc_controller.py
+```
+
+### 3. 基本命令
+
+```bash
+s                    # 顯示狀態
+on <ch>              # 開啟通道 (例: on 1)
+off <ch>             # 關閉通道
+monitor start        # 啟動即時監控
+q                    # 退出
+```
+
+**詳細使用說明**: 參閱 [CLI 使用指南](docs/CLI_USER_GUIDE.md)
+
+---
+
+## 📚 文檔
+
+- **[CLI 使用指南](docs/CLI_USER_GUIDE.md)** - 命令使用說明
+- **[程式流程文檔](docs/PROGRAM_FLOW.md)** - 完整程式流程
+- **[診斷工具指南](docs/DIAGNOSTIC_TOOLS_GUIDE.md)** - 問題診斷
+- **[開發筆記](docs/DEVELOPMENT_NOTES.md)** - 技術細節
+
+---
+
+## ✨ 主要功能
+
+### ✅ 已實作
+
+- **多通道控制** - 支援 1-16 個模組（最多 64 通道）
+- **即時監控** - 背景監控，狀態變化自動警報
+  - 靜默模式：不干擾命令輸入，僅警報
+  - 顯示模式：定期顯示完整狀態
+- **標稱電流設定** - Config Assembly Read-Modify-Write（1-20A）
+- **完整狀態顯示** - 系統電壓、總電流、各通道詳細狀態
+- **心跳保活機制** - 防止 CIP 連線超時
+- **動態模組檢測** - 自動識別模組數量
+
+### ⚠️ 重要說明
+
+- **標稱電流參數為唯讀** - 使用 Config Assembly Read-Modify-Write 方法設定
+- **支援運行時配置** - 不需重啟設備即可修改參數
+- **自動狀態同步** - 啟動時讀取設備實際狀態
+
+---
+
+## 🔧 連接問題排查
+
+如果遇到連接錯誤：
+
+```bash
+python tests/check_connection.py
+```
+
+詳細排查請參閱 [診斷工具指南](docs/DIAGNOSTIC_TOOLS_GUIDE.md)
+
+---
+
+## 📊 專案結構
+
+```
+Caparoc5/
+├── src/
+│   └── caparoc_controller.py    # 主控制程式
+├── tests/
+│   ├── diagnostic_tools.py      # 診斷工具集
+│   └── check_connection.py      # 連線檢查
+├── docs/                        # 完整文檔
+│   ├── CLI_USER_GUIDE.md        # 使用者指南
+│   ├── PROGRAM_FLOW.md          # 程式流程
+│   ├── DIAGNOSTIC_TOOLS_GUIDE.md # 診斷指南
+│   └── ...
+├── requirements.txt             # Python 依賴
+└── environment.yml              # Conda 環境配置
+```
+
+---
+
+## 💻 即時監控範例
+
+### 靜默模式（推薦）
+
+```bash
+> monitor start 2 silent
+
+✅ 即時監控已啟動
+   更新頻率: 2.0s
+   模式: 靜默模式 (僅警報)
+
+> on 2    # 可以正常輸入指令
+
+======================================================================
+🔔 監控警報 [14:32:17]
+======================================================================
+  ▸ CH2 狀態變更: 開啟
+  ▸ 電流變化: 0.0A → 3.5A
+======================================================================
+```
+
+---
+
+## 🔄 版本歷史
+
+- **v3.7** (2025-11-25) - 標稱電流設定優化（漸進式重試驗證）
+- **v3.6** (2025-10-28) - 即時監控功能
+- **v3.5** (2025-10-28) - 多模組架構支援（1-16 模組）
+- **v3.0** (2025-10-27) - 基於手冊規範重構
+
+詳見 [CHANGELOG.md](docs/CHANGELOG.md)
+
+---
+
+## 🛠️ 技術堆疊
+
+- **Python** 3.11
+- **pycomm3** - EtherNet/IP 通訊
+- **CIP 協議** - 工業設備通訊標準
+
+---
+
+## 📝 授權
+
+MIT License
+
+---
+
+**專案維護**: Harry Chiu  
+**文檔更新**: 2025年11月25日
 
 
 

@@ -654,17 +654,17 @@ class CaparocController:
             elapsed = time.time() - start_time
             
             try:
-                # 讀取 Input Assembly
+                # 讀取 Input Assembly（使用 connected=True 加速）
                 response = driver.generic_message(
                     service=0x0E,
                     class_code=0x04,
                     instance=self.input_instance,
                     attribute=3,
-                    connected=False
+                    connected=True  # ⚡ 使用現有連線，更快
                 )
                 
                 if not response or not hasattr(response, 'value') or len(response.value) == 0:
-                    time.sleep(0.2)
+                    time.sleep(0.05)
                     continue
                 
                 byte0 = response.value[0]
@@ -675,20 +675,23 @@ class CaparocController:
                     if not processing_detected:
                         print(f"   ⏳ 設備處理中 (Bit 7 = 1)...")
                         processing_detected = True
-                elif bit7 == 0 and processing_detected:
-                    # 從處理中變為完成
-                    print(f"   ✅ 處理完成 (耗時: {elapsed:.2f}s)")
-                    return True
-                elif bit7 == 0 and not processing_detected:
-                    # 從來沒偵測到 processing，可能已經處理完了
-                    if check_count >= 3:  # 連續3次都是0，認為已完成
-                        print(f"   ✅ 配置已應用")
+                    time.sleep(0.1)  # 處理中時等待 100ms
+                    
+                elif bit7 == 0:
+                    # Bit 7 = 0 (處理完成或從未開始)
+                    if processing_detected:
+                        # 從 1 變 0：處理完成
+                        print(f"   ✅ 處理完成 (耗時: {elapsed:.2f}s)")
+                        return True
+                    else:
+                        # 從來沒偵測到 processing
+                        # 可能：1) 設備處理極快，2) 根本不需要處理
+                        # 直接認為已完成，不浪費時間
+                        print(f"   ✅ 配置已應用 (即時)")
                         return True
                 
-                time.sleep(0.2)
-                
             except Exception as e:
-                time.sleep(0.2)
+                time.sleep(0.05)
                 continue
         
         # 超時

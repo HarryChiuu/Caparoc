@@ -58,7 +58,7 @@ class CaparocController:
 | 模組 | 功能 | 主要方法 |
 |------|------|----------|
 | **連線管理** | 設備連線、斷線重連 | `check_device_connection()`, `run()` |
-| **標稱電流** | 通道電流初始化 | `_set_nominal_current_parameter_object()` |
+| **額定電流** | 通道電流初始化 | `_set_nominal_current_parameter_object()` |
 | **通道控制** | 開關控制 | `set_channel()`, `_read_and_show_result()` |
 | **狀態監控** | 即時狀態讀取 | `show_status()`, `start_monitor()` |
 | **系統診斷** | 全域狀態檢查 | `check_global_system_status()` |
@@ -187,10 +187,10 @@ if 欠壓 or 過壓 or 系統錯誤 or 總電流關斷:
 
 ---
 
-#### **Step 5: 標稱電流初始化**
+#### **Step 5: 額定電流初始化**
 
 ```
-提示: "是否要設定通道標稱電流? [y/N]"
+提示: "是否要設定通道額定電流? [y/N]"
 方法: initialize_all_channels()
 ```
 
@@ -229,7 +229,7 @@ while True:
 
 ## 3. 核心功能流程
 
-### 3.1 標稱電流設定 (init 命令)
+### 3.1 額定電流設定 (init 命令)
 
 **使用方式**: `init <ch> <amps>`  
 **範例**: `init 2 4` (設定 CH2 為 4A)
@@ -253,7 +253,7 @@ Step 3: 解除目標通道 programming lock
 ├── Service: 0x10
 └── Data: 0x00 (Unlocked)
 
-Step 4: 設定標稱電流
+Step 4: 設定額定電流
 ├── 計算參數編號: 6 + (module-1)*12 + (channel-1)*3
 ├── Class: 0x0F, Instance: ParamN, Attribute: 0x01
 ├── Service: 0x10
@@ -339,7 +339,7 @@ Bit 7  Bit 6  Bit 5  Bit 4  Bit 3  Bit 2  Bit 1  Bit 0
 2. 各通道詳細狀態
    ├── CH1 [模組M.通道C]:
    │   ├── 狀態: 🟢 開啟 / 🔴 關閉
-   │   ├── 標稱電流: XXA
+   │   ├── 額定電流: XXA
    │   ├── 實際電流: XX.XA
    │   └── 警告: 短路/過載/開路/...
    │
@@ -403,7 +403,7 @@ monitor status # 顯示監控狀態
 
 2. 電流異常
    - 變化 > 30%
-   - 過載 (電流 > 標稱電流)
+   - 過載 (電流 > 額定電流)
 
 3. 系統警報
    - 欠壓 / 過壓
@@ -689,7 +689,7 @@ MAX_MONITOR_INTERVAL = 60.0
 1. **連線問題** → 使用 `tests/check_connection.py`
 2. **配置問題** → 使用 `tests/diagnostic_tools.py`
 3. **狀態異常** → 檢查 `show_status()` 輸出
-4. **控制失效** → 驗證標稱電流是否已設定
+4. **控制失效** → 驗證額定電流是否已設定
 
 **相關文檔**:
 - [診斷工具指南](DIAGNOSTIC_TOOLS_GUIDE.md)

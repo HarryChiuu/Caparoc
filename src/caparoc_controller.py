@@ -7,7 +7,7 @@ CAPAROC 控制器 (Production Version)
 ✅ 已實作:
   - 多通道獨立控制 (on/off)
   - 即時狀態讀取 (電壓、電流)
-  - 標稱電流設定功能 (Phase 3-3 完成):
+  - 額定電流設定功能 (Phase 3-3 完成):
     * 使用 Config Assembly Read-Modify-Write 安全更新
     * 支援 1-20A 範圍設定
     * 自動驗證設定結果
@@ -46,7 +46,7 @@ CAPAROC 控制器 (Production Version)
 
 策略:
 1. 程式啟動時先檢查全域系統狀態(Phase 3 新增)
-2. 使用 Config Assembly Read-Modify-Write 安全設定標稱電流
+2. 使用 Config Assembly Read-Modify-Write 安全設定額定電流
 3. 使用 Output Assembly 控制開關(符合手冊規範)
 4. 從 Input Assembly 讀取狀態
 5. 即時監控背景執行緒定期更新(Phase 3-2 新增)
@@ -412,7 +412,7 @@ class CaparocController:
     
     def set_nominal_current(self, module, channel, current_amps, verify=True):
         """
-        設定通道的標稱電流（使用 Config Assembly）
+        設定通道的額定電流（使用 Config Assembly）
         
         根據手冊 Table 7-11 & 7-18:
         - 每個通道在 Config Assembly 中有 3 bytes
@@ -427,7 +427,7 @@ class CaparocController:
         Args:
             module: 模組編號 (1-16)
             channel: 通道編號 (1-4)
-            current_amps: 標稱電流 (1-20A)
+            current_amps: 額定電流 (1-20A)
             verify: 是否驗證設定成功
         
         Returns:
@@ -447,7 +447,7 @@ class CaparocController:
             return False
         
         if current_amps < 1 or current_amps > 20:
-            print(f"❌ 標稱電流超出範圍 (1-20A): {current_amps}")
+            print(f"❌ 額定電流超出範圍 (1-20A): {current_amps}")
             return False
         
         try:
@@ -464,10 +464,10 @@ class CaparocController:
             else:
                 ch_label = f"CH{global_ch}"
             
-            print(f"\n[標稱電流設定] {ch_label}")
+            print(f"\n[額定電流設定] {ch_label}")
             
             # ==========================================
-            # 讀取當前標稱電流值
+            # 讀取當前額定電流值
             # ==========================================
             current_value = self._read_nominal_current_silent(self.driver, module, channel)
             if current_value is not None:
@@ -562,7 +562,7 @@ class CaparocController:
             # 說明
             # print(f"\n   💡 機制說明:")
             # print(f"   - 使用 Status Byte = 2 (No Change) 保護所有通道")
-            # print(f"   - 只會修改 {ch_label} 的標稱電流")
+            # print(f"   - 只會修改 {ch_label} 的額定電流")
             # print(f"   - 其他通道的開關狀態不會被影響！")
             
             # 驗證設定
@@ -602,7 +602,7 @@ class CaparocController:
     
     def _read_nominal_current_silent(self, driver, module, channel):
         """
-        靜默讀取通道的標稱電流設定（不顯示調試信息）
+        靜默讀取通道的額定電流設定（不顯示調試信息）
         
         Args:
             driver: CIPDriver 實例
@@ -610,7 +610,7 @@ class CaparocController:
             channel: 通道編號
         
         Returns:
-            int: 實際標稱電流值 (0-20A), 或 None (讀取失敗)
+            int: 實際額定電流值 (0-20A), 或 None (讀取失敗)
         """
         try:
             # 讀取 Input Assembly 0x65
@@ -706,7 +706,7 @@ class CaparocController:
     
     def _verify_nominal_current(self, driver, module, channel):
         """
-        驗證通道的標稱電流設定（顯示詳細調試信息）
+        驗證通道的額定電流設定（顯示詳細調試信息）
         
         Args:
             driver: CIPDriver 實例
@@ -714,7 +714,7 @@ class CaparocController:
             channel: 通道編號
         
         Returns:
-            int: 實際標稱電流值 (0-20A), 或 None (讀取失敗)
+            int: 實際額定電流值 (0-20A), 或 None (讀取失敗)
         """
         try:
             # 讀取 Input Assembly 0x65
@@ -1046,11 +1046,11 @@ class CaparocController:
         print("\n" + "="*60)
         print("📋 可用命令:")
         print("="*60)
-        print("\n【標稱電流設定】")
-        print("  init <ch> <amps>             - 設定通道標稱電流 (1-20A)")
+        print("\n【額定電流設定】")
+        print("  init <ch> <amps>             - 設定通道額定電流 (1-20A)")
         print("                                 範例: init 2 4  (設定 CH2 為 4A)")
         print("                                 使用 Read-Modify-Write 安全更新")
-        print("  verify <ch>                  - 驗證通道標稱電流設定")
+        print("  verify <ch>                  - 驗證通道額定電流設定")
         print("\n【通道控制】")
         print("  on <ch>                      - 開啟通道 (例: on 1)")
         print("  off <ch>                     - 關閉通道")
@@ -1069,7 +1069,7 @@ class CaparocController:
         print("  q                            - 退出程式")
         print("="*60)
         print("💡 快速開始:")
-        print("  1. 使用 'init <ch> <amps>' 設定標稱電流 (如: init 1 4)")
+        print("  1. 使用 'init <ch> <amps>' 設定額定電流 (如: init 1 4)")
         print("  2. 使用 'on <ch>' 開啟通道 (如: on 1)")
         print("  3. 使用 's' 查看狀態")
         print("  4. 使用 'monitor start 2 silent' 啟動監控")
@@ -1161,7 +1161,7 @@ class CaparocController:
                         hardware_fault = bool(status_byte & 0x10)
                         total_shutdown_ch = bool(status_byte & 0x20)
                         
-                        # Byte 1: Nominal current (標稱電流) 1-10A (直接值,不需除以10)
+                        # Byte 1: Nominal current (額定電流) 1-10A (直接值,不需除以10)
                         nominal_current = float(nominal_byte)
                         # Byte 2: Flowing current (流動電流) 0-255 = 0-25.5A (需除以10)
                         flowing_current = flowing_byte / 10.0
@@ -1507,7 +1507,7 @@ class CaparocController:
             #     - bit 3: Short-circuit tripping (短路跳脫)
             #     - bit 4: Hardware fault (硬體故障)
             #     - bit 5: Total current shutdown (總電流關斷)
-            #   Byte 1: Nominal current (標稱電流, 1A - 10A)
+            #   Byte 1: Nominal current (額定電流, 1A - 10A)
             #   Byte 2: Flowing current (流動電流, 0-255 = 0A - 25.5A)
             
             print("\n📊 通道狀態:")
@@ -1536,7 +1536,7 @@ class CaparocController:
                         hardware_fault = bool(status_byte & 0x10)  # bit 4: Hardware fault
                         total_shutdown_ch = bool(status_byte & 0x20) # bit 5: Total current shutdown
                         
-                        # Byte 1: Nominal current (標稱電流) 1-10A
+                        # Byte 1: Nominal current (額定電流) 1-10A
                         nominal_current = data[base_offset + 1]
                         
                         # Byte 2: Flowing current (實際電流) 0-255 = 0-25.5A
@@ -1717,7 +1717,7 @@ class CaparocController:
         print("3. 即時監控: 依據設定時間定時回傳系統狀態")
         print("4. 設備IP配置: 啟動時可變更設備 IP 位址")
         print("\n⚠️  待實作功能:")
-        print("   1. 標稱電流修改 (Phase 3-3)")
+        print("   1. 額定電流修改 (Phase 3-3)")
         print("   2. 通道資訊擴展 (Phase 3-4)")
         print("   3. GUI 規劃設計 (Phase 3-5)")
         
@@ -1956,7 +1956,7 @@ class CaparocController:
                             self.show_status()
                         
                         elif cmd.startswith('init '):
-                            # 標稱電流設定功能 (使用 Config Assembly Read-Modify-Write)
+                            # 額定電流設定功能 (使用 Config Assembly Read-Modify-Write)
                             try:
                                 parts = cmd.split()
                                 if len(parts) != 3:
@@ -1992,7 +1992,7 @@ class CaparocController:
                                 print(f"❌ 設定失敗: {e}")
                         
                         elif cmd.startswith('verify '):
-                            # 驗證通道標稱電流
+                            # 驗證通道額定電流
                             try:
                                 ch = int(cmd.split()[1])
                                 if 1 <= ch <= self.get_total_channels():
@@ -2000,11 +2000,11 @@ class CaparocController:
                                     actual = self._verify_nominal_current(driver, module, channel)
                                     if actual is not None:
                                         if self.module_count > 1:
-                                            print(f"✅ M{module}.CH{channel} (#{ch}) 標稱電流: {actual}A")
+                                            print(f"✅ M{module}.CH{channel} (#{ch}) 額定電流: {actual}A")
                                         else:
-                                            print(f"✅ CH{ch} 標稱電流: {actual}A")
+                                            print(f"✅ CH{ch} 額定電流: {actual}A")
                                     else:
-                                        print(f"❌ 無法讀取 CH{ch} 的標稱電流")
+                                        print(f"❌ 無法讀取 CH{ch} 的額定電流")
                                 else:
                                     print(f"⚠️  通道編號超出範圍 (1-{self.get_total_channels()})")
                             except (ValueError, IndexError):

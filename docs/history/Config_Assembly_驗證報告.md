@@ -45,7 +45,7 @@ config_buffer[1] = 0  # Param2 解鎖, Line 1010
 
 **手冊要求**:
 - 在緩衝區中找到目標參數位置
-- 填入新值 (例如: 標稱電流 1-20A)
+- 填入新值 (例如: 額定電流 1-20A)
 
 **實作狀態**: ✅ **已完成**
 
@@ -54,7 +54,7 @@ config_buffer[1] = 0  # Param2 解鎖, Line 1010
 target_param_number = 6 + (module - 1) * 12 + (channel - 1) * 3  # Line 1015-1021
 target_nominal_offset = target_param_number
 
-# 設定標稱電流值
+# 設定額定電流值
 config_buffer[target_nominal_offset] = current_amps  # Line 1046
 ```
 
@@ -179,7 +179,7 @@ Step 3: 解除全域鎖定
 Step 4: 解除目標通道鎖定
   │     - Target lock param: 2 → 0
   ↓
-Step 5: 設定目標標稱電流
+Step 5: 設定目標額定電流
   │     - Target nominal param: 0 → current_amps
   ↓
 Step 6: 寫入 Config Assembly (0x66)
@@ -190,7 +190,7 @@ Step 7: 監測 Bit 7 驗證完成
   │     - 等待 Bit 7: 1 → 0
   ↓
 Step 8: 驗證結果
-        - 讀取 Input Assembly 確認標稱電流值
+        - 讀取 Input Assembly 確認額定電流值
 ```
 
 ---
@@ -259,7 +259,7 @@ Step 8: 驗證結果
 1. **執行測試**: 使用 `init` 命令測試實際寫入
 2. **診斷分析**: 使用 `diagnose` 命令測試 Param3 值
 3. **錯誤追蹤**: 根據設備回應調整參數
-4. **結果驗證**: 確認標稱電流是否成功設定
+4. **結果驗證**: 確認額定電流是否成功設定
 
 ---
 

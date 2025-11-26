@@ -11,7 +11,7 @@
 ## 📚 目錄
 
 1. [主程式啟動流程](#1-主程式啟動流程)
-2. [標稱電流設定流程](#2-標稱電流設定流程)
+2. [額定電流設定流程](#2-額定電流設定流程)
 3. [通道控制流程](#3-通道控制流程)
 4. [即時監控流程](#4-即時監控流程)
 5. [重連機制流程](#5-重連機制流程)
@@ -61,7 +61,7 @@ flowchart TD
     Step4[Step 4: 讀取並同步設備狀態] --> ReadActual[從 Input Assembly 讀取實際狀態]
     ReadActual --> SyncOutput[同步到 Output Assembly buffer]
     
-    SyncOutput --> Step5[Step 5: 標稱電流初始化]
+    SyncOutput --> Step5[Step 5: 額定電流初始化]
     Step5 --> InitPrompt{是否初始化?}
     InitPrompt -->|是| InitProcess[執行初始化流程]
     InitProcess --> Step6
@@ -84,7 +84,7 @@ flowchart TD
     StopMonitor2 --> Return[返回 'reconnect']
     Return --> MainLoop
     
-    ProcessCmd -->|init| InitCurrent[標稱電流設定]
+    ProcessCmd -->|init| InitCurrent[額定電流設定]
     ProcessCmd -->|on/off| ChannelControl[通道控制]
     ProcessCmd -->|s| ShowStatus[狀態顯示]
     ProcessCmd -->|monitor| MonitorCmd[監控命令]
@@ -145,7 +145,7 @@ flowchart TD
 
 ---
 
-## 2. 標稱電流設定流程
+## 2. 額定電流設定流程
 
 ### 2.1 Parameter Object 5 步驟方法
 
@@ -171,7 +171,7 @@ flowchart TD
     CalcLock --> Write3[寫入 ParamN+1 = 0<br/>Class: 0x0F<br/>Instance: ParamN+1<br/>Service: 0x10]
     Write3 --> Wait3[等待 0.2s]
     
-    Wait3 --> Step4[Step 4: 設定標稱電流]
+    Wait3 --> Step4[Step 4: 設定額定電流]
     Step4 --> Write4[寫入 ParamN = current_amps<br/>Class: 0x0F<br/>Instance: ParamN<br/>Service: 0x10]
     Write4 --> CheckWrite{寫入成功?}
     
@@ -223,8 +223,8 @@ flowchart LR
     Formula --> Base[基礎參數 = 6]
     Base --> ModuleOff[模組偏移 = module-1 × 12]
     ModuleOff --> ChannelOff[通道偏移 = channel-1 × 3]
-    ChannelOff --> Nominal[標稱電流參數 = 6 + 模組偏移 + 通道偏移]
-    Nominal --> Lock[Lock 參數 = 標稱電流參數 + 1]
+    ChannelOff --> Nominal[額定電流參數 = 6 + 模組偏移 + 通道偏移]
+    Nominal --> Lock[Lock 參數 = 額定電流參數 + 1]
     
     Nominal --> Example1[範例: M1.CH1<br/>6 + 0×12 + 0×3 = 6]
     Nominal --> Example2[範例: M1.CH4<br/>6 + 0×12 + 3×3 = 15]
@@ -369,7 +369,7 @@ flowchart TD
     Record2 --> Check3
     
     Check3[檢查過載]
-    Check3 --> Overload{電流 > 標稱電流?}
+    Check3 --> Overload{電流 > 額定電流?}
     Overload -->|是| Record3[記錄: 過載警報]
     Overload -->|否| Check4
     Record3 --> Check4

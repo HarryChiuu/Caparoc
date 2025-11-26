@@ -304,7 +304,7 @@ main()
 - bit 0: 欠壓 (Undervoltage)
 - bit 1: 過壓 (Overvoltage)
 - bit 2: 系統錯誤 (System error)
-- bit 3: 80% 標稱電流警告
+- bit 3: 80% 額定電流警告
 - bit 4: 總電流關斷 (Total current shutdown)
 - bit 7: Config assembly 處理狀態
 
@@ -313,7 +313,7 @@ main()
 | Byte | 內容 | 格式 | 說明 |
 |------|------|------|------|
 | 0 | Status | bit mask | 通道狀態位元 (見下方) |
-| 1 | Nominal Current | uint8 | 標稱電流 (1-10A) |
+| 1 | Nominal Current | uint8 | 額定電流 (1-10A) |
 | 2 | Flowing Current | uint8 / 10.0 | 實際電流 (0-255 = 0-25.5A) |
 
 **通道狀態位元 Byte 0 (7.2.5)**:

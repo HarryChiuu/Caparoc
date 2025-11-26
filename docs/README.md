@@ -10,7 +10,7 @@
 
 ### 💻 開發文檔
 - **[PROGRAM_FLOW.md](PROGRAM_FLOW.md)** - 完整程式流程（v4.0，最新）
-- **[INIT_COMMAND_FLOW.md](INIT_COMMAND_FLOW.md)** - 標稱電流設定流程
+- **[INIT_COMMAND_FLOW.md](INIT_COMMAND_FLOW.md)** - 額定電流設定流程
 - **[NOMINAL_CURRENT_IMPLEMENTATION.md](NOMINAL_CURRENT_IMPLEMENTATION.md)** - 實作細節
 - **[DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md)** - 開發筆記
 

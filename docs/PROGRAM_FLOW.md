@@ -53,7 +53,7 @@ class CaparocController:
 
 | 模組 | 功能 | 狀態 |
 |------|------|------|
-| **標稱電流設定** | Config Assembly Read-Modify-Write | ✅ 完成 |
+| **額定電流設定** | Config Assembly Read-Modify-Write | ✅ 完成 |
 | **通道控制** | Output Assembly 開關控制 | ✅ 完成 |
 | **狀態監控** | Input Assembly 狀態讀取 | ✅ 完成 |
 | **即時監控** | 背景執行緒週期更新 | ✅ 完成 |
@@ -261,7 +261,7 @@ run()
            │    └─ show_status()
            │
            ├─► 【命令: init <ch> <amps>】
-           │    └─ 詳見 3.1 標稱電流設定
+           │    └─ 詳見 3.1 額定電流設定
            │
            ├─► 【命令: verify <ch>】
            │    └─ _verify_nominal_current(driver, module, channel)
@@ -286,7 +286,7 @@ run()
 
 ## 3. 核心功能詳解
 
-### 3.1 標稱電流設定 (init 命令)
+### 3.1 額定電流設定 (init 命令)
 
 **命令格式**: `init <ch> <amps>`  
 **範例**: `init 2 6` (設定 CH2 為 6A)
@@ -964,7 +964,7 @@ main() 循環
 try:
     # 執行命令
     if cmd.startswith('init '):
-        # 標稱電流設定
+        # 額定電流設定
         ...
     elif cmd.startswith('on '):
         # 開啟通道
@@ -1034,7 +1034,7 @@ HEARTBEAT_CHECK_INTERVAL = 10.0  # 秒
 2. **控制失效**
    - 確認通道已初始化
    - 使用 `s` 查看狀態
-   - 檢查標稱電流設定
+   - 檢查額定電流設定
    
 3. **狀態異常**
    - 使用 `s` 顯示完整狀態
@@ -1051,7 +1051,7 @@ HEARTBEAT_CHECK_INTERVAL = 10.0  # 秒
 ## 📚 相關文檔
 
 - [CLI 使用者指南](CLI_USER_GUIDE.md) - 命令使用說明
-- [標稱電流設定流程](INIT_COMMAND_FLOW.md) - init 命令詳解
+- [額定電流設定流程](INIT_COMMAND_FLOW.md) - init 命令詳解
 - [診斷工具指南](DIAGNOSTIC_TOOLS_GUIDE.md) - 問題診斷
 - [開發筆記](DEVELOPMENT_NOTES.md) - 技術細節
 
@@ -1060,7 +1060,7 @@ HEARTBEAT_CHECK_INTERVAL = 10.0  # 秒
 ## 📝 版本歷史
 
 - **v4.0** (2025-11-25): 完整流程重寫，整合所有功能
-- **v3.7** (2025-11-13): 標稱電流設定優化（漸進式重試）
+- **v3.7** (2025-11-13): 額定電流設定優化（漸進式重試）
 - **v3.6** (2025-11-12): 監控功能完成
 - **v3.5** (2025-10-28): 多模組支援
 - **v3.0** (2025-10-27): 基於手冊規範重構

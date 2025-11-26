@@ -26,9 +26,9 @@
   - 替代方案: 參考 `CLI_USER_GUIDE.md`（已整合互動測試內容）
   - 保留原因: 記錄早期測試流程
 
-- **標稱電流設定流程與故障排除.md**
+- **額定電流設定流程與故障排除.md**
   - 狀態: ⚠️ 過時
-  - 說明: 舊版標稱電流設定流程文檔
+  - 說明: 舊版額定電流設定流程文檔
   - 替代方案: 參考 `INIT_COMMAND_FLOW.md`
   - 保留原因: 記錄功能演進過程
 
@@ -82,8 +82,8 @@
 - `DEVELOPMENT_NOTES.md` - 開發筆記
 
 ### 功能文檔
-- `INIT_COMMAND_FLOW.md` - 標稱電流設定流程（最新）
-- `NOMINAL_CURRENT_IMPLEMENTATION.md` - 標稱電流實作細節
+- `INIT_COMMAND_FLOW.md` - 額定電流設定流程（最新）
+- `NOMINAL_CURRENT_IMPLEMENTATION.md` - 額定電流實作細節
 - `MAIN_PROGRAM_FLOW.md` - 主程式流程
 - `PROGRAM_FLOW.md` - 程式流程說明
 

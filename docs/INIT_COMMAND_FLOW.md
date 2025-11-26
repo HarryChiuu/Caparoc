@@ -2,7 +2,7 @@
 
 ## 📋 概述
 
-`init` 命令用於修改通道的標稱電流設定，並在修改前後即時顯示當前值。
+`init` 命令用於修改通道的額定電流設定，並在修改前後即時顯示當前值。
 
 ## 🔄 執行流程
 
@@ -21,7 +21,7 @@ init 4 10    # 設定 CH4 為 10A
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Step 1: 讀取當前標稱電流值                          │
+│  Step 1: 讀取當前額定電流值                          │
 │  ├─ 使用 _read_nominal_current_silent()             │
 │  └─ 靜默讀取，不顯示 Debug 訊息                      │
 └─────────────────────────────────────────────────────┘
@@ -45,7 +45,7 @@ init 4 10    # 設定 CH4 為 10A
 └─────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────┐
-│  Step 5: 讀取修改後的標稱電流值                      │
+│  Step 5: 讀取修改後的額定電流值                      │
 │  ├─ 使用 _read_nominal_current_silent()              │
 │  └─ 驗證設定是否成功                                 │
 └─────────────────────────────────────────────────────┘
@@ -63,7 +63,7 @@ init 4 10    # 設定 CH4 為 10A
 ```
 > init 4 10
 
-[標稱電流設定] CH4
+[額定電流設定] CH4
 ⚠️  變更警告: CH4 目前為 5A，修改設定為 10A
    Config Offset: Byte 15 (Current), 17 (Status)
    [步驟1] 讀取 Config Assembly...
@@ -78,10 +78,10 @@ init 4 10    # 設定 CH4 為 10A
 
    💡 機制說明:
    - 使用 Status Byte = 2 (No Change) 保護所有通道
-   - 只會修改 CH4 的標稱電流
+   - 只會修改 CH4 的額定電流
    - 其他通道的開關狀態不會被影響！
 
-   [驗證] 讀取修改後的標稱電流...
+   [驗證] 讀取修改後的額定電流...
 ✅ 變更已執行: CH4 目前為 10A
 ```
 
@@ -90,7 +90,7 @@ init 4 10    # 設定 CH4 為 10A
 ```
 > init 1 8
 
-[標稱電流設定] CH1
+[額定電流設定] CH1
    目標電流: 8A
    Config Offset: Byte 6 (Current), 8 (Status)
    [步驟1] 讀取 Config Assembly...
@@ -103,7 +103,7 @@ init 4 10    # 設定 CH4 為 10A
 ```
 > init 2 15
 
-[標稱電流設定] CH2
+[額定電流設定] CH2
 ⚠️  變更警告: CH2 目前為 10A，修改設定為 15A
    ...
    ✅ Config Assembly 已更新
@@ -118,7 +118,7 @@ init 4 10    # 設定 CH4 為 10A
 
 ### `_read_nominal_current_silent()`
 
-**用途**: 靜默讀取標稱電流值，不顯示調試訊息
+**用途**: 靜默讀取額定電流值，不顯示調試訊息
 
 **調用時機**:
 1. 修改前：讀取舊值並顯示警告
@@ -138,7 +138,7 @@ init 4 10    # 設定 CH4 為 10A
 
 ### `_verify_nominal_current()`
 
-**用途**: 驗證標稱電流值，顯示詳細調試訊息
+**用途**: 驗證額定電流值，顯示詳細調試訊息
 
 ```python
 def _read_nominal_current_silent(self, driver, module, channel):
@@ -166,7 +166,7 @@ def _read_nominal_current_silent(self, driver, module, channel):
 
 ### `_verify_nominal_current()`
 
-**用途**: 驗證標稱電流值，顯示詳細調試訊息
+**用途**: 驗證額定電流值，顯示詳細調試訊息
 
 **調用時機**:
 - 使用者手動執行 `verify <ch>` 命令
@@ -187,7 +187,7 @@ def _read_nominal_current_silent(self, driver, module, channel):
 ```
 > init 4 10
 
-[標稱電流設定] CH4
+[額定電流設定] CH4
    目標電流: 10A
    ...
    ✅ 驗證成功: 10A
@@ -202,7 +202,7 @@ def _read_nominal_current_silent(self, driver, module, channel):
 ```
 > init 4 10
 
-[標稱電流設定] CH4
+[額定電流設定] CH4
 ⚠️  變更警告: CH4 目前為 5A，修改設定為 10A
    ...
 ✅ 變更已執行: CH4 目前為 10A
@@ -222,7 +222,7 @@ def _read_nominal_current_silent(self, driver, module, channel):
 | Offset | 內容 | 說明 |
 |--------|------|------|
 | +0 | Status Byte | 通道狀態 (0x00=Off, 0x01=On) |
-| +1 | **Nominal Current** | ⭐ 標稱電流值 (0-20A) |
+| +1 | **Nominal Current** | ⭐ 額定電流值 (0-20A) |
 | +2 | Current (Low) | 實際電流低字節 |
 | +3 | Current (High) | 實際電流高字節 |
 
@@ -238,7 +238,7 @@ CH4: Offset 18 (Header 6 bytes + CH1+CH2+CH3 12 bytes)
 
 | 時機 | Assembly | Service | Connected | 目的 |
 |------|----------|---------|-----------|------|
-| **修改前/後** | Input (0x65) | 0x0E (Read) | False | 讀取當前標稱電流 |
+| **修改前/後** | Input (0x65) | 0x0E (Read) | False | 讀取當前額定電流 |
 | **修改中** | Config (0x66) | 0x0E (Read) | True | 讀取完整配置 |
 | **寫入** | Config (0x66) | 0x10 (Write) | True | 寫回修改後配置 |
 
@@ -287,4 +287,4 @@ main()
 
 **文檔版本**: 1.0  
 **最後更新**: 2025-11-25  
-**相關功能**: 標稱電流修改 (Phase 3-3)
+**相關功能**: 額定電流修改 (Phase 3-3)

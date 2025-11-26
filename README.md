@@ -52,18 +52,18 @@ q                    # 退出程式
 ## 📚 文檔導覽
 
 ### 用戶文檔
-- **[CLI 使用指南](docs/CLI_USER_GUIDE.md)** - 完整命令說明與使用範例
-- **[程式流程說明](docs/PROGRAM_FLOW.md)** - 程式運作流程
+- **[CLI 使用指南](docs/CLI_USER_GUIDE.md)** - 完整命令說明與使用範例，包含所有可用命令的詳細說明和實際操作場景
+- **[程式流程說明](docs/PROGRAM_FLOW.md)** - 程式運作流程圖解，從啟動到命令執行的完整流程架構
 
 ### 開發文檔
-- **[TODO.md](docs/TODO.md)** - 功能規劃與待實作項目
-- **[CHANGELOG.md](docs/CHANGELOG.md)** - 版本更新歷史
-- **[開發技術備忘錄](docs/DEVELOPMENT_NOTES.md)** - 技術決策與經驗教訓
-- **[診斷工具指南](docs/DIAGNOSTIC_TOOLS_GUIDE.md)** - 問題診斷與排查
+- **[TODO.md](docs/TODO.md)** - 功能規劃與待實作項目，追蹤已完成功能和未來開發計畫
+- **[CHANGELOG.md](docs/CHANGELOG.md)** - 版本更新歷史，記錄每個版本的功能變更和修正
+- **[開發技術備忘錄](docs/DEVELOPMENT_NOTES.md)** - 技術決策與經驗教訓，記錄開發過程中的重要發現和解決方案
+- **[診斷工具指南](docs/DIAGNOSTIC_TOOLS_GUIDE.md)** - 問題診斷與排查，提供診斷工具使用方法和故障排除步驟
 
 ### 技術文檔
-- **[額定電流實作指南](docs/NOMINAL_CURRENT_IMPLEMENTATION.md)** - Config Assembly 操作細節
-- **[初始化命令流程](docs/INIT_COMMAND_FLOW.md)** - init 命令實作流程
+- **[額定電流實作指南](docs/NOMINAL_CURRENT_IMPLEMENTATION.md)** - Config Assembly 操作細節，深入解析額定電流設定的完整實作過程
+- **[初始化命令流程](docs/INIT_COMMAND_FLOW.md)** - init 命令實作流程，說明額定電流設定的執行步驟和驗證機制
 
 ---
 
@@ -194,8 +194,8 @@ Caparoc5/
 │   ├── DIAGNOSTIC_TOOLS_GUIDE.md # 診斷指南
 │   ├── NOMINAL_CURRENT_IMPLEMENTATION.md  # 額定電流設定實作
 │   ├── INIT_COMMAND_FLOW.md      # init 命令流程
-│   ├── history/                  # 歷史文檔
-│   └── vendor/                   # 原廠文檔
+│   ├── history/                  # 歷史文件
+│   └── vendor/                   # 原廠文件
 ├── archive/                      # 舊版本程式碼
 ├── output/                       # 輸出文件
 ├── .gitmessage                   # Git commit 模板
@@ -223,30 +223,31 @@ Caparoc5/
 - **通訊協議**: EtherNet/IP (CIP)
 - **Python 版本**: 3.11+
 - **主要依賴**: pycomm3 >= 1.2.14
-- **支援設備**: CAPAROC PM (EtherNet/IP)
+- **支援設備**: CAPAROC PM EIP(EtherNet/IP)
 - **支援模組**: 1-16 個 (每模組 4 通道)
 - **總通道數**: 最多 64 個
-- **電流範圍**: 0-25.5A (讀取), 1-20A (設定)
+- **電流範圍**: 0-25.5A (讀取), 1-10A (設定)
 - **電壓範圍**: 9.0-30.5V
 
 ---
 
 ## 📝 授權
 
-MIT License
 
 ---
 
 ## 🆘 取得協助
 
 ### 文檔
-- 使用問題 → [CLI_USER_GUIDE.md](docs/CLI_USER_GUIDE.md)
-- 連接問題 → [DIAGNOSTIC_TOOLS_GUIDE.md](docs/DIAGNOSTIC_TOOLS_GUIDE.md)
-- 開發問題 → [DEVELOPMENT_NOTES.md](docs/DEVELOPMENT_NOTES.md)
+- **使用問題** → [CLI_USER_GUIDE.md](docs/CLI_USER_GUIDE.md) - 命令使用方法和操作範例
+- **連接問題** → [DIAGNOSTIC_TOOLS_GUIDE.md](docs/DIAGNOSTIC_TOOLS_GUIDE.md) - 連線診斷和問題排查
+- **開發問題** → [DEVELOPMENT_NOTES.md](docs/DEVELOPMENT_NOTES.md) - 技術細節和實作說明
+- **功能說明** → [PROGRAM_FLOW.md](docs/PROGRAM_FLOW.md) - 程式架構和執行流程
+- **額定電流** → [NOMINAL_CURRENT_IMPLEMENTATION.md](docs/NOMINAL_CURRENT_IMPLEMENTATION.md) - 額定電流設定完整指南
 
 ### GitHub
-- 提交 Issue: https://github.com/cFuuu/Caparoc
-- 查看規劃: [TODO.md](docs/TODO.md)
+- 提交 Issue: https://github.com/HarryChiuu/Caparoc
+- 查看規劃: [TODO.md](docs/TODO.md) - 功能開發路線圖
 
 ---
 

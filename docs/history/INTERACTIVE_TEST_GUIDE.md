@@ -347,7 +347,7 @@ python check_connection.py
 
 ---
 
-## 📚 相關文檔
+## 📚 相關文件
 
 - **[README.md](README.md)** - 專案概述
 - **[docs/TROUBLESHOOTING_CONNECTION.md](docs/TROUBLESHOOTING_CONNECTION.md)** - 連接診斷

@@ -167,7 +167,7 @@ def check_device_connection(self, driver):
 1. 考慮添加重試機制（可選）
 2. 考慮添加 IP 掃描功能，自動搜尋設備
 3. 考慮添加連線逾時設定選項
-4. 更新相關文檔，說明新的連線檢查機制
+4. 更新相關文件，說明新的連線檢查機制
 
 ## ✅ Git 提交建議
 
@@ -192,7 +192,7 @@ feat: 添加裝置連線檢查機制
 
 新增檔案：
 - test_connection_check.py: 連線檢查測試腳本
-- CONNECTION_CHECK_UPDATE.md: 更新說明文檔
+- CONNECTION_CHECK_UPDATE.md: 更新說明文件
 
 影響範圍：
 - src/caparoc_controller.py: +151 行 (新增方法和啟動檢查邏輯)

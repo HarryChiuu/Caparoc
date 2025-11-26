@@ -467,4 +467,4 @@ def _establish_implicit_messaging(self, driver):
 **後續建議**: 
 1. 聯繫 CAPAROC 廠商確認設備行為
 2. 研究是否有更輕量的替代方案
-3. 在文檔中明確記錄這個特殊行為
+3. 在文件中明確記錄這個特殊行為

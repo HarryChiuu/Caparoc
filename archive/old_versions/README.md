@@ -15,7 +15,7 @@
 - **說明**: 舊版主控制器
 - **狀態**: 已廢棄
 - **取代者**: `src/caparoc_controller.py` (v3.7+)
-- **主要問題**: 缺少標稱電流設定、多通道控制邏輯不完整
+- **主要問題**: 缺少額定電流設定、多通道控制邏輯不完整
 
 ### 2. `caparoc_unified_edit.py`
 - **原路徑**: `archive/caparoc_unified_edit.py`
@@ -60,7 +60,7 @@
 
 ### ✅ `src/caparoc_controller.py` (v3.7+)
 **主要功能**:
-- ✅ 標稱電流設定 (init 命令)
+- ✅ 額定電流設定 (init 命令)
 - ✅ 四通道獨立控制
 - ✅ 即時監控模式
 - ✅ 心跳機制維持連接
@@ -69,7 +69,7 @@
 
 **測試狀態**:
 - ✅ 4 通道完全獨立控制
-- ✅ 標稱電流設定穩定
+- ✅ 額定電流設定穩定
 - ✅ 監控功能正常
 
 ---
@@ -77,8 +77,8 @@
 ## 🔗 相關文件
 - `../ARCHIVE_LOG.md` - 完整的歸檔記錄與開發歷程
 - `../test_byte_values.py` - byte 值測試工具 (已歸檔)
-- `../../docs/history/` - 過時文檔歸檔
-- `../../docs/PROGRAM_FLOW.md` - 程式流程文檔 (v4.0)
+- `../../docs/history/` - 過時文件歸檔
+- `../../docs/PROGRAM_FLOW.md` - 程式流程文件 (v4.0)
 - `../../docs/INIT_COMMAND_FLOW.md` - init 命令流程
 
 ---
@@ -99,7 +99,7 @@
             ↓
 2025-10-27: caparoc_simple_v3.py (多通道控制成功)
             ↓
-2025-11-xx: caparoc_controller.py (整合版 + 標稱電流)
+2025-11-xx: caparoc_controller.py (整合版 + 額定電流)
             ↓
 2025-11-26: 當前版本 v3.7+ (穩定版)
 ```

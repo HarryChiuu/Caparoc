@@ -86,7 +86,7 @@ archive/
 
 ### ✅ `src/caparoc_controller.py` (v3.7+)
 **主要功能**:
-- ✅ 標稱電流設定 (init 命令) - Config Assembly Read-Modify-Write
+- ✅ 額定電流設定 (init 命令) - Config Assembly Read-Modify-Write
 - ✅ 四通道獨立控制 (on/off 命令)
 - ✅ 即時監控模式 (monitor 命令)
 - ✅ 心跳機制維持連接
@@ -94,14 +94,14 @@ archive/
 - ✅ 漸進式重試驗證 (0.5s-3s)
 
 **核心改進**:
-1. 標稱電流設定流程完整實現
+1. 額定電流設定流程完整實現
 2. Output Assembly 正確使用 (18 bytes)
 3. 位元運算保留其他通道狀態
 4. 退出程式優化 (顯示訊息 + 減少延遲)
 
 **測試狀態**:
 - ✅ 4 通道完全獨立控制
-- ✅ 標稱電流設定穩定可靠
+- ✅ 額定電流設定穩定可靠
 - ✅ 監控功能正常運作
 - ✅ 所有命令均已測試驗證
 
@@ -130,16 +130,16 @@ archive/
 - 實現位元運算保護邏輯
 - 四通道獨立控制成功
 
-### 階段 5: 標稱電流整合 (2025-11-xx) ✅
-- 實現完整的標稱電流設定流程
+### 階段 5: 額定電流整合 (2025-11-xx) ✅
+- 實現完整的額定電流設定流程
 - Config Assembly Read-Modify-Write 機制
 - 漸進式重試驗證
 - 整合到主程式 (`caparoc_controller.py`)
 
-### 階段 6: 優化與文檔整理 (2025-11-26) ✅
+### 階段 6: 優化與文件整理 (2025-11-26) ✅
 - 退出程式優化
-- 文檔架構重組 (history/, vendor/)
-- 流程文檔更新至 v4.0
+- 文件架構重組 (history/, vendor/)
+- 流程文件更新至 v4.0
 - 根目錄清理與依賴優化
 
 ---
@@ -161,23 +161,23 @@ archive/
 ---
 
 ## 參考文件
-- `../docs/PROGRAM_FLOW.md` - 程式流程文檔 v4.0
-- `../docs/INIT_COMMAND_FLOW.md` - 標稱電流設定流程
+- `../docs/PROGRAM_FLOW.md` - 程式流程文件 v4.0
+- `../docs/INIT_COMMAND_FLOW.md` - 額定電流設定流程
 - `../docs/CLI_USER_GUIDE.md` - CLI 使用指南
-- `../docs/history/` - 過時文檔歸檔
+- `../docs/history/` - 過時文件歸檔
 - `../docs/vendor/` - 原廠手冊與 EDS 檔案
 - CAPAROC 設備手冊 7.1.2 節 - Output Assembly 控制規範
 
 ---
 
 ## 已完成功能 ✅
-- ✅ 標稱電流設定 (init 命令)
+- ✅ 額定電流設定 (init 命令)
 - ✅ 四通道獨立控制 (on/off 命令)
 - ✅ 即時監控功能 (monitor 命令)
 - ✅ 心跳機制維持連接
 - ✅ 完整的 CLI 介面
 - ✅ 退出程式優化
-- ✅ 文檔架構整理
+- ✅ 文件架構整理
 
 ---
 

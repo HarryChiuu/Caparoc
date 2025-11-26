@@ -1,6 +1,6 @@
 # CAPAROC 控制程式運作流程
 
-> **文檔版本**: v1.0  
+> **文件版本**: v1.0  
 > **最後更新**: 2025-11-13  
 > **對應程式版本**: caparoc_controller.py v3.7
 
@@ -30,7 +30,7 @@ Caparoc5/
 │   ├── diagnostic_tools.py        # 診斷工具集
 │   └── check_connection.py        # 連線檢查工具
 └── docs/
-    ├── MAIN_PROGRAM_FLOW.md       # 本文檔
+    ├── MAIN_PROGRAM_FLOW.md       # 本文件
     └── DIAGNOSTIC_TOOLS_GUIDE.md  # 診斷工具指南
 ```
 
@@ -691,7 +691,7 @@ MAX_MONITOR_INTERVAL = 60.0
 3. **狀態異常** → 檢查 `show_status()` 輸出
 4. **控制失效** → 驗證額定電流是否已設定
 
-**相關文檔**:
+**相關文件**:
 - [診斷工具指南](DIAGNOSTIC_TOOLS_GUIDE.md)
 - [CLI 使用指南](CLI_USER_GUIDE.md)
 - [故障排除](TROUBLESHOOTING_CONNECTION.md)
@@ -700,11 +700,11 @@ MAX_MONITOR_INTERVAL = 60.0
 
 ## 📝 附註
 
-- 本文檔基於 CAPAROC PM EIP 手冊 Chapter 7 編寫
+- 本文件基於 CAPAROC PM EIP 手冊 Chapter 7 編寫
 - Output Assembly 實際大小為 18 bytes（非 EDS 標示的 20 bytes）
 - Config Assembly 在運行時為唯讀，配置修改請使用 Parameter Object
 - 流程圖請參考 [PROGRAM_FLOWCHART.md](PROGRAM_FLOWCHART.md)
 
 ---
 
-**文檔結束**
+**文件結束**

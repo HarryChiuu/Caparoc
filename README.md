@@ -49,19 +49,19 @@ q                    # 退出程式
 
 ---
 
-## 📚 文檔導覽
+## 📚 文件導覽
 
-### 用戶文檔
+### 用戶文件
 - **[CLI 使用指南](docs/CLI_USER_GUIDE.md)** - 完整命令說明與使用範例，包含所有可用命令的詳細說明和實際操作場景
 - **[程式流程說明](docs/PROGRAM_FLOW.md)** - 程式運作流程圖解，從啟動到命令執行的完整流程架構
 
-### 開發文檔
+### 開發文件
 - **[TODO.md](docs/TODO.md)** - 功能規劃與待實作項目，追蹤已完成功能和未來開發計畫
 - **[CHANGELOG.md](docs/CHANGELOG.md)** - 版本更新歷史，記錄每個版本的功能變更和修正
 - **[開發技術備忘錄](docs/DEVELOPMENT_NOTES.md)** - 技術決策與經驗教訓，記錄開發過程中的重要發現和解決方案
 - **[診斷工具指南](docs/DIAGNOSTIC_TOOLS_GUIDE.md)** - 問題診斷與排查，提供診斷工具使用方法和故障排除步驟
 
-### 技術文檔
+### 技術文件
 - **[額定電流實作指南](docs/NOMINAL_CURRENT_IMPLEMENTATION.md)** - Config Assembly 操作細節，深入解析額定電流設定的完整實作過程
 - **[初始化命令流程](docs/INIT_COMMAND_FLOW.md)** - init 命令實作流程，說明額定電流設定的執行步驟和驗證機制
 
@@ -185,7 +185,7 @@ Caparoc5/
 ├── tests/
 │   ├── diagnostic_tools.py       # 診斷工具集
 │   └── check_connection.py       # 連線檢查工具
-├── docs/                         # 完整文檔
+├── docs/                         # 完整文件
 │   ├── CLI_USER_GUIDE.md         # 使用者指南 ⭐
 │   ├── TODO.md                   # 功能規劃
 │   ├── CHANGELOG.md              # 版本歷史
@@ -207,7 +207,7 @@ Caparoc5/
 
 ## 🔄 版本歷史
 
-- **v3.7** (2025-11-26) - 額定電流設定優化、文檔重組
+- **v3.7** (2025-11-26) - 額定電流設定優化、文件重組
 - **v3.6** (2025-10-28) - 即時監控功能 (靜默/顯示模式)
 - **v3.5** (2025-10-28) - 多模組架構支援 (1-16 模組)
 - **v3.4** (2025-10-28) - 全域系統狀態檢查
@@ -238,7 +238,7 @@ Caparoc5/
 
 ## 🆘 取得協助
 
-### 文檔
+### 文件
 - **使用問題** → [CLI_USER_GUIDE.md](docs/CLI_USER_GUIDE.md) - 命令使用方法和操作範例
 - **連接問題** → [DIAGNOSTIC_TOOLS_GUIDE.md](docs/DIAGNOSTIC_TOOLS_GUIDE.md) - 連線診斷和問題排查
 - **開發問題** → [DEVELOPMENT_NOTES.md](docs/DEVELOPMENT_NOTES.md) - 技術細節和實作說明

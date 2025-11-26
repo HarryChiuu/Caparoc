@@ -654,7 +654,7 @@ python src/caparoc_controller.py --verbose
 
 ---
 
-## 📚 相關文檔
+## 📚 相關文件
 
 - **TODO.md** - 功能規劃與待實作項目
 - **CHANGELOG.md** - 版本更新歷史
@@ -669,12 +669,12 @@ python src/caparoc_controller.py --verbose
 如有問題或建議，請到 GitHub 提交 Issue：
 - https://github.com/cFuuu/Caparoc
 
-### 文檔更新
-本文檔會隨程式版本更新，請定期查看。
+### 文件更新
+本文件會隨程式版本更新，請定期查看。
 
 ---
 
-**文檔版本**: 2.0  
+**文件版本**: 2.0  
 **更新日期**: 2025-11-26  
 **適用程式**: caparoc_controller.py v3.7+  
 **作者**: Harry Chiu

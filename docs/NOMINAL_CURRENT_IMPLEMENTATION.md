@@ -776,7 +776,7 @@ instance = 0x66  # 不是 0x01
 - **Table 7-18**: Config assembly, channel status
 - **Table 7-14**: Config assembly, global switch-on delay
 
-### 相關文檔
+### 相關文件
 - `docs/Config_Assembly_驗證報告.md`
 - `docs/額定電流設定流程與故障排除.md`
 - `docs/DEVELOPMENT_NOTES.md`
@@ -817,7 +817,7 @@ instance = 0x66  # 不是 0x01
 - ✅ 通道保護機制完善
 - ✅ 通過所有測試
 - ✅ 代碼已合併到功能分支
-- ✅ 文檔完整記錄
+- ✅ 文件完整記錄
 
 ### 🔮 未來改進
 
@@ -1205,7 +1205,7 @@ config_data[offset_status] = 2  # ⭐ 就是這一行！
 
 ---
 
-**文檔版本**: 1.0  
+**文件版本**: 1.0  
 **最後更新**: 2025-11-25
 **作者**: Harry  
 **狀態**: ✅ 已完成並測試通過

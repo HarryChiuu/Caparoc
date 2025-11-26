@@ -1,6 +1,6 @@
 # CAPAROC 診斷工具使用指南
 
-> **文檔版本**: v1.0  
+> **文件版本**: v1.0  
 > **最後更新**: 2025-11-13  
 > **對應工具**: diagnostic_tools.py v1.0
 
@@ -850,7 +850,7 @@ with open('diagnostic_result.txt', 'w', encoding='utf-8') as f:
 
 ---
 
-## 📝 相關文檔
+## 📝 相關文件
 
 - [主程式流程詳解](MAIN_PROGRAM_FLOW.md) - 了解主程式運作
 - [程式流程圖](PROGRAM_FLOWCHART.md) - 視覺化流程圖
@@ -868,4 +868,4 @@ with open('diagnostic_result.txt', 'w', encoding='utf-8') as f:
 
 ---
 
-**文檔結束**
+**文件結束**

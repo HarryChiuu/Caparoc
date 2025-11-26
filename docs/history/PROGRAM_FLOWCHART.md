@@ -1,10 +1,10 @@
 # CAPAROC 控制程式流程圖
 
-> **文檔版本**: v1.0  
+> **文件版本**: v1.0  
 > **最後更新**: 2025-11-13  
 > **對應程式**: caparoc_controller.py v3.7
 
-本文檔使用 Mermaid 語法繪製流程圖，可在支援 Mermaid 的 Markdown 檢視器中查看。
+本文件使用 Mermaid 語法繪製流程圖，可在支援 Mermaid 的 Markdown 檢視器中查看。
 
 ---
 
@@ -578,7 +578,7 @@ flowchart LR
 3. **在線工具**: 複製到 [Mermaid Live Editor](https://mermaid.live/)
 4. **其他編輯器**: 尋找支援 Mermaid 的 Markdown 預覽外掛
 
-### 相關文檔
+### 相關文件
 
 - [主程式流程詳解](MAIN_PROGRAM_FLOW.md) - 文字版完整說明
 - [診斷工具指南](DIAGNOSTIC_TOOLS_GUIDE.md) - 診斷工具使用
@@ -586,4 +586,4 @@ flowchart LR
 
 ---
 
-**文檔結束**
+**文件結束**

@@ -1,6 +1,6 @@
 # CAPAROC Controller 完整程式流程
 
-> **文檔版本**: v4.0  
+> **文件版本**: v4.0  
 > **最後更新**: 2025年11月25日  
 > **對應程式版本**: caparoc_controller.py v3.7 beta
 
@@ -1048,7 +1048,7 @@ HEARTBEAT_CHECK_INTERVAL = 10.0  # 秒
 
 ---
 
-## 📚 相關文檔
+## 📚 相關文件
 
 - [CLI 使用者指南](CLI_USER_GUIDE.md) - 命令使用說明
 - [額定電流設定流程](INIT_COMMAND_FLOW.md) - init 命令詳解
@@ -1067,4 +1067,4 @@ HEARTBEAT_CHECK_INTERVAL = 10.0  # 秒
 
 ---
 
-**文檔結束**
+**文件結束**

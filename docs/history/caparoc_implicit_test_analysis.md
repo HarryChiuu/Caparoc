@@ -424,7 +424,7 @@ logger.error(f"Connection failed: {error}")
 
 - **CIP 規範**: ODVA Common Industrial Protocol
 - **EtherNet/IP**: Industrial Ethernet Protocol
-- **pycomm3 文檔**: https://docs.pycomm3.dev/
+- **pycomm3 文件**: https://docs.pycomm3.dev/
 - **CAPAROC 手冊**: Section 6.1.1 - LED 按鈕程式設定
 
 ---

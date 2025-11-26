@@ -1,81 +1,178 @@
-# Caparoc Breaker Control
+# CAPAROC 電子斷路器控制系統
 
-CAPAROC 電子斷路器遠端控制程式，支援多通道電流監控與控制。
+> **版本**: v3.7  
+> **更新日期**: 2025-11-26  
+> **維護者**: Harry Chiu
+
+CAPAROC 電子斷路器遠端控制程式，基於 EtherNet/IP 協議，支援多模組、多通道電流監控與控制。
 
 ---
 
 ## 🚀 快速開始
 
-### 1. 安裝依賴
+### 1. 環境準備
 
 ```bash
-# 使用 pip 安裝（推薦）
+# 啟動 Conda 環境
+conda activate your_env_name
+
+# 安裝依賴
 pip install -r requirements.txt
-
-# 或使用 Conda 環境
-conda env create -f environment.yml
-conda activate caparoc_breaker
 ```
 
-### 2. 運行程式
+### 2. 啟動程式
 
 ```bash
+# 進入專案目錄
+cd c:\Users\harry\Project\Caparoc5
+
+# 啟動控制器
 python src/caparoc_controller.py
+
+# 或指定 IP 位址
+python src/caparoc_controller.py --ip 192.168.1.100
 ```
 
-### 3. 基本命令
+### 3. 基本操作
 
 ```bash
-s                    # 顯示狀態
-on <ch>              # 開啟通道 (例: on 1)
-off <ch>             # 關閉通道
+init 1 4             # 設定 CH1 額定電流為 4A
+on 1                 # 開啟通道 1
+off 1                # 關閉通道 1
+s                    # 顯示完整狀態
 monitor start        # 啟動即時監控
-q                    # 退出
+h                    # 顯示幫助
+q                    # 退出程式
 ```
 
-**詳細使用說明**: 參閱 [CLI 使用指南](docs/CLI_USER_GUIDE.md)
+**📖 完整使用說明**: [CLI 使用指南](docs/CLI_USER_GUIDE.md)
 
 ---
 
-## 📚 文檔
+## 📚 文檔導覽
 
-- **[CLI 使用指南](docs/CLI_USER_GUIDE.md)** - 命令使用說明
-- **[程式流程文檔](docs/PROGRAM_FLOW.md)** - 完整程式流程
-- **[診斷工具指南](docs/DIAGNOSTIC_TOOLS_GUIDE.md)** - 問題診斷
-- **[開發筆記](docs/DEVELOPMENT_NOTES.md)** - 技術細節
+### 用戶文檔
+- **[CLI 使用指南](docs/CLI_USER_GUIDE.md)** - 完整命令說明與使用範例
+- **[程式流程說明](docs/PROGRAM_FLOW.md)** - 程式運作流程
+
+### 開發文檔
+- **[TODO.md](docs/TODO.md)** - 功能規劃與待實作項目
+- **[CHANGELOG.md](docs/CHANGELOG.md)** - 版本更新歷史
+- **[開發技術備忘錄](docs/DEVELOPMENT_NOTES.md)** - 技術決策與經驗教訓
+- **[診斷工具指南](docs/DIAGNOSTIC_TOOLS_GUIDE.md)** - 問題診斷與排查
+
+### 技術文檔
+- **[額定電流實作指南](docs/NOMINAL_CURRENT_IMPLEMENTATION.md)** - Config Assembly 操作細節
+- **[初始化命令流程](docs/INIT_COMMAND_FLOW.md)** - init 命令實作流程
 
 ---
 
 ## ✨ 主要功能
 
-### ✅ 已實作
+### Phase 3 已完成 ✅ (v3.2 - v3.7)
 
-- **多通道控制** - 支援 1-16 個模組（最多 64 通道）
-- **即時監控** - 背景監控，狀態變化自動警報
-  - 靜默模式：不干擾命令輸入，僅警報
-  - 顯示模式：定期顯示完整狀態
-- **標稱電流設定** - Config Assembly Read-Modify-Write（1-20A）
-- **完整狀態顯示** - 系統電壓、總電流、各通道詳細狀態
-- **心跳保活機制** - 防止 CIP 連線超時
-- **動態模組檢測** - 自動識別模組數量
+| 功能 | 說明 | 命令 |
+|------|------|------|
+| **額定電流設定** | Config Assembly Read-Modify-Write (1-20A) | `init <ch> <amps>` |
+| **通道控制** | 開關控制，支援 1-64 通道 (多模組) | `on <ch>` / `off <ch>` |
+| **狀態查詢** | 全域系統狀態與通道詳細資訊 | `s` / `status` |
+| **即時監控** | 背景監控，支援靜默/顯示模式 | `monitor start/stop` |
+| **多模組支援** | 自動檢測 1-16 個模組 (最多 64 通道) | 自動 |
+| **IP 配置** | 啟動時可變更設備 IP | 互動式設定 |
+| **自動重連** | 連線中斷時自動重試 | `reconnect` |
 
-### ⚠️ 重要說明
+### Phase 4 規劃中 🚧
 
-- **標稱電流參數為唯讀** - 使用 Config Assembly Read-Modify-Write 方法設定
-- **支援運行時配置** - 不需重啟設備即可修改參數
-- **自動狀態同步** - 啟動時讀取設備實際狀態
+詳見 [TODO.md](docs/TODO.md)：
+- 通道狀態資訊擴增
+- GUI 圖形介面開發
+- 數據記錄與分析
+- 告警通知系統
+- 多設備管理
+- 自動化測試與 CI/CD
+
+---
+
+## 💻 使用範例
+
+### 場景 1: 首次使用
+
+```bash
+# 啟動程式
+python src/caparoc_controller.py
+
+# 程式啟動後
+🎮 > s              # 檢查當前狀態
+🎮 > init 1 4      # 設定 CH1 額定電流 4A
+🎮 > init 2 4      # 設定 CH2 額定電流 4A
+🎮 > on 1          # 開啟 CH1
+🎮 > on 2          # 開啟 CH2
+🎮 > s             # 確認狀態
+```
+
+### 場景 2: 長時間監控
+
+```bash
+# 啟動靜默監控（推薦）
+🎮 > monitor start 5 silent
+
+✅ 監控已啟動 (5秒更新, 靜默模式)
+   只在狀態變化時顯示警報
+
+# 可以繼續輸入其他命令
+🎮 > s
+
+# 有變化時自動提示
+⚠️  [14:32:15] 通道狀態變化:
+   - CH1: OFF → ON (0.45A)
+
+# 結束時停止監控
+🎮 > monitor stop
+🎮 > q
+```
+
+### 場景 3: 多模組環境
+
+```bash
+🎮 > s
+
+============================================================
+  📊 系統狀態
+============================================================
+  模組數量: 2 個 (8 通道)
+  系統電壓: 24.18 V
+  總電流:   2.35 A
+------------------------------------------------------------
+【模組 1】
+  M1.CH1 (#1): 🟢 ON  |   0.45 A
+  M1.CH2 (#2): ⚫ OFF |   0.00 A
+  M1.CH3 (#3): 🟢 ON  |   0.75 A
+  M1.CH4 (#4): ⚫ OFF |   0.00 A
+
+【模組 2】
+  M2.CH1 (#5): 🟢 ON  |   0.52 A
+  M2.CH2 (#6): 🟢 ON  |   0.63 A
+  M2.CH3 (#7): ⚫ OFF |   0.00 A
+  M2.CH4 (#8): ⚫ OFF |   0.00 A
+============================================================
+
+# 分別控制不同模組的通道
+🎮 > init 5 6      # 設定模組2通道1 (全域#5) 為 6A
+🎮 > on 5          # 開啟模組2通道1
+```
 
 ---
 
 ## 🔧 連接問題排查
 
-如果遇到連接錯誤：
+如果遇到連接錯誤，可以使用診斷工具：
 
 ```bash
+# 執行連接診斷
 python tests/check_connection.py
 ```
 
-詳細排查請參閱 [診斷工具指南](docs/DIAGNOSTIC_TOOLS_GUIDE.md)
+常見問題與解決方案請參閱 [診斷工具指南](docs/DIAGNOSTIC_TOOLS_GUIDE.md)
 
 ---
 
@@ -84,60 +181,53 @@ python tests/check_connection.py
 ```
 Caparoc5/
 ├── src/
-│   └── caparoc_controller.py    # 主控制程式
+│   └── caparoc_controller.py     # 主控制程式 (v3.7)
 ├── tests/
-│   ├── diagnostic_tools.py      # 診斷工具集
-│   └── check_connection.py      # 連線檢查
-├── docs/                        # 完整文檔
-│   ├── CLI_USER_GUIDE.md        # 使用者指南
-│   ├── PROGRAM_FLOW.md          # 程式流程
+│   ├── diagnostic_tools.py       # 診斷工具集
+│   └── check_connection.py       # 連線檢查工具
+├── docs/                         # 完整文檔
+│   ├── CLI_USER_GUIDE.md         # 使用者指南 ⭐
+│   ├── TODO.md                   # 功能規劃
+│   ├── CHANGELOG.md              # 版本歷史
+│   ├── DEVELOPMENT_NOTES.md      # 技術備忘錄
+│   ├── PROGRAM_FLOW.md           # 程式流程
 │   ├── DIAGNOSTIC_TOOLS_GUIDE.md # 診斷指南
-│   └── ...
-├── requirements.txt             # Python 依賴
-└── environment.yml              # Conda 環境配置
-```
-
----
-
-## 💻 即時監控範例
-
-### 靜默模式（推薦）
-
-```bash
-> monitor start 2 silent
-
-✅ 即時監控已啟動
-   更新頻率: 2.0s
-   模式: 靜默模式 (僅警報)
-
-> on 2    # 可以正常輸入指令
-
-======================================================================
-🔔 監控警報 [14:32:17]
-======================================================================
-  ▸ CH2 狀態變更: 開啟
-  ▸ 電流變化: 0.0A → 3.5A
-======================================================================
+│   ├── NOMINAL_CURRENT_IMPLEMENTATION.md  # 額定電流實作
+│   ├── INIT_COMMAND_FLOW.md      # init 命令流程
+│   ├── history/                  # 歷史文檔
+│   └── vendor/                   # 原廠文檔
+├── archive/                      # 舊版本程式碼
+├── output/                       # 輸出文件
+├── .gitmessage                   # Git commit 模板
+├── requirements.txt              # Python 依賴
+└── environment.yml               # Conda 環境配置
 ```
 
 ---
 
 ## 🔄 版本歷史
 
-- **v3.7** (2025-11-25) - 標稱電流設定優化（漸進式重試驗證）
-- **v3.6** (2025-10-28) - 即時監控功能
-- **v3.5** (2025-10-28) - 多模組架構支援（1-16 模組）
-- **v3.0** (2025-10-27) - 基於手冊規範重構
+- **v3.7** (2025-11-26) - 額定電流設定優化、文檔重組
+- **v3.6** (2025-10-28) - 即時監控功能 (靜默/顯示模式)
+- **v3.5** (2025-10-28) - 多模組架構支援 (1-16 模組)
+- **v3.4** (2025-10-28) - 全域系統狀態檢查
+- **v3.3** (2025-10-27) - 狀態顯示增強
+- **v3.2** (2025-10-27) - 互動式額定電流設定
 
 詳見 [CHANGELOG.md](docs/CHANGELOG.md)
 
 ---
 
-## 🛠️ 技術堆疊
+## 🛠️ 技術規格
 
-- **Python** 3.11
-- **pycomm3** - EtherNet/IP 通訊
-- **CIP 協議** - 工業設備通訊標準
+- **通訊協議**: EtherNet/IP (CIP)
+- **Python 版本**: 3.11+
+- **主要依賴**: pycomm3 >= 1.2.14
+- **支援設備**: CAPAROC PM (EtherNet/IP)
+- **支援模組**: 1-16 個 (每模組 4 通道)
+- **總通道數**: 最多 64 個
+- **電流範圍**: 0-25.5A (讀取), 1-20A (設定)
+- **電壓範圍**: 9.0-30.5V
 
 ---
 
@@ -147,560 +237,18 @@ MIT License
 
 ---
 
+## 🆘 取得協助
+
+### 文檔
+- 使用問題 → [CLI_USER_GUIDE.md](docs/CLI_USER_GUIDE.md)
+- 連接問題 → [DIAGNOSTIC_TOOLS_GUIDE.md](docs/DIAGNOSTIC_TOOLS_GUIDE.md)
+- 開發問題 → [DEVELOPMENT_NOTES.md](docs/DEVELOPMENT_NOTES.md)
+
+### GitHub
+- 提交 Issue: https://github.com/cFuuu/Caparoc
+- 查看規劃: [TODO.md](docs/TODO.md)
+
+---
+
 **專案維護**: Harry Chiu  
-**文檔更新**: 2025年11月25日
-
-
-
-### 1. 安裝依賴### 步驟 1: 檢查連接
-
-
-
-```bash**如果遇到連接問題 ("failed to send message"):**
-
-pip install -r requirements.txt
-
-``````bash
-
-# 運行診斷工具
-
-### 2. 運行程式python check_connection.py
-
-```
-
-```bash
-
-python src/caparoc_controller.py**詳細排查指南:** 請參閱 [連接問題排查指南](docs/TROUBLESHOOTING_CONNECTION.md)
-
-```
-
-### 步驟 2: 安裝依賴
-
-程式會自動檢測系統狀態並進入互動模式。
-
-```bash
-
-### 3. 常用命令pip install -r requirements.txt
-
-```
-
-```bash
-
-### 步驟 3: 運行主程式
-
-```bash
-python src/caparoc_controller.py
-```
-
-選擇選項 **2** (互動控制模式)，然後可以使用以下命令：
-
-**可用命令：**
-- `on 1` / `off 1` - 控制個別通道
-- `s` - 查看完整狀態
-- `monitor start` - 啟動即時監控
-
-詳細命令請參閱 [互動式測試指南](INTERACTIVE_TEST_GUIDE.md)
-
----
-
-# 退出
-
-q                               # 退出程式## 文件與指南
-
-```
-
-1. **[互動式測試指南](INTERACTIVE_TEST_GUIDE.md)** - 完整測試流程與命令
-
-## 🔧 連接問題排查2. **[主開關控制說明](docs/MAIN_POWER_CONTROL.md)** - 總電源控制技術細節
-
-3. **[連接問題排查](docs/TROUBLESHOOTING_CONNECTION.md)** - 網路連接診斷
-
-如果遇到 "failed to send message" 錯誤：4. **[AIagent_init.md](AIagent_init.md)** - Agent AI 的基本規則
-
-
-
-```bash---
-
-# 運行診斷工具
-
-python check_connection.py## 專案結構 (Project Structure)
-
-```
-
-此專案使用 **Simple** 結構，適合基本腳本和工具：
-
-詳細排查步驟請參閱 [連接問題排查指南](docs/TROUBLESHOOTING_CONNECTION.md)
-
-```
-
-## ⚙️ 標稱電流設定Caparoc_breaker_control/
-
-├── AIagent_init.md        # AI Agent 的基本規則
-
-**重要：無法透過 EtherNet/IP 修改標稱電流**├── README.md              # 專案文件
-
-├── .gitignore             # Git 忽略模式
-
-CAPAROC 設備的標稱電流參數為**唯讀**，必須透過設備本身設定：├── requirements.txt       # Python 依賴 (pip)
-
-├── environment.yml        # Conda 環境配置
-
-### 方法：使用設備按鈕├── src/                   # 原始碼 (NEVER put files in root)
-
-│   ├── main.py            # 主要腳本/進入點
-
-1. 長按 **PWR** 鍵 3 秒（LED 閃綠光 3 次，解除硬體鎖）│   └── utils.py           # 工具函數
-
-2. 短按對應通道按鈕進入編程模式├── tests/                 # 測試文件
-
-3. 按 **+** 或 **-** 調整電流值（1-20A）│   └── test_main.py       # 基本測試
-
-4. 短按通道按鈕確認├── docs/                  # 文件
-
-5. 長按 **PWR** 鍵 3 秒退出└── output/                # 產生的輸出文件
-
-```
-
-### 驗證設定
-
-## 主要功能 (Features)
-
-```bash
-
-> verify 2### ✅ V3.6 - 即時監控 (2025-10-28)
-
-✅ CH2 標稱電流: 4A- ✅ **即時監控功能** - Phase 3-2 完成
-
-```  - 背景執行緒定期讀取狀態 (0.5s-60s 可調)
-
-  - **靜默模式** (預設) - 不干擾命令輸入,僅警報通知
-
-程式中的 `init` 命令會顯示完整的手動設定指引。  - 顯示模式 - 定期顯示完整狀態
-
-  - 狀態變化即時檢測與警報
-
-## 📊 主要功能  - 通道開關變化偵測
-
-  - 電流異常變化警報 (>30%)
-
-### ✅ 已實作  - 系統電壓變化提醒
-
-  - 新指令: `monitor start [interval] [mode]`
-
-- **主開關控制** - 控制總電源開關（緊急停止用）
-
-- **通道控制** - 個別通道開關控制### ✅ V3.5 - 多模組架構 (2025-10-28)
-
-- **即時監控** - 背景監控，狀態變化自動警報- ✅ **動態多模組支援** - 自動檢測 1-16 個模組 (最多 64 通道)
-
-  - 靜默模式：不干擾命令輸入，僅警報- ✅ **智能通道管理** - 根據模組數量動態調整
-
-  - 顯示模式：定期顯示完整狀態- ✅ **多模組顯示** - M1.CH1 (#1) 格式顯示
-
-- **多模組支援** - 自動檢測 1-16 個模組（最多 64 通道）- ✅ **向後兼容** - 單模組環境無縫運作
-
-- **完整狀態顯示**
-
-  - 系統電壓與總電流### ✅ V3.4 - 完整手冊實作 (2025-10-28)
-
-  - 各通道狀態、電流、警告- ✅ **手冊 7.2.1-7.2.4** - 完整全域狀態檢查
-
-  - 過載、短路、硬體故障檢測  - 系統電壓檢查 (9.0-30.5V)
-
-  - 模組數量檢測 (0-16 個)
-
-### ⚠️ 已知限制  - 總電流讀取 (0-50.0A)
-
-  - 欠壓/過壓/系統錯誤檢測
-
-- **Config Assembly 唯讀** - 無法透過 EtherNet/IP 修改配置- ✅ **手冊 7.2.5** - 完整通道狀態解析
-
-- **Parameter Object 唯讀** - 標稱電流等參數必須手動設定  - 6 個狀態位元 (開/關、80%警告、過載、短路、硬體故障、總電流關斷)
-
-- 設備韌體禁止運行時修改配置參數  - 標稱電流顯示 (1-10A)
-
-  - 實際電流顯示 (0-25.5A)
-
-## 📚 文檔
-
-### ✅ V3.3 - 狀態顯示增強 (2025-10-27)
-
-- **[INTERACTIVE_TEST_GUIDE.md](INTERACTIVE_TEST_GUIDE.md)** - 完整測試流程與命令- ✅ 全域系統狀態顯示
-
-- **[docs/MAIN_POWER_CONTROL.md](docs/MAIN_POWER_CONTROL.md)** - 主開關控制技術細節- ✅ 設備復電狀態同步修復
-
-- **[docs/TROUBLESHOOTING_CONNECTION.md](docs/TROUBLESHOOTING_CONNECTION.md)** - 連接問題診斷- ✅ 完整通道狀態 (開關/電流/警告)
-
-
-
-## 🏗️ 專案結構### ✅ V3.2 - 互動式設定 (2025-10-27)
-
-- ✅ 通道額定電流初始化
-
-```- ✅ 互動式電流值設定
-
-Caparoc_breaker_control/- ✅ Implicit Messaging 自動檢測
-
-├── README.md                    # 專案說明- ✅ 命令列互動介面
-
-├── requirements.txt             # Python 依賴
-
-├── check_connection.py          # 連接診斷工具### ⚠️ 待實作
-
-├── src/- [ ] 通道資訊擴展 (Phase 3-3)
-
-│   └── caparoc_controller.py    # 主程式- [ ] IP 配置支援 (Phase 3-4)
-
-├── docs/                        # 文檔- [ ] GUI 規劃設計 (Phase 3-5)
-
-└── tests/                       # 測試
-
-```詳見 [docs/TODO.md](docs/TODO.md) 完整開發計畫
-
-
-
-## 💻 即時監控範例## 📚 文檔 (Documentation)
-
-
-
-### 靜默模式（推薦）- [TODO.md](docs/TODO.md) - 待實作功能與開發計畫
-
-- [CHANGELOG.md](docs/CHANGELOG.md) - 版本更新歷史
-
-```bash- [DEBUG_ANALYSIS.md](docs/DEBUG_ANALYSIS.md) - 開發除錯記錄
-
-> monitor start 2 silent
-
-## 安裝 (Installation)
-
-✅ 即時監控已啟動
-
-   更新頻率: 2.0s### 使用現有的 Conda 環境（推薦）
-
-   模式: 靜默模式 (僅警報)
-
-   💡 提示: 監控在背景運行，有變化時會自動通知#### 1. 啟動您的 Conda 環境
-
-```bash
-
-> on 2    # 可以正常輸入指令# 啟動您現有的 Conda 環境（替換為您的環境名稱）
-
-conda activate your_env_name
-
-======================================================================```
-
-🔔 監控警報 [14:32:17]
-
-======================================================================#### 2. 安裝專案依賴
-
-  ▸ CH2 狀態變更: 開啟```bash
-
-  ▸ 電流變化: 0.0A → 3.5A# 安裝 requirements.txt 中的套件
-
-======================================================================pip install -r requirements.txt
-
->         # 自動恢復輸入提示```
-
-```
-
-#### 3. 驗證安裝
-
-### 顯示模式```bash
-
-python --version
-
-```bashpython src/main.py
-
-> monitor start 5 display```
-
-
-
-======================================================================#### 4. 當您安裝新套件時
-
-🔄 即時監控 [14:32:15] - 更新頻率: 5.0s```bash
-
-======================================================================# 安裝新套件（例如 pyserial）
-
-📊 系統: 24.0V | 8.5A | 1 模組pip install pyserial
-
-
-
-通道            狀態   電流         警告/錯誤# 匯出當前環境的所有套件（可選）
-
-----------------------------------------------------------------------pip freeze > requirements_full.txt
-
-CH1             🟢 開  2.5A / 4.0A  ✅
-
-CH2             🔴 關  0.0A / 10.0A ✅# 或者手動更新 requirements.txt
-
-CH3             🟢 開  6.0A / 10.0A ⚠️80%# Agent AI 會協助您維護 requirements.txt
-
-CH4             🔴 關  0.0A / 6.0A  ✅```
-
-======================================================================
-
-```### 創建新的 Conda 環境（可選）
-
-
-
-## 🌐 多模組支援如果需要創建新環境：
-
-```bash
-
-程式自動檢測模組數量（1-16 個，最多 64 通道）：# 使用 environment.yml 創建環境
-
-conda env create -f environment.yml
-
-### 單模組顯示
-
-# 或手動創建環境
-
-```conda create -n caparoc_breaker python=3.11
-
-CH1: ON  2.5A / 4Aconda activate caparoc_breaker
-
-CH2: OFF 0.0A / 10Apip install -r requirements.txt
-
-``````
-
-
-
-### 多模組顯示## 使用方法 (Usage)
-
-
-
-```### 運行控制器
-
-M1.CH1 (#1):  ON  2.5A / 4A```bash
-
-M1.CH2 (#2):  OFF 0.0A / 10A# 確保已啟動 Conda 環境
-
-M2.CH1 (#5):  ON  3.2A / 5Aconda activate caparoc_breaker
-
-M2.CH2 (#6):  ON  3.5A / 8A
-
-```# 運行主控制器
-
-python src/caparoc_controller.py
-
-## 🔧 開發環境```
-
-
-
-- **語言**: Python 3.11### 可用指令
-
-- **主要依賴**: pycomm3 (EtherNet/IP 通訊)```
-
-- **環境管理**: Conda 或 venvinit <ch> <amps>                 - 顯示標稱電流手動設定指引
-
-                                   範例: init 2 4
-
-## 📝 授權on <ch>                          - 開啟通道 (例: on 1)
-
-off <ch>                         - 關閉通道 (例: off 2)
-
-MIT Licenses                                - 顯示完整狀態
-
-verify <ch>                      - 驗證通道標稱電流設定
-
----monitor start [interval] [mode]  - 啟動即時監控
-
-                                   interval: 更新頻率(秒), 預設2
-
-**專案維護**: Harry Chiu                                     mode: silent(靜默) 或 display(顯示), 預設silent
-
-**技術支援**: 參閱文檔或提交 Issuemonitor stop                     - 停止即時監控
-
-monitor status                   - 顯示監控狀態
-q                                - 退出
-```
-
-### ⚠️ 重要說明:標稱電流設定
-
-**無法透過 EtherNet/IP 直接修改標稱電流參數**
-
-經測試,CAPAROC 設備不允許透過 EtherNet/IP 修改標稱電流。
-請使用以下方法手動設定:
-
-#### 方法 1: 使用設備按鈕 (推薦)
-1. 長按 PWR 鍵 3 秒 (LED 閃綠光 3 次,解除硬體鎖)
-2. 短按對應通道按鈕進入編程模式
-3. 按 + 或 - 按鈕調整電流值 (1-20A)
-4. 短按通道按鈕確認
-5. 長按 PWR 鍵 3 秒退出
-
-#### 方法 2: 使用設備網頁介面 (如果支援)
-- 瀏覽器訪問: `http://192.168.2.111`
-
-#### 驗證設定
-設定完成後,使用程式驗證:
-```
-> verify 2
-✅ CH2 標稱電流: 4A
-```
-
-### 即時監控範例
-
-#### 模式說明
-- **靜默模式 (silent)** ⭐ 推薦
-  - 監控在背景運行,**不干擾命令輸入**
-  - 僅在偵測到變化時顯示警報
-  - 適合長時間監控
-
-- **顯示模式 (display)**
-  - 定期顯示完整狀態
-  - 會干擾命令輸入
-  - 適合短期觀察
-
-#### 啟動靜默監控 (推薦)
-```
-> monitor start 2 silent
-
-✅ 即時監控已啟動
-   更新頻率: 2.0s
-   模式: 靜默模式 (僅警報)
-   � 提示: 監控在背景運行,有變化時會自動通知
-
-> on 2    # 可以正常輸入指令
-
-======================================================================
-🔔 監控警報 [14:32:17]
-======================================================================
-  ▸ CH2 狀態變更: 開啟
-======================================================================
->         # 自動恢復輸入提示
-```
-
-#### 啟動顯示監控
-```
-> monitor start 5 display
-
-✅ 即時監控已啟動
-   更新頻率: 5.0s
-   模式: 顯示模式 (持續更新)
-
-======================================================================
-🔄 即時監控 [14:32:15] - 更新頻率: 5.0s
-======================================================================
-📊 系統: 24.0V | 8.5A | 1 模組
-
-通道            狀態   電流         警告/錯誤
-----------------------------------------------------------------------
-CH1             🟢 開  2.5A / 4.0A  ✅
-CH2             🔴 關  0.0A / 10.0A ✅
-CH3             🟢 開  6.0A / 10.0A ⚠️80%
-CH4             🔴 關  0.0A / 6.0A  ✅
-======================================================================
-```
-
-#### 偵測到變化時 (顯示模式)
-```
-======================================================================
-🔄 即時監控 [14:32:20] - 更新頻率: 5.0s
-======================================================================
-📊 系統: 24.0V | 11.0A | 1 模組
-
-通道            狀態   電流         警告/錯誤
-----------------------------------------------------------------------
-CH1             🟢 開  2.5A / 4.0A  ✅
-CH2             🟢 開  3.5A / 10.0A ✅
-CH3             🟢 開  6.0A / 10.0A ⚠️80%
-CH4             🔴 關  0.0A / 6.0A  ✅
-
-🔔 檢測到變化:
-  ▸ CH2 狀態變更: 開啟
-  ▸ 電壓變化: 24.0V → 23.5V
-======================================================================
-```
-
-### 多模組環境範例
-
-#### 單模組顯示 (1 個模組)
-```
-=== 系統狀態 ===
-模組數量: 1
-總電流: 8.5A
-輸入電壓: 24.0V
-
-CH1: ON  2.5A / 4A
-CH2: OFF 0.0A / 10A
-CH3: ON  6.0A / 10A (⚠️ 80% 警告)
-CH4: OFF 0.0A / 6A
-```
-
-#### 多模組顯示 (2 個模組)
-```
-=== 系統狀態 ===
-模組數量: 2
-總電流: 15.2A
-輸入電壓: 24.0V
-
-M1.CH1 (#1):  ON  2.5A / 4A
-M1.CH2 (#2):  OFF 0.0A / 10A
-M1.CH3 (#3):  ON  6.0A / 10A
-M1.CH4 (#4):  OFF 0.0A / 6A
-M2.CH1 (#5):  ON  3.2A / 5A
-M2.CH2 (#6):  ON  3.5A / 8A
-M2.CH3 (#7):  OFF 0.0A / 10A
-M2.CH4 (#8):  OFF 0.0A / 4A
-```
-
-### 運行測試
-```bash
-python -m pytest tests/
-```
-
-### 常用命令參考
-```bash
-# 查看當前環境已安裝的套件
-pip list
-
-# 查看 pip 安裝的套件（排除 conda 安裝的）
-pip freeze
-
-# 安裝新套件並記錄版本
-pip install package_name
-# 然後將套件添加到 requirements.txt
-
-# 匯出完整環境（包含所有套件）
-pip freeze > requirements_full.txt
-
-# 匯出 Conda 環境配置
-conda env export > environment_backup.yml
-```
-
-## 開發指南 (Development Guidelines)
-
-- **永遠先搜索** 再創建新文件
-- **擴展現有**功能而不是重複
-- **使用任務 Agent** 進行 >30 秒的操作
-- **單一事實來源** 適用於所有功能
-- **在每個完成的任務後提交**
-
-## 技術堆疊 (Tech Stack)
-
-- **語言**: Python 3.11
-- **環境管理**: Conda
-- **專案類型**: Simple (基本腳本/工具)
-- **版本控制**: Git + GitHub
-
-## 貢獻 (Contributing)
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-## 授權 (License)
-
-此專案採用 MIT 授權 - 詳見 LICENSE 文件
-
-## 聯絡方式 (Contact)
-
-Project Link: [https://github.com/yourusername/Caparoc_breaker_control](https://github.com/yourusername/Caparoc_breaker_control)
-
----
-
-**🎯 Template by**: Harry Chiu | v1.0.1  
-**📺 Original Tutorial**: https://youtu.be/8Q1bRZaHH24
+**最後更新**: 2025年11月26日

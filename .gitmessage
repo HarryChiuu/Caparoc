@@ -1,4 +1,4 @@
-# <type>(<scope>): <主旨>
+# type(scope): 主旨
 # |<---- 使用最多 50 個字元 ---->|
 
 
@@ -11,36 +11,112 @@
 
 
 # --- COMMIT END ---
-# Type 可以是下列其中之一（使用角括號）:
-#    <feat>     (新功能)
-#    <fix>      (錯誤修正)
-#    <docs>     (文件更新)
-#    <style>    (格式調整，不影響程式碼邏輯)
-#    <refactor> (重構程式碼)
-#    <perf>     (效能優化)
-#    <test>     (新增或修改測試)
-#    <chore>    (建置流程或輔助工具變動)
-#    <revert>   (還原先前的 commit)
+# ============================================================
+# Commit Message 規範
+# ============================================================
+#
+# Type 可以是下列其中之一:
+#    feat     - 新功能 (feature)
+#    fix      - 錯誤修正 (bug fix)
+#    docs     - 文件更新 (documentation)
+#    style    - 格式調整，不影響程式碼邏輯 (formatting, missing semicolons, etc.)
+#    refactor - 重構程式碼 (refactoring production code)
+#    perf     - 效能優化 (performance improvement)
+#    test     - 新增或修改測試 (adding or refactoring tests)
+#    build    - 建置系統或外部依賴變更 (build system, dependencies)
+#    ci       - CI 配置檔案和腳本變更 (CI configuration files and scripts)
+#    chore    - 其他不修改程式碼或測試的變更 (updating grunt tasks, etc.)
+#    revert   - 還原先前的 commit (reverting a previous commit)
+#
 # --------------------
-# Scope 可以是下列其中之一:
-#    init       (初始化相關)
-#    control    (裝置控制功能)
-#    status     (狀態顯示功能)
-#    monitoring (監控功能)
-#    gui        (圖形介面)
-#    config     (設定功能)
-#    docs       (文件)
-#    test       (測試)
+# Scope 範圍 (依專案調整):
+#    controller - 控制器核心邏輯
+#    init       - 初始化相關
+#    control    - 裝置控制功能
+#    status     - 狀態顯示功能
+#    monitoring - 監控功能
+#    cli        - 命令列介面
+#    gui        - 圖形介面
+#    config     - 設定功能
+#    docs       - 文件
+#    test       - 測試
+#    archive    - 歷史封存文件歸檔
+#    deps       - 依賴管理
+#
 # --------------------
-# Subject 記得:
-#    使用繁體中文撰寫
-#    使用祈使句，現在式: "新增" 不是 "已新增" 或 "新增了"
-#    不要大寫第一個字母
-#    結尾不要加句號 (.)
+# 主旨 (Subject) 撰寫規則:
+#    ✓ 使用台灣繁體中文
+#    ✓ 使用祈使句，現在式: "新增" 不是 "已新增" 或 "新增了"
+#    ✓ 第一個字不要大寫 (除非是專有名詞)
+#    ✓ 結尾不要加句號 (.)
+#    ✓ 清楚且有邏輯性的描述做了什麼改變
+#
+# --------------------
+# Body 內文撰寫建議:
+#    ✓ 說明「為什麼」做這個改變，而不只是「做了什麼」
+#    ✓ 如果有破壞性變更，在 Body 開頭加上 "BREAKING CHANGE:"
+#    ✓ 可以使用項目符號 (-)
+#    ✓ 每行盡量不超過 72 字元
+#
+# --------------------
+# Footer 頁腳:
+#    ✓ 關閉 Issue: "Closes #123" 或 "Fixes #456"
+#    ✓ 破壞性變更: "BREAKING CHANGE: 說明"
+#    ✓ 相關 PR: "Related: #789"
+#
 # --------------------
 # 範例 Examples:
-#    <feat>(control): 新增通道 5-8 控制功能
-#    <fix>(status): 修正電壓讀取錯誤
-#    <docs>(readme): 更新安裝說明文件
-#    <refactor>(init): 重構初始化流程
+#
+# 簡單的功能新增:
+#    feat(control): 新增通道 5-8 控制功能
+#
+# 錯誤修正:
+#    fix(status): 修正電壓讀取錯誤
+#    
+#    修正了 read_voltage() 函數的 byte 順序問題，
+#    原本使用 big-endian 應改為 little-endian。
+#
+# 重構程式碼:
+#    refactor(init): 重構初始化流程以提升可讀性
+#    
+#    - 將初始化步驟拆分為獨立函數
+#    - 新增錯誤處理機制
+#    - 改善日誌輸出格式
+#
+# 文件更新:
+#    docs: 更新 README 安裝說明
+#    
+#    - 新增 Python 3.11 環境要求
+#    - 更新依賴套件版本
+#    - 補充故障排除章節
+#
+# 破壞性變更:
+#    feat(api): 重新設計 API 介面
+#    
+#    BREAKING CHANGE: API 端點從 /api/v1 改為 /api/v2
+#    舊版 API 將在 2025-12-31 後停止支援
+#    
+#    Closes #100
+#
 # --------------------
+# Git 配置:
+#
+# 設定此檔案為 commit message 模板:
+#    git config commit.template .gitmessage
+#
+# 設定全域模板 (適用所有專案):
+#    git config --global commit.template ~/.gitmessage
+#
+# --------------------
+# 多倉庫推送設定:
+#
+# 本專案推送到兩個倉庫:
+#    origin  - https://github.com/cFuuu/Caparoc.git (公開)
+#    harry   - https://github.com/HarryChiuu/Caparoc.git (公司組織，公開)
+#
+# 推送指令:
+#    git push origin main  # 推送到個人倉庫
+#    git push harry main   # 推送到公司倉庫
+#    git pushall main      # 同時推送到兩個倉庫（使用 alias）
+#
+# ============================================================

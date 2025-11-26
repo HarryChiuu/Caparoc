@@ -192,7 +192,7 @@ Caparoc5/
 │   ├── DEVELOPMENT_NOTES.md      # 技術備忘錄
 │   ├── PROGRAM_FLOW.md           # 程式流程
 │   ├── DIAGNOSTIC_TOOLS_GUIDE.md # 診斷指南
-│   ├── NOMINAL_CURRENT_IMPLEMENTATION.md  # 額定電流實作
+│   ├── NOMINAL_CURRENT_IMPLEMENTATION.md  # 額定電流設定實作
 │   ├── INIT_COMMAND_FLOW.md      # init 命令流程
 │   ├── history/                  # 歷史文檔
 │   └── vendor/                   # 原廠文檔

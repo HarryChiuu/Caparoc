@@ -111,8 +111,8 @@
 # 多倉庫推送設定:
 #
 # 本專案推送到兩個倉庫:
-#    origin  - https://github.com/cFuuu/Caparoc.git (公開)
-#    harry   - https://github.com/HarryChiuu/Caparoc.git (公司組織，公開)
+#    origin   - https://cFuuu@github.com/cFuuu/Caparoc.git (Personal, public)
+#    harry   - https://HarryChiuu@github.com/HarryChiuu/Caparoc.git (Organization, public)
 #
 # 推送指令:
 #    git push origin main  # 推送到個人倉庫

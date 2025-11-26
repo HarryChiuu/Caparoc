@@ -1294,7 +1294,7 @@ class CaparocController:
                 ch_label = f"CH{ch_num}"
             
             # 狀態
-            state_icon = "🟢 開" if ch['is_on'] else "🔴 關"
+            state_icon = "🟢 開" if ch['is_on'] else "⚫ 關"
             
             # 電流
             current_str = f"{ch['flowing_current']:.1f}A / {ch['nominal_current']:.1f}A"
@@ -1544,7 +1544,7 @@ class CaparocController:
                         current = current_raw / 10.0
                         
                         # 根據狀態位元判斷開關,而非電流值
-                        state = "🟢 開" if is_on else "🔴 關"
+                        state = "🟢 開" if is_on else "⚫ 關"
                         
                         # 組合顯示訊息 - 顯示全域通道編號或模組.通道格式
                         if module_count > 1:
@@ -1885,7 +1885,7 @@ class CaparocController:
                                 current_byte = data[offset + 2] if len(data) > offset + 2 else 0
                                 current = current_byte / 10.0
                                 
-                                state_icon = "🟢 開" if is_on else "🔴 關"
+                                state_icon = "🟢 開" if is_on else "⚫ 關"
                                 print(f"     CH{ch}: {state_icon} ({current:.1f}A)")
                         
                         # 根據實際狀態重建 Output Assembly buffer

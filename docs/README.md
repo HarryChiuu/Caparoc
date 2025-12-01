@@ -102,4 +102,4 @@
 ---
 
 **Last Updated**: 2025年11月25日  
-**Maintained by**: Project Team
+**Maintained by**: Harry Chiu

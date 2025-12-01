@@ -73,7 +73,7 @@ q                    # 退出程式
 
 | 功能 | 說明 | 命令 |
 |------|------|------|
-| **額定電流設定** | Config Assembly Read-Modify-Write (1-20A) | `init <ch> <amps>` |
+| **額定電流設定** | Config Assembly Read-Modify-Write (1-10A) | `init <ch> <amps>` |
 | **通道控制** | 開關控制，支援 1-64 通道 (多模組) | `on <ch>` / `off <ch>` |
 | **狀態查詢** | 全域系統狀態與通道詳細資訊 | `s` / `status` |
 | **即時監控** | 背景監控，支援靜默/顯示模式 | `monitor start/stop` |
@@ -102,7 +102,7 @@ q                    # 退出程式
 python src/caparoc_controller.py
 
 # 程式啟動後
-🎮 > s              # 檢查當前狀態
+🎮 > s             # 檢查當前狀態
 🎮 > init 1 4      # 設定 CH1 額定電流 4A
 🎮 > init 2 4      # 設定 CH2 額定電流 4A
 🎮 > on 1          # 開啟 CH1
@@ -196,11 +196,11 @@ Caparoc5/
 │   ├── INIT_COMMAND_FLOW.md      # init 命令流程
 │   ├── history/                  # 歷史文件
 │   └── vendor/                   # 原廠文件
-├── archive/                      # 舊版本程式碼
+├── archive/                      # 封存檔案 - 舊版本程式碼
 ├── output/                       # 輸出文件
 ├── .gitmessage                   # Git commit 模板
-├── requirements.txt              # Python 依賴
-└── environment.yml               # Conda 環境配置
+├── requirements.txt              # Python 套件需求
+└── environment.yml               # 使用 Conda環境配置
 ```
 
 ---

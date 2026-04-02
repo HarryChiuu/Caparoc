@@ -44,6 +44,7 @@ logs/
 # Output files (use output/ directory instead)
 *.csv
 *.json
+!config/*.json
 *.xlsx
 output/*
 !output/.gitkeep

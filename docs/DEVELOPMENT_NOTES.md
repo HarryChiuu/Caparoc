@@ -282,25 +282,55 @@ Caparoc_breaker_control/
 
 ---
 
+## 🏗️ 現行架構（2026-04-02 更新）
+
+### 前後端分離
+
+```
+caparoc_backend.py      ← CaparocBackend（純裝置邏輯，無 CLI）
+caparoc_controller.py   ← CaparocController(CaparocBackend)（CLI 包裝層）
+caparoc_web.py          ← 未來：Dash Web 服務（長駐，瀏覽器控制）
+```
+
+MRO 驗證（2026-04-02）：`CaparocController → CaparocBackend → object` ✅
+
+### GUI 架構決策
+
+| 決策項目 | 選擇 | 理由 |
+|----------|------|------|
+| GUI 類型 | Browser-based | 手機/任何裝置皆可控制 |
+| 框架 | Dash (Plotly) | 純 Python、內建即時更新、無需 HTML/JS |
+| 連線模式 | 服務啟動自動連線 | CAPAROC 一直在線，無需手動連線 |
+| 服務入口 | `python caparoc_web.py` | 啟動後瀏覽器開 `localhost:8050` |
+
+### GUI 前尚未完成的工作（見 TODO Phase 3.6）
+
+1. **`connect()` / `disconnect()` 實作**（最重要）— 連線生命週期目前綁定在 CLI `with` 內
+2. **controller.py 冗餘方法清除** — 約 1500 行重複邏輯需移除
+3. **Dash 安裝與骨架驗證** — `pip install dash` + 最小可用頁面
+
+---
+
 ## 🔮 未來改進方向
 
-### 優先級 1: 通道資訊擴展
+### 優先級 1: GUI 前置工作（Phase 3.6，立即執行）
+
+- [ ] `CaparocBackend.connect()` / `disconnect()` 實作
+- [ ] `caparoc_controller.py` 冗餘方法清除
+- [ ] Dash 安裝與基本骨架驗證
+
+### 優先級 2: Browser GUI 開發（Dash）
+
+- [ ] 通道控制面板（開關按鈕 + 即時電流顯示）
+- [ ] 系統狀態儀表板（電壓、總電流、全域狀態）
+- [ ] 即時監控整合（`dcc.Interval` 定時更新）
+- [ ] Log 面板顯示
+
+### 優先級 3: 通道資訊擴展
 
 - [ ] 顯示通道歷史電流曲線
 - [ ] 記錄通道開關歷史
 - [ ] 通道使用統計
-
-### 優先級 2: IP 配置支援
-
-- [ ] 多設備管理
-- [ ] 設備自動發現
-- [ ] 配置文件支援
-
-### 優先級 3: GUI 開發
-
-- [ ] PyQt5 圖形界面
-- [ ] 即時監控儀表板
-- [ ] 通道群組控制
 
 ---
 

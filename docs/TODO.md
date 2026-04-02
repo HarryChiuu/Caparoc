@@ -238,6 +238,57 @@ def _show_monitor_status(self, status, changes):
 **Phase 3 總工時**: ~20 小時  
 **Phase 3 成果**: 完整可用的 CLI 控制系統
 
+4. **Phase 3.5（補充）**: 架構重構 ✅ **已完成** (2026-04-02)
+   - ✅ 前後端分離 (`caparoc_backend.py` + `CaparocController` 繼承架構)
+   - ✅ Log 系統 (`logging_manager.py` + `config/logging_config.json`)
+   - ✅ CLI 保留（`python caparoc_controller.py` 仍可正常使用）
+
+---
+
+### Phase 3.6: GUI 前置準備 🔧（**開始 GUI 前必須完成**）
+
+> GUI 框架決策：**Dash**（純 Python，內建即時更新，無需寫 HTML/JS）  
+> 進入方式：Python 服務常駐，瀏覽器開啟 `http://localhost:8050`
+
+#### 3.6.1 CaparocBackend 連線管理重構 ⚠️ 最重要
+
+**問題**: 目前連線生命週期綁定在 `with CIPDriver(...) as driver:` 內，Web 服務無法長駐使用。
+
+**需要新增至 `caparoc_backend.py`**:
+- [ ] `connect()` — 手動建立 CIPDriver 連線、activate state、啟動 heartbeat
+- [ ] `disconnect()` — 停止 heartbeat、關閉 CIPDriver
+- [ ] `is_connected` — 連線狀態屬性
+
+**預估工時**: 1-2 小時
+
+---
+
+#### 3.6.2 caparoc_controller.py 冗餘方法清除
+
+**問題**: 目前 controller 繼承 CaparocBackend，但仍保留所有後端方法完整複本（shadow 父類別），維護時需同步兩處。
+
+**需要刪除**:
+- [ ] `CaparocController` 中與 `CaparocBackend` 重複的所有方法（約 1500 行）
+- 保留：`__init__`、`_show_help_message`、`_configure_device_ip`、`_validate_ip`、`run()`
+- 目標：controller 從 2100+ 行縮減至 ~250 行
+
+**預估工時**: 1 小時
+
+---
+
+#### 3.6.3 Web 框架安裝與基本骨架驗證
+
+- [ ] 安裝 `dash`（`pip install dash`）
+- [ ] 建立 `src/caparoc_web.py` 最小骨架（`backend.connect()` + 一個頁面可開啟）
+- [ ] 確認 `http://localhost:8050` 可正常開啟
+- [ ] 更新 `requirements.txt` 加入 `dash`
+
+**預估工時**: 0.5 小時
+
+---
+
+**Phase 3.6 預估總工時**: 2.5–3.5 小時
+
 ---
 
 ### Phase 4: 進階功能與 GUI 開發 🚀

@@ -57,6 +57,14 @@ import struct
 import time
 import threading
 
+try:
+    from logging_manager import setup as _log_setup, get_logger
+    _log_setup()
+except ImportError:
+    import logging
+    def get_logger(name='caparoc'):
+        return logging.getLogger(name)
+
 
 class CaparocController:
     """CAPAROC  - 基於手冊規範"""
@@ -100,6 +108,7 @@ class CaparocController:
         self.heartbeat_running = False
         self.heartbeat_interval = 300.0  # 預設 300 秒發送一次心跳
         self.last_activity_time = time.time()  # 記錄最後活動時間
+        self.logger = get_logger()
 
     
     def get_channel_offset(self, module, channel):
@@ -579,6 +588,7 @@ class CaparocController:
                         # 驗證成功
                         elapsed = attempt * 0.5
                         print(f"✅ 變更成功: {ch_label} 目前為 {actual}A (耗時: {elapsed:.1f}s)")
+                        self.logger.info(f"{ch_label} 額定電流設為 {actual}A (耗時:{elapsed:.1f}s)", extra={'log_module': 'INIT', 'channel': global_ch, 'amps': actual, 'verified': True, 'elapsed': elapsed})
                         return True
                     elif attempt < max_attempts:
                         # 還沒成功，繼續等待
@@ -588,6 +598,7 @@ class CaparocController:
                         if actual is not None:
                             print(f"⚠️  驗證警告: 設備顯示 {actual}A，設定值 {current_amps}A")
                             print(f"   建議: 請使用 'verify {global_ch}' 命令再次確認")
+                            self.logger.warning(f"{ch_label} 驗證警告: 設備顯示 {actual}A，設定值 {current_amps}A", extra={'log_module': 'INIT', 'channel': global_ch})
                         else:
                             print(f"⚠️  無法驗證（讀取失敗），但設定已寫入")
                         return True
@@ -779,6 +790,7 @@ class CaparocController:
             
             print(f"[控制] CH{channel} -> {'開啟' if state else '關閉'}")
             print(f"       byte[1]: 0x{current_value:02X} -> 0x{new_value:02X}")
+            self.logger.info(f"CH{channel} {'開啟' if state else '關閉'}", extra={'log_module': 'CTRL', 'channel': channel})
             
             # 雙模式：優先嘗試快速的 Implicit Messaging
             if self.implicit_mode_enabled:
@@ -1710,6 +1722,7 @@ class CaparocController:
     
 # ========== 主程式入口 ==========
     def run(self):
+        self.logger.info("CAPAROC PM EIP Controller v3.7 啟動", extra={'log_module': 'SYS'})
         print("🚀 CAPAROC PM EIP Controller v3.7 beta")
         print("\n✅  目前可用功能:")
         print("1. 開關控制: 各模組通道進行啟閉控制")
@@ -1735,6 +1748,7 @@ class CaparocController:
                 
                 if not conn_result['connected']:
                     print(f"\n❌ 裝置連線失敗!")
+                    self.logger.error(f"連線失敗: {self.device_ip} - {conn_result.get('error', '未知錯誤')}", extra={'log_module': 'CONN', 'ip': self.device_ip})
                     print(f"   IP 位址: {self.device_ip}")
                     if conn_result['error']:
                         print(f"   錯誤: {conn_result['error']}")
@@ -1760,6 +1774,7 @@ class CaparocController:
                     return
                 
                 # 連線成功，顯示設備資訊
+                self.logger.info(f"已連線至 {self.device_ip}", extra={'log_module': 'CONN', 'ip': self.device_ip, 'modules': conn_result['device_info'].get('module_count', 0) if conn_result['device_info'] else 0, 'voltage': conn_result['device_info'].get('voltage', '') if conn_result['device_info'] else ''})
                 print(f"✅ Pycomm3 TCP 連線成功! (尚未建立 CIP 連線)")
                 print(f"   IP 位址: {self.device_ip}")
                 
@@ -1826,12 +1841,14 @@ class CaparocController:
                     print(f"\n❌ 發現 {len(status['errors'])} 個錯誤:")
                     for error in status['errors']:
                         print(f"   {error}")
+                        self.logger.error(error, extra={'log_module': 'SYS'})
                 
                 # 顯示警告訊息
                 if status['warnings']:
                     print(f"\n⚠️  發現 {len(status['warnings'])} 個警告:")
                     for warning in status['warnings']:
                         print(f"   {warning}")
+                        self.logger.warning(warning, extra={'log_module': 'SYS'})
                 
                 # 顯示正常狀態
                 if not status['errors'] and not status['warnings']:
@@ -1935,6 +1952,7 @@ class CaparocController:
                                 self.stop_monitor()
                             # 停止心跳
                             self._stop_heartbeat()
+                            self.logger.info("程式正常退出", extra={'log_module': 'SYS'})
                             print("✅ 退出程式")
                             break
                         
@@ -2067,6 +2085,7 @@ class CaparocController:
         except Exception as e:
             # 處理 CIPDriver 連線失敗
             print(f"\n❌ 裝置連線失敗!")
+            self.logger.error(f"連線失敗（例外）: {self.device_ip} - {str(e)}", extra={'log_module': 'CONN', 'ip': self.device_ip})
             print(f"   IP 位址: {self.device_ip}")
             print(f"   錯誤: 無法建立連線")
             print(f"\n💡 請檢查:")

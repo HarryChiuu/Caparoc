@@ -56,6 +56,7 @@ from pycomm3 import CIPDriver
 import struct
 import time
 import threading
+from caparoc_backend import CaparocBackend
 
 try:
     from logging_manager import setup as _log_setup, get_logger
@@ -66,11 +67,11 @@ except ImportError:
         return logging.getLogger(name)
 
 
-class CaparocController:
-    """CAPAROC  - 基於手冊規範"""
+class CaparocController(CaparocBackend):
+    """CLI 包裝層：繼承 CaparocBackend，加上命令列介面"""
     
-    def __init__(self, device_ip="192.168.2.111"): # 預設 IP
-        self.device_ip = device_ip
+    def __init__(self, device_ip="192.168.2.111"):
+        super().__init__(device_ip)
         self.output_instance = 0x64  # Output Assembly (EDS Assem100)
         self.input_instance = 0x65   # Input Assembly (EDS Assem101)
         self.config_instance = 0x66  # Config Assembly (EDS Assem102) - 僅用於讀取

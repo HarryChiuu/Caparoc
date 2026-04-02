@@ -189,7 +189,7 @@ class LogManager:
 
         # 日誌格式：時間戳 [等級] [模組] 訊息
         fmt = logging.Formatter(
-            '%(asctime)s [%(levelname)-7s] [%(log_module)-4s] %(message)s',
+            '%(asctime)s [%(levelname)s] [%(log_module)s] %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S',
         )
 

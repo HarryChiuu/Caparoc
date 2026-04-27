@@ -1,8 +1,8 @@
 # CAPAROC 控制器 - 使用手冊
 
-> **程式版本**: v3.7  
-> **更新日期**: 2025-11-26  
-> **主程式**: `src/caparoc_controller.py`
+> **程式版本**: v3.7 (Phase 3.5 架構)  
+> **更新日期**: 2026-04-27  
+> **主程式**: `src/caparoc_controller.py`（CLI）+ `src/caparoc_backend.py`（裝置邏輯）
 
 ---
 
@@ -674,7 +674,7 @@ python src/caparoc_controller.py --verbose
 
 ---
 
-**文件版本**: 2.0  
-**更新日期**: 2025-11-26  
-**適用程式**: caparoc_controller.py v3.7+  
+**文件版本**: 2.1  
+**更新日期**: 2026-04-27  
+**適用程式**: caparoc_controller.py v3.7+ (Phase 3.5 架構)  
 **作者**: Harry Chiu

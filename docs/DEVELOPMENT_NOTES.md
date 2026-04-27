@@ -186,6 +186,18 @@ Byte 6+:  通道狀態 (每個通道 3 bytes)
 
 ---
 
+### 3. Config Processing 監測（`_wait_for_config_processing`）
+
+**原理**: 監測 Input Assembly Byte 0 Bit 7，等待設備完成配置處理後再驗證。
+
+**問題**:
+- ❌ 監測等待耗時最多 5 秒（太慢）
+- ❌ 實測發現 Config Assembly 寫入後設備幾乎是即時應用的，Bit 7 根本不會被設為 1
+
+**結論**: 方法仍保留在代碼中（`_wait_for_config_processing()`）備用，但 `set_nominal_current` 改為直接 `sleep(0.5)` + 輪詢驗證（最多 3 秒），實測 0.5s 內即可確認。
+
+---
+
 ## ✅ 成功的解決方案
 
 ### 額定電流設定

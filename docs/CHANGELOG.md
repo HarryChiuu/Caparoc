@@ -1,5 +1,54 @@
 # Changelog
 
+---
+
+## [2026-04-02] Phase 3.5 - 前後端分離架構重構
+
+### 🎯 動機
+規劃 GUI 時發現，CLI 與 Web GUI 無法共用裝置邏輯（所有邏輯混在單一 `CaparocController` 類別中），必須先抽離純裝置邏輯層。
+
+### 🔧 實作內容
+
+**新建 `src/caparoc_backend.py`**
+
+建立 `CaparocBackend` 類別，只含裝置操作邏輯，不含任何 CLI 互動。包含 27 個方法，約 1250 行：
+
+| 分類 | 方法 |
+|------|------|
+| 通道偏移 | `get_channel_offset`, `get_total_channels`, `get_module_and_channel` |
+| 連線管理 | `_activate_connection_state`, `_heartbeat_worker`, `_start_heartbeat`, `_stop_heartbeat`, `_update_activity` |
+| Config | `get_config_channel_offset`, `update_config_parameter`, `set_nominal_current`, `_read_nominal_current_silent`, `_wait_for_config_processing`, `_verify_nominal_current` |
+| 通道控制 | `set_channel`, `_read_and_show_result`, `read_channel_status` |
+| 系統狀態 | `check_global_system_status`, `check_device_connection` |
+| 監控 | `_monitor_worker`, `_read_current_status`, `_detect_changes`, `_show_monitor_status`, `_show_monitor_alerts`, `start_monitor`, `stop_monitor`, `show_monitor_info`, `show_status` |
+
+**改造 `src/caparoc_controller.py`**
+
+`CaparocController` 從獨立類別改為繼承 `CaparocBackend`：
+
+```python
+from caparoc_backend import CaparocBackend
+
+class CaparocController(CaparocBackend):
+    def __init__(self, device_ip="192.168.2.111"):
+        super().__init__(device_ip)
+        self.help_shown = False  # CLI 專用
+```
+
+CLI 專屬方法保留：`_show_help_message()`、`_configure_device_ip()`、`_validate_ip()`、`run()`
+
+MRO 驗證：`CaparocController → CaparocBackend → object` ✅
+
+### ⚠️ 過渡期已知問題
+`caparoc_controller.py` 目前仍保留所有後端方法的完整複本（約 1500 行 shadow 方法），為過渡期安全備份。Phase 3.6.2 將執行清除，目標縮減至 ~250 行。
+
+### 📊 統計
+- **新增檔案**: `src/caparoc_backend.py`（~1250 行）
+- **修改檔案**: `src/caparoc_controller.py`（繼承架構）、`src/logging_manager.py`（log 格式調整）
+- **工時**: ~8 小時
+
+---
+
 ## [2025-11-26] Phase 3 完成 - CLI 全功能實現 🎉
 
 ### 🎯 重大里程碑

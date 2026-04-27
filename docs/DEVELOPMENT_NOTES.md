@@ -282,105 +282,52 @@ Caparoc_breaker_control/
 
 ---
 
-## 🏗️ 現行架構（2026-04-02 重構）
+## 🏗️ 現行架構（2026-04-02 重構，2026-04-27 更新）
 
-> **最後更新**: 2026-04-27
+> 重構過程與動機詳見 `CHANGELOG.md` Phase 3.5 條目。
 
-### Phase 3.5 架構重構記錄（2026-04-02 完成）
-
-#### 重構動機
-
-原始 `caparoc_controller.py` 是單一檔案、單一類別，所有邏輯（裝置通訊 + CLI 互動）全部混在一起。在規劃 GUI 時發現，若要讓 CLI 與 Web GUI 共用同一套裝置邏輯，必須先抽離純裝置邏輯層。
-
-#### 實作方式
-
-**Step 1：建立 `caparoc_backend.py`**
-
-新建 `src/caparoc_backend.py`，包含 `CaparocBackend` 類別，只含裝置操作邏輯，不含任何 CLI 互動：
-
-```
-src/caparoc_backend.py  — CaparocBackend（純裝置邏輯層）
-  ├── __init__(device_ip)
-  ├── [通道偏移] get_channel_offset, get_total_channels, get_module_and_channel
-  ├── [連線管理] _activate_connection_state, _heartbeat_worker,
-  │              _start_heartbeat, _stop_heartbeat, _update_activity
-  ├── [Config]   get_config_channel_offset, update_config_parameter,
-  │              set_nominal_current, _read_nominal_current_silent,
-  │              _wait_for_config_processing, _verify_nominal_current
-  ├── [通道控制] set_channel, _read_and_show_result, read_channel_status
-  ├── [系統狀態] check_global_system_status, check_device_connection
-  └── [監控]     _monitor_worker, _read_current_status, _detect_changes,
-                 _show_monitor_status, _show_monitor_alerts,
-                 start_monitor, stop_monitor, show_monitor_info, show_status
-```
-
-共 27 個方法，約 1250 行。
-
-**Step 2：改造 `caparoc_controller.py`**
-
-將 `CaparocController` 從獨立類別改為繼承 `CaparocBackend`：
-
-```python
-# 修改前
-class CaparocController:
-    ...
-
-# 修改後
-from caparoc_backend import CaparocBackend
-
-class CaparocController(CaparocBackend):
-    def __init__(self, device_ip="192.168.2.111"):
-        super().__init__(device_ip)
-        self.help_shown = False   # CLI 專用：避免重複顯示幫助
-        ...
-```
-
-MRO 驗證（2026-04-02）：`CaparocController → CaparocBackend → object` ✅
-
-CLI 專屬方法（僅 CaparocController 保留）：
-
-| 方法 | 說明 |
-|------|------|
-| `_show_help_message()` | 顯示完整 CLI 幫助文字 |
-| `_configure_device_ip()` | 互動式 IP 設定流程 |
-| `_validate_ip(ip_str)` | IP 格式驗證 |
-| `run()` | 主 CLI 迴圈（連線 → 狀態檢查 → 命令處理） |
-
-#### 現行問題：controller.py 仍有冗餘方法（待清除）
-
-**重要**：目前 `caparoc_controller.py` **仍保留所有後端方法的完整複本**，約 1500 行與 `caparoc_backend.py` 重複的代碼。這是**過渡期刻意保留**的狀態（安全備份），尚未執行清除。
-
-```
-caparoc_controller.py 現況（2026-04-27）
-  ├── __init__         ← CLI 專屬，會覆寫父類 __init__（重複初始化）
-  ├── get_channel_offset  ← 與 CaparocBackend 完全相同（shadow）
-  ├── get_total_channels  ← 與 CaparocBackend 完全相同（shadow）
-  ├── ... (約 20 個 shadow 方法)
-  ├── _show_help_message  ← CLI 專屬 ✅
-  ├── _configure_device_ip ← CLI 專屬 ✅
-  ├── _validate_ip        ← CLI 專屬 ✅
-  └── run()               ← CLI 專屬 ✅
-總行數：~2100 行，其中 ~1500 行是冗餘複本
-```
-
-**Phase 3.6.2 清除目標**：
-- 刪除所有 shadow 方法，僅保留 4 個 CLI 專屬方法 + `__init__`
-- 目標：~250 行（從 2100+ 行縮減）
-- 清除後 `CaparocController` 會自動繼承 `CaparocBackend` 的所有方法
-
-**清除前必做**：確認 `set_nominal_current`、`set_channel`、`show_status` 等在 controller 中的版本與 backend 一致（目前已確認一致）。
-
----
-
-### 目標架構（Phase 3.6 完成後）
+### 模組結構
 
 ```
 src/
-├── caparoc_backend.py     ← CaparocBackend（裝置邏輯，~1250 行）
-├── caparoc_controller.py  ← CaparocController(CaparocBackend)（CLI，~250 行）
+├── caparoc_backend.py     ← CaparocBackend（裝置邏輯，~1250 行，27 個方法）
+├── caparoc_controller.py  ← CaparocController(CaparocBackend)（CLI 包裝層）
 ├── caparoc_web.py         ← 未來：Dash Web 服務（長駐，瀏覽器控制）
 └── logging_manager.py     ← 日誌管理
 ```
+
+**繼承關係**：`CaparocController → CaparocBackend → object`
+
+**職責分工**：
+
+| 類別 | 職責 | 可被使用 |
+|------|------|----------|
+| `CaparocBackend` | 裝置通訊、狀態讀取、通道控制、監控 | CLI + 未來 GUI |
+| `CaparocController` | CLI 命令迴圈、IP 設定互動、幫助文字 | 僅 CLI |
+
+CLI 專屬方法：`_show_help_message()`、`_configure_device_ip()`、`_validate_ip()`、`run()`
+
+### 現行問題：controller.py 仍有冗餘方法（待清除）
+
+`caparoc_controller.py` 目前仍保留所有後端方法的完整複本（約 1500 行 shadow 方法），為過渡期安全備份，尚未執行清除。
+
+```
+caparoc_controller.py 現況（2026-04-27）
+  ├── __init__                ← 重複初始化（會覆寫父類）
+  ├── get_channel_offset      ← shadow（與 CaparocBackend 完全相同）
+  ├── get_total_channels      ← shadow
+  ├── ... (約 20 個 shadow 方法)
+  ├── _show_help_message      ← CLI 專屬 ✅
+  ├── _configure_device_ip   ← CLI 專屬 ✅
+  ├── _validate_ip            ← CLI 專屬 ✅
+  └── run()                   ← CLI 專屬 ✅
+總行數：~2100 行，其中 ~1500 行是冗餘複本
+```
+
+**Phase 3.6.2 清除目標**：刪除所有 shadow 方法，目標縮減至 ~250 行。  
+**清除前必做**：確認 controller 中的 `set_nominal_current`、`set_channel`、`show_status` 版本與 backend 一致（已確認）。
+
+### 目標架構（Phase 3.6 完成後）
 
 ```python
 # caparoc_web.py（未來）
@@ -388,7 +335,7 @@ from caparoc_backend import CaparocBackend
 import dash
 
 backend = CaparocBackend("192.168.2.111")
-# backend 直接使用，不透過 CaparocController
+# 直接使用 backend，不透過 CaparocController
 ```
 
 ### GUI 架構決策
@@ -530,7 +477,7 @@ backend = CaparocBackend("192.168.2.111")
 
 ---
 
-**文件版本**: 2.0  
+**文件版本**: 2.1  
 **建立日期**: 2025-10-29  
-**最後更新**: 2025-11-26  
-**適用程式版本**: v3.7
+**最後更新**: 2026-04-27  
+**適用程式版本**: v3.7（Phase 3.5 架構）

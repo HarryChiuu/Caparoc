@@ -1,8 +1,8 @@
 # CAPAROC Controller 完整程式流程
 
-> **文件版本**: v4.0  
-> **最後更新**: 2025年11月25日  
-> **對應程式版本**: caparoc_controller.py v3.7 beta
+> **文件版本**: v5.0  
+> **最後更新**: 2026年4月27日  
+> **對應程式版本**: caparoc_backend.py (Phase 3.5) + caparoc_controller.py v3.7
 
 ---
 
@@ -15,51 +15,104 @@
 5. [背景執行緒管理](#5-背景執行緒管理)
 6. [錯誤處理與重連](#6-錯誤處理與重連)
 
+> ⚠️ **架構異動說明（2026-04-27）**：Phase 3.5 已完成前後端分離，新增 `caparoc_backend.py`。  
+> 目前 `caparoc_controller.py` 仍有冗餘方法（shadow 父類），Phase 3.6.2 清除後 controller 將縮減至 ~250 行。
+
 ---
 
 ## 1. 程式架構總覽
 
+### 1.0 模組結構（Phase 3.5 重構後）
+
+```
+src/
+├── caparoc_backend.py     ← CaparocBackend（純裝置邏輯，~1250 行，27 個方法）
+├── caparoc_controller.py  ← CaparocController(CaparocBackend)（CLI，~2100 行*）
+├── logging_manager.py     ← 日誌管理
+└── caparoc_web.py         ← 未來：Dash Web 服務（尚未建立）
+
+* Phase 3.6.2 清除後將縮減至 ~250 行
+```
+
+**繼承關係**:
+```python
+# caparoc_controller.py
+from caparoc_backend import CaparocBackend
+
+class CaparocController(CaparocBackend):  # MRO: Controller → Backend → object
+    def __init__(self, device_ip="192.168.2.111"):
+        super().__init__(device_ip)     # 初始化所有裝置狀態
+        self.help_shown = False         # CLI 專屬屬性
+```
+
+**職責分工**:
+
+| 檔案 | 類別 | 職責 | 可被使用 |
+|------|------|------|----------|
+| `caparoc_backend.py` | `CaparocBackend` | 裝置通訊、狀態讀取、通道控制、監控 | CLI + 未來 GUI |
+| `caparoc_controller.py` | `CaparocController` | CLI 命令迴圈、IP 設定互動、幫助訊息 | 僅 CLI |
+
 ### 1.1 核心類別
 
+#### CaparocBackend（caparoc_backend.py）
+
 ```python
-class CaparocController:
-    """CAPAROC 斷路器控制器"""
-    
+class CaparocBackend:
+    """CAPAROC 裝置操作後端（無 CLI 互動邏輯）"""
+
     # 設備配置
     device_ip: str                    # 設備 IP (預設 192.168.2.111)
     module_count: int                 # 模組數量 (動態檢測, 1-16)
     channels_per_module: int = 4      # 每模組通道數
-    
+    driver: CIPDriver | None          # CIP 驅動（with 區塊內有效）
+
     # Assembly Instances
     output_instance: 0x64             # Output Assembly (18 bytes)
     input_instance: 0x65              # Input Assembly (244 bytes)
-    config_instance: 0x66             # Config Assembly (唯讀)
-    
+    config_instance: 0x66             # Config Assembly (讀寫)
+
     # 狀態管理
     channels_initialized: bool        # 通道初始化標記
-    help_shown: bool                  # 幫助訊息顯示標記
-    
+
     # 監控系統 (Phase 3-2)
     monitor_running: bool             # 監控執行狀態
     monitor_interval: float = 2.0     # 更新頻率 (秒)
     monitor_mode: str = 'silent'      # 'silent' 或 'display'
-    
+
     # 心跳系統
     heartbeat_running: bool           # 心跳執行狀態
     heartbeat_interval: float = 300.0 # 心跳間隔 (秒)
 ```
 
+#### CaparocController（caparoc_controller.py）
+
+```python
+class CaparocController(CaparocBackend):
+    """CLI 包裝層：繼承 CaparocBackend，加上命令列介面"""
+
+    # CLI 專屬屬性
+    help_shown: bool                  # 幫助訊息顯示標記（避免重連時重複顯示）
+
+    # CLI 專屬方法
+    _show_help_message()              # 顯示完整幫助文字
+    _configure_device_ip()            # 互動式 IP 設定流程
+    _validate_ip(ip_str)              # IP 格式驗證
+    run()                             # 主 CLI 迴圈
+```
+
 ### 1.2 功能模組
 
-| 模組 | 功能 | 狀態 |
-|------|------|------|
-| **額定電流設定** | Config Assembly Read-Modify-Write | ✅ 完成 |
-| **通道控制** | Output Assembly 開關控制 | ✅ 完成 |
-| **狀態監控** | Input Assembly 狀態讀取 | ✅ 完成 |
-| **即時監控** | 背景執行緒週期更新 | ✅ 完成 |
-| **心跳保活** | 防止連線超時 | ✅ 完成 |
-| **多模組支援** | 動態檢測 1-16 模組 | ✅ 完成 |
-| **IP 配置** | 啟動時可變更 IP | ✅ 完成 |
+| 模組 | 功能 | 所在類別 | 狀態 |
+|------|------|----------|------|
+| **額定電流設定** | Config Assembly Read-Modify-Write | CaparocBackend | ✅ 完成 |
+| **通道控制** | Output Assembly 開關控制 | CaparocBackend | ✅ 完成 |
+| **狀態監控** | Input Assembly 狀態讀取 | CaparocBackend | ✅ 完成 |
+| **即時監控** | 背景執行緒週期更新 | CaparocBackend | ✅ 完成 |
+| **心跳保活** | 防止連線超時 | CaparocBackend | ✅ 完成 |
+| **多模組支援** | 動態檢測 1-16 模組 | CaparocBackend | ✅ 完成 |
+| **CLI 命令迴圈** | 解析與執行 CLI 命令 | CaparocController | ✅ 完成 |
+| **IP 配置互動** | 啟動時詢問 Y/N → 重連 | CaparocController | ✅ 完成 |
+| **connect/disconnect** | Web 服務用長駐連線 | CaparocBackend | ❌ 待實作（Phase 3.6.1）|
 
 ---
 
@@ -85,51 +138,56 @@ main()
 
 ### 2.2 run() 方法完整流程圖
 
+> **架構說明（2026-04-27）**：`run()` 是 `CaparocController` 的 CLI 入口，內部使用 `with CIPDriver(...) as driver:` 建立連線，並將 `driver` 傳入後端方法（`check_device_connection(driver)`、`_start_heartbeat(driver)` 等）。連線生命週期綁定在此 `with` 區塊，Phase 3.6.1 將重構為 `connect()` / `disconnect()` 以支援 Web 長駐服務。
+
 ```
-run()
+CaparocController.run()
  │
  ├─► 【顯示啟動訊息】
- │    ├─ 版本資訊 (v3.7 beta)
+ │    ├─ 版本資訊 (v3.7)
  │    ├─ 已完成功能列表
  │    └─ 待實作功能列表
  │
- ├─► 【Step 0: 裝置連線檢查】
+ ├─► with CIPDriver(self.device_ip) as driver:   ← 連線生命週期開始
+ │    │   self.driver = driver                   ← 存入實例供後端方法使用
  │    │
- │    └─► check_device_connection(driver)
- │         │
- │         ├─► 讀取 Input Assembly (0x65)
- │         │    └─ Service: 0x0E, Instance: 0x65
- │         │
- │         ├─► 驗證資料長度 >= 6 bytes
- │         │
- │         ├─► 解析設備資訊
- │         │    ├─ Byte 1: 模組數量
- │         │    ├─ Byte 4-5: 系統電壓
- │         │    └─ device_type: 'CAPAROC PM EIP'
- │         │
- │         ├─► [成功]
- │         │    └─ 顯示: ✅ 連線成功
- │         │             IP: xxx.xxx.xxx.xxx
- │         │             模組: X 個 (Y 通道)
- │         │             電壓: XX.XV
- │         │
- │         └─► [失敗]
- │              └─ 顯示錯誤訊息
- │                 提供選項: [R]重新連線 / [Q]退出
- │                 └─ R → return 'reconnect'
- │                    Q → return None
- │
- ├─► 【Step 1: IP 配置設定】
- │    │
- │    ├─► 顯示當前 IP
- │    │
- │    ├─► 詢問: "是否要變更設備 IP? [Y/N]"
- │    │
- │    ├─► [Y] _configure_device_ip()
+ │    ├─► 【Step 0: 裝置連線檢查】
+ │    │    │   ↳ CaparocBackend.check_device_connection(driver)
  │    │    │
- │    │    ├─► 輸入新 IP
- │    │    ├─► 驗證 IP 格式 (_validate_ip)
- │    │    ├─► 確認變更 [Y/N]
+ │    │    ├─► 讀取 Input Assembly (0x65)
+ │    │    │    └─ Service: 0x0E, Instance: 0x65
+ │    │    │
+ │    │    ├─► 驗證資料長度 >= 6 bytes
+ │    │    │
+ │    │    ├─► 解析設備資訊
+ │    │    │    ├─ Byte 1: 模組數量
+ │    │    │    ├─ Byte 4-5: 系統電壓
+ │    │    │    └─ device_type: 'CAPAROC PM EIP'
+ │    │    │
+ │    │    ├─► [成功]
+ │    │    │    └─ 顯示: ✅ 連線成功
+ │    │    │             IP: xxx.xxx.xxx.xxx
+ │    │    │             模組: X 個 (Y 通道)
+ │    │    │             電壓: XX.XV
+ │    │    │
+ │    │    └─► [失敗]
+ │    │         └─ 顯示錯誤訊息
+ │    │            提供選項: [R]重新連線 / [Q]退出
+ │    │            └─ R → return 'reconnect'
+ │    │               Q → return None
+ │    │
+ │    ├─► 【Step 1: IP 配置設定】
+ │    │    │   ↳ CaparocController._configure_device_ip()（CLI 專屬）
+ │    │    │
+ │    │    ├─► 顯示當前 IP
+ │    │    │
+ │    │    ├─► 詢問: "是否要變更設備 IP? [Y/N]"
+ │    │    │
+ │    │    ├─► [Y] _configure_device_ip()
+ │    │    │    │
+ │    │    │    ├─► 輸入新 IP
+ │    │    │    ├─► 驗證 IP 格式 (_validate_ip)
+ │    │    │    ├─► 確認變更 [Y/N]
  │    │    │
  │    │    └─► [確認] 
  │    │         └─ self.device_ip = new_ip
@@ -218,14 +276,16 @@ run()
  │              現在可以安全地控制通道
  │
  ├─► 【Step 4: 啟動 CIP 連線與心跳】
+ │    │   ↳ CaparocBackend._activate_connection_state(driver)
+ │    │   ↳ CaparocBackend._start_heartbeat(driver)
  │    │
  │    ├─► _activate_connection_state(driver)
- │    │    └─ 建立 CIP Forward Open 連線
+ │    │    └─ connected=True 建立 CIP 連線上下文
  │    │
  │    └─► _start_heartbeat(driver)
- │         └─ 啟動心跳背景執行緒 (300秒週期)
+ │         └─ 啟動心跳背景執行緒 (300秒閒置後觸發)
  │
- ├─► 【Step 5: 顯示幫助訊息】
+ ├─► 【Step 5: 顯示幫助訊息】（CaparocController 專屬）
  │    │
  │    ├─► [首次連線] help_shown == False
  │    │    └─ _show_help_message()  # 完整幫助
@@ -234,7 +294,7 @@ run()
  │    └─► [重新連線] help_shown == True
  │         └─ 簡短提示: "輸入 'h' 查看幫助"
  │
- └─► 【Step 6: 進入命令迴圈】
+ └─► 【Step 6: 進入命令迴圈】（CaparocController 專屬）
       │
       └─► while True:
            │
@@ -1059,6 +1119,7 @@ HEARTBEAT_CHECK_INTERVAL = 10.0  # 秒
 
 ## 📝 版本歷史
 
+- **v5.0** (2026-04-27): 反映 Phase 3.5 前後端分離架構（CaparocBackend + CaparocController 繼承）
 - **v4.0** (2025-11-25): 完整流程重寫，整合所有功能
 - **v3.7** (2025-11-13): 額定電流設定優化（漸進式重試）
 - **v3.6** (2025-11-12): 監控功能完成

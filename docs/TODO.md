@@ -276,7 +276,70 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-#### 3.6.3 Web 框架安裝與基本骨架驗證
+#### 3.6.3 設備 IP 位址寫入功能（硬寫設備 IP）
+
+> **與現有 IP 切換功能的差異**：
+> - 現有 `_configure_device_ip()` → 只改變「程式要連哪個 IP」
+> - 本功能 → **直接修改 CAPAROC 設備本身的 IP 位址**
+>
+> **為何在 Dash 之前**：此功能可能因設備限制而失敗，結論影響 GUI 是否需整合此功能；且為純後端功能，不依賴 GUI。
+
+**技術方案**：CIP TCP/IP Interface Object（Class 0xF5），透過 pycomm3 `generic_message`，**不需新增 Python 模組**。
+
+##### Step 1：探測 Class 0xF5 支援度（需連接實體設備）
+- [ ] 讀取 Attr 1（Status）— 介面狀態
+- [ ] 讀取 Attr 3（Configuration Control）— Static / DHCP 模式
+- [ ] 讀取 Attr 5（Interface Configuration）— 目前 IP / Subnet / Gateway
+- [ ] 記錄回應格式與資料長度，確認設備支援程度
+
+```python
+resp = driver.generic_message(
+    service=0x0E, class_code=0xF5, instance=1,
+    attribute=5, connected=False
+)
+# 預期: IP(4) + Subnet(4) + Gateway(4) + NameServer1(4) + NameServer2(4) + DomainName(len)
+```
+
+##### Step 2：嘗試寫入 IP
+- [ ] 先設定 Attr 3 = 0x00（Static IP 模式）
+- [ ] 寫入 Attr 5（新 IP + Subnet + Gateway）
+- [ ] 處理可能的錯誤（"Too much data" = 設備拒絕寫入）
+
+```python
+import socket, struct
+config_data = (socket.inet_aton("192.168.2.200") +
+               socket.inet_aton("255.255.255.0") +
+               socket.inet_aton("192.168.2.1") +
+               bytes(4) + bytes(4) +        # NS1, NS2
+               struct.pack('<H', 0))         # DomainName length
+driver.generic_message(
+    service=0x10, class_code=0xF5, instance=1,
+    attribute=5, request_data=config_data, connected=False
+)
+```
+
+##### Step 3：實作與整合（視 Step 2 結果決定是否進行）
+- [ ] `caparoc_backend.py` 新增：
+  - `read_device_network_config()` — 讀取目前 IP / Subnet / Gateway
+  - `set_device_ip(new_ip, subnet, gateway)` — 寫入新 IP（含驗證）
+- [ ] `caparoc_controller.py` CLI 新增命令：`setip <ip> [subnet] [gateway]`
+- [ ] 安全機制：雙重確認、寫入後用新 IP reconnect 驗證
+
+##### Step 4：記錄結果
+- [ ] 成功 → 更新 DEVELOPMENT_NOTES.md，記錄 Class 0xF5 可寫入
+- [ ] 失敗 → 記錄為「已知限制」，建議使用 Phoenix Contact 工具（PRONETA / IP Address Wizard）
+
+**風險**：
+- ⚠️ CAPAROC 歷史上對 CIP 寫入有限制（Config Assembly / Parameter Object 均唯讀）
+- ⚠️ 寫入後連線立即中斷（正常，設備 IP 已變）
+- ⚠️ 寫錯 IP 需實體工具復原
+
+**預估工時**: Step 1-2 探測 0.5h + Step 3 實作 1-2h + Step 4 文件 0.25h  
+**前置條件**: 需連接實體 CAPAROC 設備測試
+
+---
+
+#### 3.6.4 Web 框架安裝與基本骨架驗證
 
 - [ ] 安裝 `dash`（`pip install dash`）
 - [ ] 建立 `src/caparoc_web.py` 最小骨架（`backend.connect()` + 一個頁面可開啟）
@@ -287,7 +350,7 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-**Phase 3.6 預估總工時**: 2.5–3.5 小時
+**Phase 3.6 預估總工時**: 4–6 小時
 
 ---
 

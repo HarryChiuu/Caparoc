@@ -1076,6 +1076,9 @@ class CaparocController(CaparocBackend):
         print("                                     範例: monitor start 5 silent")
         print("  monitor stop                 - 停止監控")
         print("  monitor status               - 顯示監控狀態")
+        print("\n【設備設定】")
+        print("  setting                      - 進入設備設定選單")
+        print("                                 (讀取/寫入設備網路 IP 等設定)")
         print("\n【系統】")
         print("  h / help                     - 顯示此幫助信息")
         print("  reconnect                    - 重新連線設備")
@@ -1720,7 +1723,149 @@ class CaparocController(CaparocBackend):
             return True
         except (ValueError, AttributeError):
             return False
-    
+
+    # ==================== 設備設定選單（Phase 3.6.3） ====================
+
+    def _handle_write_device_ip(self, driver):
+        """
+        寫入新 IP 至設備的完整互動流程（雙重確認）。
+
+        Returns:
+            'reconnect' — 寫入成功，需以新 IP 重連
+            None        — 取消或失敗
+        """
+        print("\n" + "="*60)
+        print("✏️  寫入設備 IP 位址")
+        print("="*60)
+
+        # 先讀取目前設定，讓使用者確認
+        print("正在讀取設備目前網路設定...")
+        cfg = self.read_device_network_config(driver)
+        if cfg['success']:
+            print(f"  目前 IP:       {cfg['ip']}")
+            print(f"  子網路遮罩:    {cfg['subnet']}")
+            print(f"  預設閘道:      {cfg['gateway'] if cfg['gateway'] != '0.0.0.0' else '（未設定）'}")
+            print(f"  IP 取得方式:   {cfg['config_control_str']}")
+        else:
+            print(f"  ⚠️  無法讀取目前設定: {cfg['error']}")
+            print(f"  程式連線 IP: {self.device_ip}")
+
+        print("\n" + "-"*60)
+        print("請輸入新的 IP 設定（輸入 'cancel' 取消）")
+
+        # --- 輸入新 IP ---
+        while True:
+            new_ip = input("\n新 IP 位址: ").strip()
+            if new_ip.lower() == 'cancel':
+                print("已取消")
+                return None
+            if self._validate_ip(new_ip):
+                break
+            print(f"  ⚠️  無效的 IP 格式: {new_ip}，請重新輸入")
+
+        # --- 輸入 Subnet（可直接 Enter 採用預設） ---
+        default_subnet = cfg['subnet'] if cfg['success'] and cfg['subnet'] else "255.255.255.0"
+        subnet_input = input(f"子網路遮罩 [Enter=使用 {default_subnet}]: ").strip()
+        if subnet_input == '':
+            subnet = default_subnet
+        elif self._validate_ip(subnet_input):
+            subnet = subnet_input
+        else:
+            print(f"  ⚠️  無效格式，使用預設 {default_subnet}")
+            subnet = default_subnet
+
+        # --- 輸入 Gateway（可直接 Enter 採用空值） ---
+        gateway_input = input("預設閘道 [Enter=不設定（0.0.0.0）]: ").strip()
+        if gateway_input == '':
+            gateway = ""
+        elif self._validate_ip(gateway_input):
+            gateway = gateway_input
+        else:
+            print("  ⚠️  無效格式，使用空值")
+            gateway = ""
+
+        gw_display = gateway if gateway else "0.0.0.0（不設定）"
+
+        # --- 第一次確認 ---
+        print("\n" + "="*60)
+        print("⚠️  即將寫入以下設定至設備：")
+        print(f"  新 IP:      {new_ip}")
+        print(f"  子網路:     {subnet}")
+        print(f"  閘道:       {gw_display}")
+        print("="*60)
+        print("⚠️  寫入後設備 IP 將立即變更，目前連線會中斷！")
+        confirm1 = input("\n確認要繼續嗎？ [Y/N]: ").strip().upper()
+        if confirm1 != 'Y':
+            print("已取消")
+            return None
+
+        # --- 第二次確認（防誤觸） ---
+        confirm2 = input(f"再次確認：將設備 IP 改為 {new_ip}？ [YES/no]: ").strip()
+        if confirm2.lower() not in ('yes', 'y'):
+            print("已取消")
+            return None
+
+        # --- 執行寫入 ---
+        print(f"\n正在寫入 IP {new_ip} 至設備...")
+        write_result = self.set_device_ip(driver, new_ip, subnet, gateway)
+
+        if write_result['success']:
+            print(f"✅ 寫入成功！設備 IP 已變更為 {new_ip}")
+            print("   連線已中斷（正常），正在以新 IP 重新連線...")
+            self.device_ip = new_ip
+            return 'reconnect'
+        else:
+            print(f"❌ 寫入失敗: {write_result['error']}")
+            print("   設備可能不支援此操作，或拒絕寫入")
+            print("   提示：可使用 Phoenix Contact PRONETA 或 IP Address Wizard 設定 IP")
+            return None
+
+    def _handle_setting_command(self, driver):
+        """
+        設備設定子選單，供 CLI 主迴圈呼叫。
+
+        Returns:
+            'reconnect' — 需要重新連線（IP 已變更）
+            None        — 正常返回主選單
+        """
+        while True:
+            print("\n" + "="*60)
+            print("⚙️  設備設定選單")
+            print("="*60)
+            print("  [1] 讀取目前設備網路設定")
+            print("  [2] 寫入新 IP 至設備（硬寫設備 IP）")
+            print("  [0] 返回主選單")
+            print("="*60)
+
+            choice = input("\n請選擇 [0/1/2]: ").strip()
+
+            if choice == '0':
+                return None
+
+            elif choice == '1':
+                print("\n正在讀取設備網路設定...")
+                cfg = self.read_device_network_config(driver)
+                print("\n" + "-"*40)
+                if cfg['success']:
+                    print(f"  IP 位址:     {cfg['ip']}")
+                    print(f"  子網路遮罩:  {cfg['subnet']}")
+                    print(f"  預設閘道:    {cfg['gateway'] if cfg['gateway'] != '0.0.0.0' else '（未設定）'}")
+                    print(f"  IP 取得方式: {cfg['config_control_str']}")
+                    if cfg['status'] != -1:
+                        print(f"  介面狀態:    0x{cfg['status']:08X}")
+                else:
+                    print(f"  ❌ 讀取失敗: {cfg['error']}")
+                    print("     設備可能不支援 CIP Class 0xF5")
+                print("-"*40)
+
+            elif choice == '2':
+                result = self._handle_write_device_ip(driver)
+                if result == 'reconnect':
+                    return 'reconnect'
+
+            else:
+                print("  ⚠️  請輸入 0、1 或 2")
+
 # ========== 主程式入口 ==========
     def run(self):
         self.logger.info("CAPAROC PM EIP Controller v3.7 啟動", extra={'log_module': 'SYS'})
@@ -2037,6 +2182,14 @@ class CaparocController(CaparocBackend):
                             self._update_activity()
                             ch = int(cmd.split()[1])
                             self.set_channel(ch, False)
+                        elif cmd == 'setting':
+                            result = self._handle_setting_command(driver)
+                            if result == 'reconnect':
+                                if self.monitor_running:
+                                    self.stop_monitor()
+                                self._stop_heartbeat()
+                                return 'reconnect'
+
                         elif cmd.startswith('monitor'):
                             parts = cmd.split()
                             if len(parts) < 2:

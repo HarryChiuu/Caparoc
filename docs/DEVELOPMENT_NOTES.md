@@ -406,9 +406,24 @@ backend = CaparocBackend("192.168.2.111")
 
 ---
 
-## � 進行中的技術方案
+## 🔧 暫緩的技術方案
 
 ### Phase 3.6.3：PROFINET DCP 寫入設備 IP（scapy 方案）
+
+> **⏸️ 狀態：暫緩開發（2026-05-12）**
+>
+> **暫緩原因**：
+> - Windows 上 scapy Layer 2 raw frame 需要 **Npcap 驅動**（獨立安裝），無法內嵌於 Python 打包
+> - Npcap OEM（可靜默安裝）需付費授權
+> - 影響程式可攜性：打包後的工具需要使用者額外安裝系統驅動
+>
+> **目前已完成的探索（保留供日後參考）**：
+> - `tests/test_scapy_dcp.py`：診斷腳本，已確認 scapy 2.7.0 可在 sv 環境安裝
+> - 設備 MAC 可取得（`cc:cc:ea:8b:5f:18`），ping / ARP 正常
+> - DCP Identify 廣播因缺 Npcap 未能測試，設備是否回應 DCP 尚未確認
+>
+> **替代方案建議**：使用 Phoenix Contact 官方工具 **PRONETA Basic**（免費）設定設備 IP。
+> `setting [2]` CLI 選項改為顯示導向說明，不實際寫入。
 
 **背景**: CIP Class 0xF5 實測不可用，原廠建議改用 scapy 發送 PROFINET DCP 封包（Layer 2 Ethernet）。
 

@@ -1245,3 +1245,132 @@ class CaparocBackend:
             result['error'] = f"連線失敗: {str(e)}"
 
         return result
+
+    # ==================== 網路設定（CIP Class 0xF5） ====================
+
+    def read_device_network_config(self, driver):
+        """
+        讀取設備目前的網路設定（CIP TCP/IP Interface Object, Class 0xF5）。
+
+        讀取：
+          - Attr 1 (Status)             — 介面狀態旗標
+          - Attr 3 (Configuration Control) — 0x00=Static, 0x01=BOOTP, 0x02=DHCP
+          - Attr 5 (Interface Configuration) — IP / Subnet / Gateway
+
+        Returns:
+            dict: {
+                'success': bool,
+                'ip': str, 'subnet': str, 'gateway': str,
+                'config_control': int,  # 0=Static, 1=BOOTP, 2=DHCP
+                'config_control_str': str,
+                'status': int,
+                'error': str or None
+            }
+        """
+        result = {
+            'success': False,
+            'ip': '', 'subnet': '', 'gateway': '',
+            'config_control': -1, 'config_control_str': '未知',
+            'status': -1, 'error': None
+        }
+        try:
+            # 讀取 Attr 1: Status
+            resp_status = driver.generic_message(
+                service=0x0E, class_code=0xF5, instance=1,
+                attribute=1, connected=False
+            )
+            if resp_status and hasattr(resp_status, 'value'):
+                raw = resp_status.value
+                if len(raw) >= 4:
+                    result['status'] = struct.unpack('<I', raw[:4])[0]
+
+            # 讀取 Attr 3: Configuration Control
+            resp_ctrl = driver.generic_message(
+                service=0x0E, class_code=0xF5, instance=1,
+                attribute=3, connected=False
+            )
+            if resp_ctrl and hasattr(resp_ctrl, 'value'):
+                raw = resp_ctrl.value
+                if len(raw) >= 4:
+                    ctrl = struct.unpack('<I', raw[:4])[0]
+                    result['config_control'] = ctrl
+                    result['config_control_str'] = {
+                        0: 'Static IP', 1: 'BOOTP', 2: 'DHCP'
+                    }.get(ctrl, f'未知 (0x{ctrl:02X})')
+
+            # 讀取 Attr 5: Interface Configuration
+            resp_cfg = driver.generic_message(
+                service=0x0E, class_code=0xF5, instance=1,
+                attribute=5, connected=False
+            )
+            if resp_cfg and hasattr(resp_cfg, 'value'):
+                raw = resp_cfg.value
+                if len(raw) >= 12:
+                    import socket as _socket
+                    result['ip']      = _socket.inet_ntoa(raw[0:4])
+                    result['subnet']  = _socket.inet_ntoa(raw[4:8])
+                    result['gateway'] = _socket.inet_ntoa(raw[8:12])
+                    result['success'] = True
+            else:
+                result['error'] = "Attr 5 無回應"
+
+        except Exception as e:
+            result['error'] = str(e)
+
+        return result
+
+    def set_device_ip(self, driver, new_ip, subnet="255.255.255.0", gateway=""):
+        """
+        透過 CIP Class 0xF5 將設備 IP 硬寫入設備。
+
+        步驟：
+          1. 寫入 Attr 3 = 0x00（強制 Static IP 模式）
+          2. 寫入 Attr 5（new_ip + subnet + gateway + NS1=0 + NS2=0 + DomainName=""）
+
+        ⚠️ 寫入成功後設備 IP 立即改變，現有連線會中斷（正常現象）。
+
+        Args:
+            driver: CIPDriver 實例（connected=False 模式）
+            new_ip (str):  新 IP 位址，e.g. "192.168.2.200"
+            subnet (str):  子網路遮罩，預設 "255.255.255.0"
+            gateway (str): 預設閘道，空字串 = "0.0.0.0"
+
+        Returns:
+            dict: {'success': bool, 'error': str or None}
+        """
+        import socket as _socket
+
+        result = {'success': False, 'error': None}
+
+        # 空 gateway 轉為全零
+        gw_addr = gateway if gateway else "0.0.0.0"
+
+        try:
+            # Step 1: 寫入 Attr 3 = Static IP (DWORD = 0x00000000)
+            static_data = struct.pack('<I', 0)
+            resp_ctrl = driver.generic_message(
+                service=0x10, class_code=0xF5, instance=1,
+                attribute=3, request_data=static_data, connected=False
+            )
+            # generic_message 失敗時通常拋 Exception，不需額外檢查回傳值
+
+            # Step 2: 組裝 Attr 5 資料
+            # 格式: IP(4) + Subnet(4) + Gateway(4) + NS1(4) + NS2(4) + DomainName UDINT len(4) + data(0)
+            config_data = (
+                _socket.inet_aton(new_ip) +
+                _socket.inet_aton(subnet) +
+                _socket.inet_aton(gw_addr) +
+                bytes(4) +               # NameServer1 = 0.0.0.0
+                bytes(4) +               # NameServer2 = 0.0.0.0
+                struct.pack('<H', 0)     # DomainName SSTRING: length=0
+            )
+            resp_cfg = driver.generic_message(
+                service=0x10, class_code=0xF5, instance=1,
+                attribute=5, request_data=config_data, connected=False
+            )
+            result['success'] = True
+
+        except Exception as e:
+            result['error'] = str(e)
+
+        return result

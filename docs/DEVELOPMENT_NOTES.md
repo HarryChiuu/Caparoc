@@ -198,6 +198,21 @@ Byte 6+:  通道狀態 (每個通道 3 bytes)
 
 ---
 
+### 4. CIP Class 0xF5 寫入 IP（`set_device_ip` 初版）
+
+**原理**: 透過 CIP TCP/IP Interface Object（Class 0xF5）寫入設備 IP：
+1. Set_Attribute_Single Attr 3 = `0x00`（強制 Static IP 模式）
+2. Set_Attribute_Single Attr 5（IP + Subnet + Gateway + NS + DomainName）
+
+**問題**:
+- ❌ Attr 5 讀取無回應（`read_device_network_config` 回傳「Attr 5 無回應」）
+- ❌ 設備不支援 CIP Class 0xF5 的標準 Get/Set，嘗試 Attr 1/3/5 均失敗
+- ❌ 原廠確認 CAPAROC 設備不透過 CIP 管理 IP，需改用 PROFINET DCP 協議
+
+**結論**: 放棄 CIP 0xF5 方案，改用 PROFINET DCP Layer 2 封包（`scapy` 實作）。現有程式碼（`set_device_ip()`、`read_device_network_config()`）將保留簽名、改寫函式體，不影響 CLI 呼叫層。
+
+---
+
 ## ✅ 成功的解決方案
 
 ### 額定電流設定
@@ -363,7 +378,7 @@ backend = CaparocBackend("192.168.2.111")
 
 1. **`connect()` / `disconnect()` 實作**（最重要）— 連線生命週期目前綁定在 CLI `with CIPDriver(...) as driver:` 內，Web 服務無法長駐
 2. **controller.py 冗餘方法清除** — 約 1500 行重複邏輯（Phase 3.6.2）
-3. **設備 IP 硬寫探測** — Class 0xF5 可行性測試（Phase 3.6.3）
+3. **設備 IP 硬寫（PROFINET DCP）** — CIP 0xF5 已確認不可用，改用 scapy 實作中（Phase 3.6.3）
 4. **Dash 安裝與骨架驗證** — `pip install dash` + 最小可用頁面（Phase 3.6.4）
 
 ---
@@ -391,7 +406,107 @@ backend = CaparocBackend("192.168.2.111")
 
 ---
 
-## 💡 關鍵經驗教訓
+## 🔧 暫緩的技術方案
+
+### Phase 3.6.3：PROFINET DCP 寫入設備 IP（scapy 方案）
+
+> **⏸️ 狀態：暫緩開發（2026-05-12）**
+>
+> **暫緩原因**：
+> - Windows 上 scapy Layer 2 raw frame 需要 **Npcap 驅動**（獨立安裝），無法內嵌於 Python 打包
+> - Npcap OEM（可靜默安裝）需付費授權
+> - 影響程式可攜性：打包後的工具需要使用者額外安裝系統驅動
+>
+> **目前已完成的探索（保留供日後參考）**：
+> - `tests/test_scapy_dcp.py`：診斷腳本，已確認 scapy 2.7.0 可在 sv 環境安裝
+> - 設備 MAC 可取得（`cc:cc:ea:8b:5f:18`），ping / ARP 正常
+> - DCP Identify 廣播因缺 Npcap 未能測試，設備是否回應 DCP 尚未確認
+>
+> **替代方案建議**：使用 Phoenix Contact 官方工具 **PRONETA Basic**（免費）設定設備 IP。
+> `setting [2]` CLI 選項改為顯示導向說明，不實際寫入。
+
+**背景**: CIP Class 0xF5 實測不可用，原廠建議改用 scapy 發送 PROFINET DCP 封包（Layer 2 Ethernet）。
+
+#### 為何 PROFINET DCP 可行
+
+Phoenix Contact 的 PRONETA / IP Address Wizard 工具即使用此方式，不依賴 TCP/IP 層，直接透過 Ethernet frame 操作設備網路設定。CAPAROC 雖作為 EtherNet/IP 設備，但 Phoenix Contact 硬體通常同時支援 PROFINET DCP 的 IP 設定命令（Layer 2）。
+
+#### 協定結構（PROFINET DCP Set Request）
+
+```
+Ethernet Frame:
+  dst_mac : 設備 MAC（unicast）
+  src_mac : 本機 MAC（scapy 自動填入）
+  type    : 0x8892（PROFINET RT）
+
+PROFINET RT Header:
+  frame_id: 0xFEFD（DCP unicast request）
+
+DCP Header:
+  service_id      : 0x04（Set）
+  service_type    : 0x00（Request）
+  xid             : 4 bytes（任意 transaction ID）
+  response_delay  : 0x0000
+  dcp_data_length : 總 block 長度
+
+DCP Block (IP Suite):
+  option          : 0x01（IP）
+  sub_option      : 0x02（IP Suite）
+  block_length    : 14（2+4+4+4）
+  block_qualifier : 0x0001（永久儲存）
+  ip_addr         : 4 bytes
+  subnet          : 4 bytes
+  gateway         : 4 bytes
+```
+
+#### 程式碼修改計畫（最小範圍）
+
+**僅修改 `caparoc_backend.py`，`caparoc_controller.py` 完全不動。**
+
+| 方法 | 修改內容 |
+|------|----------|
+| `set_device_ip()` | 函數體完全改寫：移除 CIP 0xF5 邏輯，改用 scapy 發送 DCP Set 封包；簽名不變 |
+| `read_device_network_config()` | 新增 fallback：CIP 失敗時改用 scapy 發送 DCP Identify（FrameID 0xFEFF）或回傳已知 `self.device_ip` |
+| `_get_mac_address(ip)` | 新增私有 helper：ping 一次後解析 `arp -a` 取得 MAC |
+
+**`set_device_ip()` 新邏輯流程：**
+```
+1. _get_mac_address(self.device_ip) → 取得設備 MAC
+2. 組裝 PROFINET DCP Set Request Ethernet frame（scapy）
+3. sendp(frame, iface=None, verbose=False)  ← scapy 發送
+4. 等待 ~1 秒（設備套用設定）
+5. 回傳 {'success': True/False, 'error': ...}
+```
+
+**`read_device_network_config()` 新邏輯流程：**
+```
+1. 先嘗試 CIP Attr 1/3/5（保留現有邏輯）
+2. 若 Attr 5 失敗 → 改送 DCP Identify Request（廣播，FrameID 0xFEFF）
+   - 解析回應中的 IP Suite block
+3. 若 DCP 也失敗 → 至少回傳 {'ip': self.device_ip, 'success': False, 'error': ...}
+```
+
+#### 相依套件
+
+```bash
+pip install scapy
+```
+
+⚠️ **Windows 需要管理員身份執行**（scapy 使用 raw socket）。  
+✅ 若無管理員權限，`set_device_ip()` 應捕捉 PermissionError 並回傳明確錯誤訊息。
+
+#### 預期風險
+
+| 風險 | 處置 |
+|------|------|
+| CAPAROC 不回應 DCP Set | 記錄為「已知限制」，建議使用者改用 PRONETA |
+| Windows 無管理員權限 | 程式捕捉 PermissionError，提示需以管理員身份執行 |
+| scapy 未安裝 | try/except ImportError，回傳明確錯誤訊息 |
+| 寫錯 IP 導致斷線無法恢復 | 雙重確認（已在 controller CLI 層實作） |
+
+---
+
+## �💡 關鍵經驗教訓
 
 ### 1. Config Assembly 的誤解
 

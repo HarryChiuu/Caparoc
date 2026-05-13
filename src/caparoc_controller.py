@@ -1942,37 +1942,6 @@ class CaparocController(CaparocBackend):
                 
                 print("="*60)
                 
-                # ========== IP 配置詢問 (Phase 3-5) ==========
-                print("\n" + "="*60)
-                print("🌐 IP 配置設定")
-                print("="*60)
-                print(f"當前連線 IP: {self.device_ip} (預設)")
-                print("\n是否要變更設備 IP 位址？")
-                print("  [Y] 是，我要設定新的 IP")
-                print("  [N] 否，使用預設 IP (192.168.2.111)")
-                
-                while True:
-                    choice = input("\n請選擇 [Y/N]: ").strip().upper()
-                    if choice == 'Y':
-                        new_ip = self._configure_device_ip()
-                        if new_ip and new_ip != self.device_ip:
-                            print(f"\n🔄 正在使用新 IP 重新連線: {new_ip}")
-                            self.device_ip = new_ip
-                            return 'reconnect'  # 重新連線
-                        elif new_ip == self.device_ip:
-                            print(f"\n✅ IP 未變更，繼續使用 {self.device_ip}")
-                            break
-                        else:
-                            print("\n⚠️  IP 設定取消，繼續使用當前 IP")
-                            break
-                    elif choice == 'N':
-                        print(f"\n✅ 使用預設 IP: {self.device_ip}")
-                        break
-                    else:
-                        print("   ⚠️  請輸入 Y 或 N")
-                
-                print("="*60)
-                
                 # ========== Phase 3: 步驟 0 - 全域系統狀態檢查 ==========
                 print("\n" + "="*60)
                 print("🔍 Phase 3: Check global system status")

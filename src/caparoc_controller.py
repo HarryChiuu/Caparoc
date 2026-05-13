@@ -56,7 +56,39 @@ from pycomm3 import CIPDriver
 import struct
 import time
 import threading
+import json
+import os
 from caparoc_backend import CaparocBackend
+
+# 設定檔路徑（相對於本檔案所在目錄）
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            '..', 'config', 'device_config.json')
+
+def _load_default_ip():
+    """從 config/device_config.json 讀取預設 IP，讀取失敗則回傳 192.168.2.111"""
+    try:
+        with open(_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            ip = data.get('default_ip', '192.168.2.111')
+            return ip
+    except Exception:
+        return '192.168.2.111'
+
+def _save_default_ip(ip):
+    """將指定 IP 寫入 config/device_config.json 作為預設 IP"""
+    try:
+        try:
+            with open(_CONFIG_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+        data['default_ip'] = ip
+        with open(_CONFIG_PATH, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+        return True
+    except Exception as e:
+        print(f"  ⚠️  無法寫入設定檔: {e}")
+        return False
 
 try:
     from logging_manager import setup as _log_setup, get_logger
@@ -70,7 +102,9 @@ except ImportError:
 class CaparocController(CaparocBackend):
     """CLI 包裝層：繼承 CaparocBackend，加上命令列介面"""
     
-    def __init__(self, device_ip="192.168.2.111"):
+    def __init__(self, device_ip=None):
+        if device_ip is None:
+            device_ip = _load_default_ip()
         super().__init__(device_ip)
         self.output_instance = 0x64  # Output Assembly (EDS Assem100)
         self.input_instance = 0x65   # Input Assembly (EDS Assem101)
@@ -1690,6 +1724,7 @@ class CaparocController(CaparocBackend):
                 print(f"\n⚠️  確認要將 IP 從 {self.device_ip} 變更為 {new_ip} 嗎？")
                 confirm = input("請輸入 [Y]確認 / [N]取消: ").strip().upper()
                 if confirm == 'Y':
+                    self._ask_save_default_ip(new_ip)
                     return new_ip
                 elif confirm == 'N':
                     print("已取消變更")
@@ -1723,6 +1758,14 @@ class CaparocController(CaparocBackend):
             return True
         except (ValueError, AttributeError):
             return False
+
+    def _ask_save_default_ip(self, new_ip):
+        """詢問是否將 new_ip 存為預設 IP，並執行寫入。"""
+        save = input(f"  是否將 {new_ip} 存為預設 IP？ [Y/N]: ").strip().upper()
+        if save == 'Y':
+            if _save_default_ip(new_ip):
+                print(f"  ✅ 已儲存 {new_ip} 為預設 IP")
+            # 失敗訊息由 _save_default_ip 內部顯示
 
     # ==================== 設備設定選單（Phase 3.6.3） ====================
 
@@ -1920,6 +1963,7 @@ class CaparocController(CaparocBackend):
                                 print(f"\n🔄 使用新 IP {self.device_ip} 重新連線...\n")
                                 return 'reconnect'
                             # 取消則繼續顯示選單
+                            # （存檔詢問已在 _configure_device_ip 內完成）
                         elif user_choice == 'Q':
                             print("✅ 退出程式")
                             return
@@ -2241,6 +2285,7 @@ class CaparocController(CaparocBackend):
                         print(f"\n🔄 使用新 IP {self.device_ip} 重新連線...\n")
                         return 'reconnect'
                     # 取消則繼續顯示選單
+                    # （存檔詢問已在 _configure_device_ip 內完成）
                 elif user_choice == 'Q':
                     print("✅ 退出程式")
                     return
@@ -2248,7 +2293,7 @@ class CaparocController(CaparocBackend):
                     print("   ⚠️  請輸入 R (重新連線)、C (變更 IP) 或 Q (退出)")
 
 def main():
-    controller = CaparocController()
+    controller = CaparocController()  # 自動從 config/device_config.json 讀取預設 IP
     while True:
         result = controller.run()
         if result == 'reconnect':

@@ -1964,16 +1964,8 @@ class CaparocController(CaparocBackend):
 # ========== 主程式入口 ==========
     def run(self):
         self.logger.info("CAPAROC PM EIP Controller v3.7 啟動", extra={'log_module': 'SYS'})
-        print("🚀 CAPAROC PM EIP Controller v3.7 beta")
-        print("\n✅  目前可用功能:")
-        print("1. 開關控制: 各模組通道進行啟閉控制")
-        print("2. 狀態顯示: Global/channel 系統狀態檢查")
-        print("3. 即時監控: 依據設定時間定時回傳系統狀態")
-        print("4. 設備IP配置: 啟動時可變更設備 IP 位址")
-        print("\n⚠️  待實作功能:")
-        print("   1. 額定電流修改 (Phase 3-3)")
-        print("   2. 通道資訊擴展 (Phase 3-4)")
-        print("   3. GUI 規劃設計 (Phase 3-5)")
+        print("🚀 CAPAROC PM EIP Controller v3.7")
+        print(f"   預設連線 IP: {self.device_ip}")
         
         # ========== 步驟 0: 裝置連線檢查 ==========
         print("\n" + "="*60)
@@ -2262,6 +2254,7 @@ class CaparocController(CaparocBackend):
                                     self.stop_monitor()
                                 self._stop_heartbeat()
                                 return 'reconnect'
+                            print("  💡 輸入 'h' 可查看所有指令")
 
                         elif cmd == 'settingdeviceip':
                             result = self._handle_settingdeviceip_command(driver)
@@ -2270,6 +2263,7 @@ class CaparocController(CaparocBackend):
                                     self.stop_monitor()
                                 self._stop_heartbeat()
                                 return 'reconnect'
+                            print("  💡 輸入 'h' 可查看所有指令")
 
                         elif cmd.startswith('monitor'):
                             parts = cmd.split()

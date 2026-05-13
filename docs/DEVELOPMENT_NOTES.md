@@ -378,7 +378,7 @@ backend = CaparocBackend("192.168.2.111")
 
 1. **`connect()` / `disconnect()` 實作**（最重要）— 連線生命週期目前綁定在 CLI `with CIPDriver(...) as driver:` 內，Web 服務無法長駐
 2. **controller.py 冗餘方法清除** — 約 1500 行重複邏輯（Phase 3.6.2）
-3. **設備 IP 硬寫（PROFINET DCP）** — CIP 0xF5 已確認不可用，改用 scapy 實作中（Phase 3.6.3）
+3. **設備 IP 硬寫（PROFINET DCP）** — 暫緩（需 Npcap 驅動，影響可攜性）；連線 IP 管理已完成（Phase 3.6.3 部分完成）
 4. **Dash 安裝與骨架驗證** — `pip install dash` + 最小可用頁面（Phase 3.6.4）
 
 ---

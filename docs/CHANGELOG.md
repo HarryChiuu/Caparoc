@@ -2,6 +2,45 @@
 
 ---
 
+## [2026-05-13] Phase 3.6.3 - 連線 IP 管理與設備設定重構
+
+### 🎯 動機
+連線失敗時無法直接修改連線 IP（只能重連或退出）；預設 IP 硬寫在程式碼中，無法持久化。
+
+### 🔧 實作內容
+
+**連線失敗選單擴充**
+- 連線失敗時由原本 `[R]/[Q]` 改為 `[R]/[C]/[Q]`
+- `[C]` 變更 IP：呼叫 `_configure_device_ip()` 輸入新 IP 後立即 reconnect
+
+**預設 IP 持久化（`config/device_config.json`）**
+- 新建 `config/device_config.json`：儲存 `default_ip`
+- `config/device_config.json.example`：版本控管用範本（預設 `192.168.2.111`）
+- `device_config.json` 加入 `.gitignore`，个人 IP 設定不入 git
+- `__init__` 改從設定檔讀取預設 IP
+- 確認 IP 時新增詢問是否存為預設（`_ask_save_default_ip()`）
+
+**CLI 指令重構**
+- `setting`：程式層連線 IP 管理
+  - `[1]` 變更連線 IP（不重連）
+  - `[2]` 變更連線 IP 並立即重連
+  - `[3]` 重設為預設 IP
+- `settingdeviceip`：設備硬體 IP 設定（原 `setting` 內容）
+  - `[1]` 讀取設備網路設定（CIP Class 0xF5）
+  - `[2]` 寫入新 IP 至設備（硬寫，目前尚需 PRONETA/Npcap）
+
+**其他 CLI 修後**
+- 勹除啟動時陰變的 IP 配置對話（連線成功後再詢問）
+- `setting` / `settingdeviceip` 返回主選單後顯示提示文字
+- 啟動說明文字更新，移除過時的「待實作功能」清單
+
+**暫緩功能（PROFINET DCP）**
+- 已探索 CIP Class 0xF5 寫入（Attr 5 無回應，設備不支援）
+- PROFINET DCP 方案需 Npcap 驅動，影響程式可攜性，暫緩開發
+- `tests/test_scapy_dcp.py`：已建診斷腳本保留
+
+---
+
 ## [2026-04-02] Phase 3.5 - 前後端分離架構重構
 
 ### 🎯 動機

@@ -276,13 +276,17 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-#### 3.6.3 設備 IP 位址寫入功能（硬寫設備 IP）
+#### 3.6.3 設備 IP 位址寫入功能（硬寫設備 IP）✅ 部分完成
 
-> **與現有 IP 切換功能的差異**：
-> - 現有 `_configure_device_ip()` → 只改變「程式要連哪個 IP」
-> - 本功能 → **直接修改 CAPAROC 設備本身的 IP 位址**
->
-> **為何在 Dash 之前**：此功能可能因設備限制而失敗，結論影響 GUI 是否需整合此功能；且為純後端功能，不依賴 GUI。
+> **完成部分**：連線 IP 管理、預設 IP 持久化、CLI 重構
+> **暫緩部分**：設備硬體 IP 寫入（CIP 0xF5 / PROFINET DCP）
+
+- [x] 連線失敗時加入 `[C]` 變更 IP 選項
+- [x] `config/device_config.json` 預設 IP 持久化
+- [x] `setting` 指令：程式層連線 IP 管理（[1]不重連 / [2]重連 / [3]重設預設）
+- [x] `settingdeviceip` 指令：設備硬體 IP 選單新入口
+- [ ] 設備硬體 IP 寫入（暫緩，PROFINET DCP 需 Npcap）
+  - 廣告行動方案：使用 Phoenix Contact PRONETA Basic
 
 **技術方案**：CIP TCP/IP Interface Object（Class 0xF5），透過 pycomm3 `generic_message`，**不需新增 Python 模組**。
 

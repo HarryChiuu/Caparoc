@@ -45,6 +45,7 @@ logs/
 *.csv
 *.json
 !config/*.json
+config/device_config.json
 *.xlsx
 output/*
 !output/.gitkeep

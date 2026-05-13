@@ -1110,9 +1110,10 @@ class CaparocController(CaparocBackend):
         print("                                     範例: monitor start 5 silent")
         print("  monitor stop                 - 停止監控")
         print("  monitor status               - 顯示監控狀態")
-        print("\n【設備設定】")
-        print("  setting                      - 進入設備設定選單")
-        print("                                 (讀取/寫入設備網路 IP 等設定)")
+        print("\n【連線設定】")
+        print(f"  目前連線 IP: {self.device_ip}")
+        print("  setting                      - 變更連線 IP（不重連／立即重連）")
+        print("  settingdeviceip              - 設備硬體 IP 設定（寫入設備本身）")
         print("\n【系統】")
         print("  h / help                     - 顯示此幫助信息")
         print("  reconnect                    - 重新連線設備")
@@ -1863,9 +1864,60 @@ class CaparocController(CaparocBackend):
             print("   提示：可使用 Phoenix Contact PRONETA 或 IP Address Wizard 設定 IP")
             return None
 
-    def _handle_setting_command(self, driver):
+    def _handle_setting_connip(self):
         """
-        設備設定子選單，供 CLI 主迴圈呼叫。
+        連線 IP 設定選單（setting 指令）。
+        修改程式連線的目標 IP，不操作設備硬體。
+
+        Returns:
+            'reconnect' — 選擇立即重連
+            None        — 返回主選單
+        """
+        default_ip = _load_default_ip()
+        while True:
+            print("\n" + "="*60)
+            print("⚙️  連線設定")
+            print("="*60)
+            print(f"  目前連線 IP: {self.device_ip}")
+            print(f"  預設 IP:     {default_ip}  (config/device_config.json)")
+            print("-"*60)
+            print("  [1] 變更連線 IP（不重連，下次 reconnect 才生效）")
+            print("  [2] 變更連線 IP 並立即重連")
+            print("  [3] 重設為預設 IP")
+            print("  [0] 返回主選單")
+            print("="*60)
+
+            choice = input("\n請選擇 [0/1/2/3]: ").strip()
+
+            if choice == '0':
+                return None
+
+            elif choice in ('1', '2'):
+                new_ip = input("\n新 IP 位址 (或輸入 cancel 取消): ").strip()
+                if new_ip.lower() == 'cancel':
+                    continue
+                if not self._validate_ip(new_ip):
+                    print(f"  ⚠️  無效的 IP 格式: {new_ip}")
+                    continue
+                self.device_ip = new_ip
+                print(f"  ✅ 連線 IP 已設為 {self.device_ip}")
+                self._ask_save_default_ip(new_ip)
+                if choice == '2':
+                    print(f"  🔄 使用新 IP 重新連線...")
+                    return 'reconnect'
+                default_ip = _load_default_ip()  # 從新讀取（如果有存檔）
+
+            elif choice == '3':
+                self.device_ip = default_ip
+                print(f"  ✅ 連線 IP 已重設為預設 {self.device_ip}")
+
+            else:
+                print("  ⚠️  請輸入 0、4 中的數字")
+
+    def _handle_settingdeviceip_command(self, driver):
+        """
+        設備硬體 IP 設定選單（settingdeviceip 指令）。
+        透過 CIP Class 0xF5 讀取/寫入設備本身的 IP。
 
         Returns:
             'reconnect' — 需要重新連線（IP 已變更）
@@ -1873,7 +1925,7 @@ class CaparocController(CaparocBackend):
         """
         while True:
             print("\n" + "="*60)
-            print("⚙️  設備設定選單")
+            print("⚙️  設備硬體 IP 設定（CIP Class 0xF5）")
             print("="*60)
             print("  [1] 讀取目前設備網路設定")
             print("  [2] 寫入新 IP 至設備（硬寫設備 IP）")
@@ -2204,7 +2256,15 @@ class CaparocController(CaparocBackend):
                             ch = int(cmd.split()[1])
                             self.set_channel(ch, False)
                         elif cmd == 'setting':
-                            result = self._handle_setting_command(driver)
+                            result = self._handle_setting_connip()
+                            if result == 'reconnect':
+                                if self.monitor_running:
+                                    self.stop_monitor()
+                                self._stop_heartbeat()
+                                return 'reconnect'
+
+                        elif cmd == 'settingdeviceip':
+                            result = self._handle_settingdeviceip_command(driver)
                             if result == 'reconnect':
                                 if self.monitor_running:
                                     self.stop_monitor()

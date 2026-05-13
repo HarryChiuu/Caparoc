@@ -1908,15 +1908,23 @@ class CaparocController(CaparocBackend):
                     # 提供重新連線選項
                     print("\n" + "="*60)
                     while True:
-                        user_choice = input("\n請選擇: [R]重新連線 / [Q]退出程式: ").strip().upper()
+                        print(f"  目前連線 IP: {self.device_ip}")
+                        user_choice = input("\n請選擇: [R]重新連線 / [C]變更 IP / [Q]退出程式: ").strip().upper()
                         if user_choice == 'R':
                             print("\n🔄 嘗試重新連線...\n")
                             return 'reconnect'
+                        elif user_choice == 'C':
+                            new_ip = self._configure_device_ip()
+                            if new_ip:
+                                self.device_ip = new_ip
+                                print(f"\n🔄 使用新 IP {self.device_ip} 重新連線...\n")
+                                return 'reconnect'
+                            # 取消則繼續顯示選單
                         elif user_choice == 'Q':
                             print("✅ 退出程式")
                             return
                         else:
-                            print("   ⚠️  請輸入 R (重新連線) 或 Q (退出)")
+                            print("   ⚠️  請輸入 R (重新連線)、C (變更 IP) 或 Q (退出)")
                     return
                 
                 # 連線成功，顯示設備資訊
@@ -2252,15 +2260,23 @@ class CaparocController(CaparocBackend):
             # 提供重新連線選項
             print("\n" + "="*60)
             while True:
-                user_choice = input("\n請選擇: [R]重新連線 / [Q]退出程式: ").strip().upper()
+                print(f"  目前連線 IP: {self.device_ip}")
+                user_choice = input("\n請選擇: [R]重新連線 / [C]變更 IP / [Q]退出程式: ").strip().upper()
                 if user_choice == 'R':
                     print("\n🔄 嘗試重新連線...\n")
                     return 'reconnect'
+                elif user_choice == 'C':
+                    new_ip = self._configure_device_ip()
+                    if new_ip:
+                        self.device_ip = new_ip
+                        print(f"\n🔄 使用新 IP {self.device_ip} 重新連線...\n")
+                        return 'reconnect'
+                    # 取消則繼續顯示選單
                 elif user_choice == 'Q':
                     print("✅ 退出程式")
                     return
                 else:
-                    print("   ⚠️  請輸入 R (重新連線) 或 Q (退出)")
+                    print("   ⚠️  請輸入 R (重新連線)、C (變更 IP) 或 Q (退出)")
 
 def main():
     controller = CaparocController()

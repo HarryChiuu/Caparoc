@@ -2000,8 +2000,8 @@ class CaparocController(CaparocBackend):
 
 # ========== 主程式入口 ==========
     def run(self):
-        self.logger.info("CAPAROC PM EIP Controller v3.7 啟動", extra={'log_module': 'SYS'})
-        print("🚀 CAPAROC PM EIP Controller v3.7")
+        self.logger.info("CAPAROC PM EIP Controller v3.8 啟動", extra={'log_module': 'SYS'})
+        print("🚀 CAPAROC PM EIP Controller v3.8")
         print(f"   預設連線 IP: {self.device_ip}")
         
         # ========== 步驟 0: 裝置連線檢查 ==========

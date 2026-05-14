@@ -1,6 +1,6 @@
 # CAPAROC 控制器 - 待實作功能清單
 
-更新日期: 2025-10-28
+更新日期: 2026-05-14
 
 ## ✅ 已完成功能
 
@@ -197,7 +197,7 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-#### 4. ~~初始化 IP 設定~~ ✅ **已完成 (v3.7)**
+#### 3. ~~初始化 IP 設定~~ ✅ **已完成 (v3.7)**
 
 **目標**: 支援多設備或動態 IP
 
@@ -238,10 +238,16 @@ def _show_monitor_status(self, status, changes):
 **Phase 3 總工時**: ~20 小時  
 **Phase 3 成果**: 完整可用的 CLI 控制系統
 
-4. **Phase 3.5（補充）**: 架構重構 ✅ **已完成** (2026-04-02)
+4. **Phase 3.5（補充）**: 架構重構 ✅ **已完成** (v3.8, 2026-04-02)
    - ✅ 前後端分離 (`caparoc_backend.py` + `CaparocController` 繼承架構)
    - ✅ Log 系統 (`logging_manager.py` + `config/logging_config.json`)
    - ✅ CLI 保留（`python caparoc_controller.py` 仍可正常使用）
+
+5. **Phase 3.6.x**：連線 IP 管理、setting 重設計、logging 修復 ✅ **已完成** (v3.8, 2026-05-14)
+   - ✅ `config/device_config.json` 預設 IP 持久化
+   - ✅ `setting` 選單重設計（[1]變更重連 / [2]恢復 / [3]存檔 / [4]硬體 IP）
+   - ✅ logging KeyError 修復，移除 JSONL
+   - ✅ setting 操作寫入 log（`[SETTING]` 模組）
 
 ---
 

@@ -263,87 +263,42 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-#### 3.6.2 caparoc_controller.py 冗餘方法清除
+#### 3.6.2 caparoc_controller.py 冗餘方法清除 🔧 **進行中（2026-05-14）**
 
 **問題**: 目前 controller 繼承 CaparocBackend，但仍保留所有後端方法完整複本（shadow 父類別），維護時需同步兩處。
 
 **需要刪除**:
 - [ ] `CaparocController` 中與 `CaparocBackend` 重複的所有方法（約 1500 行）
-- 保留：`__init__`、`_show_help_message`、`_configure_device_ip`、`_validate_ip`、`run()`
-- 目標：controller 從 2100+ 行縮減至 ~250 行
+- 保留：`__init__`、`_show_help_message`、`_configure_device_ip`、`_validate_ip`、`_ask_save_default_ip`、`_handle_setting_connip`、`_handle_settingdeviceip_command`、`_handle_write_device_ip`、`run()`
+- 目標：controller 從 2100+ 行縮減至 ~350 行
 
 **預估工時**: 1 小時
 
 ---
 
-#### 3.6.3 設備 IP 位址寫入功能（硬寫設備 IP）✅ 部分完成
+#### 3.6.3 設備 IP 位址寫入功能（硬寫設備 IP）⏸️ **暫不開發**
 
-> **完成部分**：連線 IP 管理、預設 IP 持久化、CLI 重構
-> **暫緩部分**：設備硬體 IP 寫入（CIP 0xF5 / PROFINET DCP）
+> **完成部分**：連線 IP 管理、預設 IP 持久化、CLI 重構  
+> **暫緩部分**：設備硬體 IP 寫入（CIP 0xF5 / PROFINET DCP）— **目前不列入開發計畫，待未來有需求再評估**
 
 - [x] 連線失敗時加入 `[C]` 變更 IP 選項
 - [x] `config/device_config.json` 預設 IP 持久化
-- [x] `setting` 指令：程式層連線 IP 管理（[1]不重連 / [2]重連 / [3]重設預設）
-- [x] `settingdeviceip` 指令：設備硬體 IP 選單新入口
-- [ ] 設備硬體 IP 寫入（暫緩，PROFINET DCP 需 Npcap）
-  - 廣告行動方案：使用 Phoenix Contact PRONETA Basic
-
-**技術方案**：CIP TCP/IP Interface Object（Class 0xF5），透過 pycomm3 `generic_message`，**不需新增 Python 模組**。
-
-##### Step 1：探測 Class 0xF5 支援度（需連接實體設備）
-- [ ] 讀取 Attr 1（Status）— 介面狀態
-- [ ] 讀取 Attr 3（Configuration Control）— Static / DHCP 模式
-- [ ] 讀取 Attr 5（Interface Configuration）— 目前 IP / Subnet / Gateway
-- [ ] 記錄回應格式與資料長度，確認設備支援程度
-
-```python
-resp = driver.generic_message(
-    service=0x0E, class_code=0xF5, instance=1,
-    attribute=5, connected=False
-)
-# 預期: IP(4) + Subnet(4) + Gateway(4) + NameServer1(4) + NameServer2(4) + DomainName(len)
-```
-
-##### Step 2：嘗試寫入 IP
-- [ ] 先設定 Attr 3 = 0x00（Static IP 模式）
-- [ ] 寫入 Attr 5（新 IP + Subnet + Gateway）
-- [ ] 處理可能的錯誤（"Too much data" = 設備拒絕寫入）
-
-```python
-import socket, struct
-config_data = (socket.inet_aton("192.168.2.200") +
-               socket.inet_aton("255.255.255.0") +
-               socket.inet_aton("192.168.2.1") +
-               bytes(4) + bytes(4) +        # NS1, NS2
-               struct.pack('<H', 0))         # DomainName length
-driver.generic_message(
-    service=0x10, class_code=0xF5, instance=1,
-    attribute=5, request_data=config_data, connected=False
-)
-```
-
-##### Step 3：實作與整合（視 Step 2 結果決定是否進行）
-- [ ] `caparoc_backend.py` 新增：
-  - `read_device_network_config()` — 讀取目前 IP / Subnet / Gateway
-  - `set_device_ip(new_ip, subnet, gateway)` — 寫入新 IP（含驗證）
-- [ ] `caparoc_controller.py` CLI 新增命令：`setip <ip> [subnet] [gateway]`
-- [ ] 安全機制：雙重確認、寫入後用新 IP reconnect 驗證
-
-##### Step 4：記錄結果
-- [ ] 成功 → 更新 DEVELOPMENT_NOTES.md，記錄 Class 0xF5 可寫入
-- [ ] 失敗 → 記錄為「已知限制」，建議使用 Phoenix Contact 工具（PRONETA / IP Address Wizard）
-
-**風險**：
-- ⚠️ CAPAROC 歷史上對 CIP 寫入有限制（Config Assembly / Parameter Object 均唯讀）
-- ⚠️ 寫入後連線立即中斷（正常，設備 IP 已變）
-- ⚠️ 寫錯 IP 需實體工具復原
-
-**預估工時**: Step 1-2 探測 0.5h + Step 3 實作 1-2h + Step 4 文件 0.25h  
-**前置條件**: 需連接實體 CAPAROC 設備測試
+- [x] `setting` 指令重設計（[1]變更並連線 / [2]恢復預設 / [3]存為預設 / [4]硬體 IP）
+- [x] `settingdeviceip` 整合至 `setting [4]`
+- [ ] ~~設備硬體 IP 寫入（PROFINET DCP 需 Npcap，暫不開發）~~
+  - 替代方案：使用 Phoenix Contact PRONETA Basic 設定設備 IP
 
 ---
 
-#### 3.6.4 Web 框架安裝與基本骨架驗證
+**Phase 3.6 剩餘工時**: ~1 小時（僅 3.6.2）
+
+---
+
+### Phase 4: Web UI 與進階功能 🚀
+
+#### 4.0 Web 框架安裝與基本骨架驗證（原 3.6.4）
+
+> 從 3.6.4 移入，屬於 Web UI 實作的一部分，前置條件：3.6.1 完成
 
 - [ ] 安裝 `dash`（`pip install dash`）
 - [ ] 建立 `src/caparoc_web.py` 最小骨架（`backend.connect()` + 一個頁面可開啟）
@@ -354,13 +309,7 @@ driver.generic_message(
 
 ---
 
-**Phase 3.6 預估總工時**: 4–6 小時
-
----
-
-### Phase 4: 進階功能與 GUI 開發 🚀
-
-#### 4.1 通道狀態資訊擴增
+### Phase 4.1: 通道狀態資訊擴增（原 4.1）
 
 **目標**: 提供更詳細的通道狀態資訊
 

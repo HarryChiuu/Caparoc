@@ -1112,8 +1112,11 @@ class CaparocController(CaparocBackend):
         print("  monitor status               - 顯示監控狀態")
         print("\n【連線設定】")
         print(f"  目前連線 IP: {self.device_ip}")
-        print("  setting                      - 變更連線 IP（不重連／立即重連）")
-        print("  settingdeviceip              - 設備硬體 IP 設定（寫入設備本身）")
+        print("  setting                      - 連線 IP 設定選單")
+        print("                                 [1] 變更連線 IP（不重連）")
+        print("                                 [2] 變更連線 IP 並重連")
+        print("                                 [3] 重設為預設 IP")
+        print("                                 [4] 設備硬體 IP 設定（CIP 0xF5）")
         print("\n【系統】")
         print("  h / help                     - 顯示此幫助信息")
         print("  reconnect                    - 重新連線設備")
@@ -2251,16 +2254,7 @@ class CaparocController(CaparocBackend):
                             ch = int(cmd.split()[1])
                             self.set_channel(ch, False)
                         elif cmd == 'setting':
-                            result = self._handle_setting_connip()
-                            if result == 'reconnect':
-                                if self.monitor_running:
-                                    self.stop_monitor()
-                                self._stop_heartbeat()
-                                return 'reconnect'
-                            print("  💡 輸入 'h' 可查看所有指令")
-
-                        elif cmd == 'settingdeviceip':
-                            result = self._handle_settingdeviceip_command(driver)
+                            result = self._handle_setting_connip(driver)
                             if result == 'reconnect':
                                 if self.monitor_running:
                                     self.stop_monitor()

@@ -269,16 +269,17 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-#### 3.6.2 caparoc_controller.py 冗餘方法清除 🔧 **進行中（2026-05-14）**
+#### 3.6.2 caparoc_controller.py 冗餘方法清除 ✅ **已完成（2026-05-14）**
 
-**問題**: 目前 controller 繼承 CaparocBackend，但仍保留所有後端方法完整複本（shadow 父類別），維護時需同步兩處。
+**問題**: controller 繼承 CaparocBackend，但仍保留所有後端方法完整複本（shadow 父類別）。
 
-**需要刪除**:
-- [ ] `CaparocController` 中與 `CaparocBackend` 重複的所有方法（約 1500 行）
-- 保留：`__init__`、`_show_help_message`、`_configure_device_ip`、`_validate_ip`、`_ask_save_default_ip`、`_handle_setting_connip`、`_handle_settingdeviceip_command`、`_handle_write_device_ip`、`run()`
-- 目標：controller 從 2100+ 行縮減至 ~350 行
+**完成內容**:
+- [x] `CaparocController` 中 29 個與 `CaparocBackend` 重複的方法全數刪除（1513 行）
+- [x] 保留：`__init__`、`_show_help_message`、`_configure_device_ip`、`_validate_ip`、`_ask_save_default_ip`、`_handle_setting_connip`、`_handle_settingdeviceip_command`、`_handle_write_device_ip`、`run()`
+- [x] controller 從 2387 行縮減至 874 行（-63%）
+- [x] 驗證：繼承 CaparocBackend 的 30 個方法全部可正常存取
 
-**預估工時**: 1 小時
+**實際工時**: 1 小時
 
 ---
 

@@ -188,22 +188,23 @@ class LogManager:
         today = datetime.now().strftime('%Y-%m-%d')
 
         # 日誌格式：時間戳 [等級] [模組] 訊息
-        fmt = logging.Formatter(
+        # 自訂 Formatter：log_module 缺失時補預設值，避免 KeyError 導致 handler 靜默失效
+        class _SafeFormatter(logging.Formatter):
+            def format(self, record: logging.LogRecord) -> str:
+                if not hasattr(record, 'log_module'):
+                    record.log_module = '---'
+                return super().format(record)
+
+        fmt = _SafeFormatter(
             '%(asctime)s [%(levelname)s] [%(log_module)s] %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S',
         )
 
-        # Handler 1 ── .log 人類可讀 ──────────────────────────────────────────
+        # Handler ── .log 人類可讀 ─────────────────────────────────────────────
         log_file = log_dir / f'caparoc_{today}.log'
         fh = logging.FileHandler(log_file, encoding='utf-8')
         fh.setFormatter(fmt)
         logger.addHandler(fh)
-
-        # Handler 2 ── .jsonl 結構化 ──────────────────────────────────────────
-        if self.config.get('write_jsonl', True):
-            jsonl_file = log_dir / f'caparoc_{today}.jsonl'
-            jh = _JsonlHandler(str(jsonl_file), encoding='utf-8')
-            logger.addHandler(jh)
 
         # Handler 3 ── GUI Queue（caparoc_gui.py 啟用）────────────────────────
         if enable_gui_queue:

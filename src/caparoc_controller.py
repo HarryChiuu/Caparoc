@@ -1858,10 +1858,12 @@ class CaparocController(CaparocBackend):
 
         if write_result['success']:
             print(f"✅ 寫入成功！設備 IP 已變更為 {new_ip}")
+            old_ip = self.device_ip
             self.device_ip = new_ip
             # 自動存檔：硬體改完 IP，程式的預設紀錄同步更新
             if _save_default_ip(new_ip):
                 print(f"   ✅ 已自動存入 config.json 作為預設 IP")
+            self.logger.info(f"硬體 IP 寫入成功: {old_ip} → {new_ip}（CIP 0xF5，已存檔）", extra={'log_module': 'SETTING', 'ip': new_ip})
             print("   連線已中斷（正常），正在以新 IP 重新連線...")
             return 'reconnect'
         else:
@@ -1911,7 +1913,9 @@ class CaparocController(CaparocBackend):
                 if not self._validate_ip(new_ip):
                     print(f"  ⚠️  無效的 IP 格式: {new_ip}")
                     continue
+                old_ip = self.device_ip
                 self.device_ip = new_ip
+                self.logger.info(f"連線 IP 變更: {old_ip} → {new_ip}（立即重連）", extra={'log_module': 'SETTING', 'ip': new_ip})
                 print(f"  ✅ 連線 IP 已設為 {self.device_ip}")
                 print(f"  🔄 使用新 IP 重新連線...")
                 return 'reconnect'
@@ -1922,13 +1926,16 @@ class CaparocController(CaparocBackend):
                     confirm = input("  [Y/N]: ").strip().upper()
                     if confirm != 'Y':
                         continue
+                old_ip = self.device_ip
                 self.device_ip = default_ip
+                self.logger.info(f"恢復預設 IP: {old_ip} → {default_ip}（立即重連）", extra={'log_module': 'SETTING', 'ip': default_ip})
                 print(f"  ✅ 已恢復為預設 IP {self.device_ip}")
                 print(f"  🔄 重新連線...")
                 return 'reconnect'
 
             elif choice == '3':
                 if _save_default_ip(self.device_ip):
+                    self.logger.info(f"存為預設 IP: {self.device_ip}", extra={'log_module': 'SETTING', 'ip': self.device_ip})
                     print(f"  ✅ 已將 {self.device_ip} 設為預設 IP")
                     default_ip = self.device_ip  # 更新本地快取
                 # 失敗訊息由 _save_default_ip 內部顯示

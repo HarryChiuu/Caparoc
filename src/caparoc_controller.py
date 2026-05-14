@@ -1908,11 +1908,14 @@ class CaparocController(CaparocBackend):
                 default_ip = _load_default_ip()  # 從新讀取（如果有存檔）
 
             elif choice == '3':
-                self.device_ip = default_ip
-                print(f"  ✅ 連線 IP 已重設為預設 {self.device_ip}")
+                if self.device_ip == default_ip:
+                    print(f"  ℹ️  連線 IP 已經是預設値 {default_ip}，不需重設")
+                else:
+                    self.device_ip = default_ip
+                    print(f"  ✅ 連線 IP 已重設為預設 {self.device_ip}")
 
             else:
-                print("  ⚠️  請輸入 0、4 中的數字")
+                print("  ⚠️  請輸入 0、3 中的數字")
 
     def _handle_settingdeviceip_command(self, driver):
         """

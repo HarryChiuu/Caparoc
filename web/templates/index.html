@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CAPAROC 控制台</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+    <div id="app">
+
+        <!-- 頂部狀態列 -->
+        <header class="topbar">
+            <span class="brand">CAPAROC Web UI</span>
+            <div class="conn-bar">
+                <span class="dot" :class="state.connected ? 'dot-on' : 'dot-off'"></span>
+                <span class="conn-label">
+                    {{ state.connected ? '已連線 · ' + state.device_ip : '未連線' }}
+                </span>
+                <button class="btn-sm" v-if="!state.connected" @click="doConnect">連線</button>
+                <button class="btn-sm btn-danger" v-else @click="doDisconnect">斷線</button>
+            </div>
+        </header>
+
+        <!-- 未連線時顯示連線表單 -->
+        <section class="panel center" v-if="!state.connected">
+            <h2>連線至設備</h2>
+            <div class="conn-form">
+                <input v-model="ipInput" placeholder="192.168.2.111" @keyup.enter="doConnect" />
+                <button class="btn" @click="doConnect">連線</button>
+            </div>
+            <p class="err-msg" v-if="state.error">{{ state.error }}</p>
+        </section>
+
+        <!-- 系統狀態 -->
+        <section class="panel" v-if="state.connected">
+            <h2>系統狀態</h2>
+            <div class="sys-grid">
+                <div class="stat-box">
+                    <div class="stat-val">{{ fmt(state.voltage) }}<span class="unit">V</span></div>
+                    <div class="stat-label">輸入電壓</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-val">{{ fmt(state.total_current) }}<span class="unit">A</span></div>
+                    <div class="stat-label">總電流</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-val">{{ state.module_count }}</div>
+                    <div class="stat-label">模組數量</div>
+                </div>
+                <div class="stat-box" v-if="state.undervoltage || state.overvoltage || state.system_error">
+                    <div class="stat-val warn-text">⚠</div>
+                    <div class="stat-label">
+                        <span v-if="state.undervoltage">欠壓 </span>
+                        <span v-if="state.overvoltage">過壓 </span>
+                        <span v-if="state.system_error">系統錯誤</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 通道控制面板 -->
+        <section class="panel" v-if="state.connected && state.channels.length">
+            <h2>通道控制</h2>
+            <div class="ch-grid">
+                <div class="ch-card"
+                     v-for="ch in state.channels" :key="ch.id"
+                     :class="cardClass(ch)">
+                    <div class="ch-top">
+                        <span class="ch-name">CH{{ ch.id }}</span>
+                        <span class="ch-mod">M{{ ch.module }}</span>
+                        <button class="toggle-btn" @click="toggleCh(ch)">
+                            {{ ch.on ? '關閉' : '開啟' }}
+                        </button>
+                    </div>
+                    <div class="ch-current">{{ fmt(ch.current_amps) }} <span class="unit">A</span></div>
+                    <div class="bar-wrap">
+                        <div class="bar-fill" :style="{ width: barPct(ch) + '%' }"
+                             :class="barClass(ch)"></div>
+                    </div>
+                    <div class="ch-meta">
+                        額定 {{ ch.nominal_amps }} A
+                        <span class="pct">{{ barPct(ch).toFixed(0) }}%</span>
+                    </div>
+                    <div class="ch-flags">
+                        <span class="flag warn" v-if="ch.warn_80">80%</span>
+                        <span class="flag fault" v-if="ch.overload">過載</span>
+                        <span class="flag fault" v-if="ch.short_circuit">短路</span>
+                        <span class="flag fault" v-if="ch.hardware_fault">硬體故障</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </div>
+
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

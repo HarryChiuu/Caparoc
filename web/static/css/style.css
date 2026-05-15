@@ -1,0 +1,132 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: #12151c;
+    color: #dde3f0;
+    min-height: 100vh;
+}
+
+/* ── 頂部列 ─────────────────────────────── */
+.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #1c2030;
+    padding: 10px 24px;
+    border-bottom: 1px solid #2a2f45;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+.brand { font-size: 1rem; font-weight: 600; color: #7eb8f7; letter-spacing: 1px; }
+.conn-bar { display: flex; align-items: center; gap: 10px; font-size: 0.88rem; }
+.dot { width: 9px; height: 9px; border-radius: 50%; }
+.dot-on  { background: #4caf50; box-shadow: 0 0 6px #4caf5088; }
+.dot-off { background: #555; }
+
+/* ── 面板 ───────────────────────────────── */
+.panel {
+    margin: 16px auto;
+    max-width: 1000px;
+    background: #1c2030;
+    border-radius: 10px;
+    padding: 20px 24px;
+}
+.panel h2 {
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #7eb8f7;
+    margin-bottom: 16px;
+    border-bottom: 1px solid #2a2f45;
+    padding-bottom: 8px;
+}
+.panel.center { text-align: center; }
+
+/* ── 系統狀態 ───────────────────────────── */
+.sys-grid { display: flex; gap: 12px; flex-wrap: wrap; }
+.stat-box {
+    flex: 1; min-width: 120px;
+    background: #12151c;
+    border-radius: 8px;
+    padding: 14px 16px;
+    text-align: center;
+}
+.stat-val { font-size: 1.7rem; font-weight: 700; color: #7eb8f7; }
+.stat-val .unit { font-size: 0.9rem; margin-left: 2px; color: #89a0c0; }
+.stat-label { font-size: 0.76rem; color: #7a8aaa; margin-top: 4px; }
+.warn-text { color: #ffb300; }
+
+/* ── 通道卡片 ───────────────────────────── */
+.ch-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+    gap: 12px;
+}
+.ch-card {
+    background: #12151c;
+    border: 1px solid #2a2f45;
+    border-radius: 10px;
+    padding: 14px;
+    transition: border-color .2s;
+}
+.ch-card.on    { border-color: #4caf5077; }
+.ch-card.warn  { border-color: #ff980077; }
+.ch-card.fault { border-color: #f4433677; }
+
+.ch-top { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+.ch-name { font-weight: 700; font-size: 1rem; flex: 1; }
+.ch-mod  { font-size: 0.72rem; color: #7a8aaa; }
+
+.ch-current { font-size: 1.5rem; font-weight: 700; color: #7eb8f7; margin-bottom: 8px; }
+.ch-current .unit { font-size: 0.85rem; color: #89a0c0; margin-left: 2px; }
+
+.bar-wrap {
+    height: 5px; background: #2a2f45;
+    border-radius: 3px; overflow: hidden; margin-bottom: 6px;
+}
+.bar-fill { height: 100%; border-radius: 3px; transition: width .4s; }
+.bar-ok   { background: #4caf50; }
+.bar-warn { background: #ff9800; }
+.bar-fault{ background: #f44336; }
+
+.ch-meta {
+    font-size: 0.76rem; color: #7a8aaa;
+    display: flex; justify-content: space-between;
+}
+.pct { color: #aab4cc; }
+
+.ch-flags { margin-top: 6px; display: flex; gap: 4px; flex-wrap: wrap; }
+.flag {
+    font-size: 0.7rem; padding: 1px 6px;
+    border-radius: 3px; font-weight: 600;
+}
+.flag.warn  { background: #ff980033; color: #ff9800; }
+.flag.fault { background: #f4433633; color: #f44336; }
+
+/* ── 連線表單 ───────────────────────────── */
+.conn-form { display: flex; gap: 8px; justify-content: center; margin: 20px 0; }
+.conn-form input {
+    padding: 8px 14px; border-radius: 6px;
+    border: 1px solid #2a2f45; background: #12151c;
+    color: #dde3f0; font-size: 0.95rem; width: 220px;
+}
+.conn-form input:focus { outline: none; border-color: #7eb8f7; }
+.err-msg { color: #f44336; font-size: 0.88rem; margin-top: 8px; }
+
+/* ── 按鈕 ───────────────────────────────── */
+button, .btn {
+    padding: 8px 18px; border-radius: 6px; border: none;
+    background: #2a5ba8; color: #fff;
+    font-size: 0.88rem; cursor: pointer; transition: background .15s;
+}
+button:hover, .btn:hover { background: #1f4a90; }
+.btn-sm { padding: 5px 12px; font-size: 0.82rem; }
+.btn-danger { background: #8b2020; }
+.btn-danger:hover { background: #6e1818; }
+.toggle-btn {
+    padding: 4px 10px; font-size: 0.78rem;
+    background: #2a2f45; color: #dde3f0;
+}
+.toggle-btn:hover { background: #363d5a; }

@@ -253,8 +253,9 @@ def _show_monitor_status(self, status, changes):
 
 ### Phase 3.6: GUI 前置準備 🔧（**開始 GUI 前必須完成**）
 
-> GUI 框架決策：**Dash**（純 Python，內建即時更新，無需寫 HTML/JS）  
-> 進入方式：Python 服務常駐，瀏覽器開啟 `http://localhost:8050`
+> GUI 框架決策：**FastAPI + Vue 3 CDN + WebSocket**（前後端分離，頁面設計可獨立開發）  
+> 進入方式：`uvicorn web.app:app`，瀏覽器開啟 `http://localhost:8000`  
+> 資料夾結構：`web/app.py` + `web/templates/` + `web/static/`
 
 #### 3.6.1 CaparocBackend 連線管理重構 ✅ **已完成（2026-05-15）**
 
@@ -300,26 +301,44 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-**Phase 3.6 剩餘工時**: ~1 小時（僅 3.6.2）
+**Phase 3.6 剩餘工時**: ✅ 全部完成（3.6.1 + 3.6.2）
 
 ---
 
 ### Phase 4: Web UI 與進階功能 🚀
 
-#### 4.0 Web 框架安裝與基本骨架驗證（原 3.6.4）
+#### 4.0 Web 服務骨架建立
 
-> 從 3.6.4 移入，屬於 Web UI 實作的一部分，前置條件：3.6.1 完成
+> 前置條件：3.6.1 完成 ✅
 
-- [ ] 安裝 `dash`（`pip install dash`）
-- [ ] 建立 `src/caparoc_web.py` 最小骨架（`backend.connect()` + 一個頁面可開啟）
-- [ ] 確認 `http://localhost:8050` 可正常開啟
-- [ ] 更新 `requirements.txt` 加入 `dash`
+**資料夾結構**:
+- [ ] 建立 `web/` 目錄（`web/app.py`, `web/templates/index.html`, `web/static/css/`, `web/static/js/`）
 
-**預估工時**: 0.5 小時
+**後端（FastAPI）**:
+- [ ] 安裝 `fastapi`, `uvicorn`，更新 `requirements.txt`
+- [ ] `web/app.py`：FastAPI 實例，`lifespan` 事件呼叫 `backend.connect()` / `disconnect()`
+- [ ] `/api/status` stub endpoint（先回傳假資料，確認 CORS 正常）
+- [ ] `/api/connect`, `/api/disconnect` endpoint
+- [ ] `/api/channel/{id}/on`, `/api/channel/{id}/off`, `/api/channel/{id}/nominal` endpoint
+- [ ] WebSocket `/ws/status`（定期推送 `_read_current_status()` 資料）
+- [ ] 確認 `http://localhost:8000` 可正常開啟並顯示頁面
+
+**API Contract（定義後前後端可獨立開發）**:
+- [ ] 整理 URL 表 + JSON schema（所有 endpoint 輸入/輸出格式）
+
+**前端（Vue 3 CDN）**:
+- [ ] `web/templates/index.html`：載入 Vue 3 CDN，建立最小 Vue 應用骨架
+- [ ] Vue 呼叫 `/api/status` 並顯示 JSON，確認資料流通
+
+**預估工時**: 1-2 小時
 
 ---
 
-### Phase 4.1: 通道狀態資訊擴增（原 4.1）
+### Phase 4.1: 通道狀態資訊擴增（CLI 增強）
+
+> ℹ️ 此任務改善 **CLI 顯示**（`show_status()` / `show_channel_detail()`）。  
+> `_read_current_status()` 已回傳 Web UI 所需所有欄位（nominal Byte 1、actual Byte 2、status bits Byte 0），**Web UI 不依賴此任務**。  
+> **可與 Phase 4.2 Web UI 並行開發，非前置條件。**
 
 **目標**: 提供更詳細的通道狀態資訊
 
@@ -362,64 +381,52 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-#### 4.2 GUI 圖形化介面 🆕
+#### 4.2 Web UI 頁面設計
 
-**目標**: 圖形化控制介面，提供更直觀的操作體驗
+> 前置條件：Phase 4.0 骨架完成  
+> 可與 Phase 4.1（CLI 增強）**並行開發**，依賴 API Contract 定義，頁面設計不需等待 Python 函式全部完成
 
-**框架選擇**:
-- **推薦**: CustomTkinter (現代化 UI)
-- **備選**: PyQt5 / tkinter
+##### 4.2.1 連線管理
+- [ ] IP 位址輸入欄位
+- [ ] 連線 / 斷線按鈕（呼叫 `/api/connect`, `/api/disconnect`）
+- [ ] 連線狀態指示燈（connected / disconnected）
+- [ ] 連線錯誤訊息顯示
 
-**功能需求**:
+##### 4.2.2 系統狀態面板
+- [ ] 輸入電壓（V）
+- [ ] 總電流（A）
+- [ ] 模組數量
+- [ ] 全域警告 / 錯誤狀態指示燈
 
-##### 4.2.1 主視窗
-- [ ] 設備連接狀態顯示
-- [ ] IP 位址輸入/連接按鈕
-- [ ] 即時系統資訊:
-  - 電壓 (V)
-  - 總電流 (A)
-  - 全域系統狀態指示燈
-  - 連接狀態
+##### 4.2.3 通道控制面板（每通道）
+- [ ] 開/關切換（呼叫 `/api/channel/{id}/on`, `/off`）
+- [ ] 即時電流顯示（A）
+- [ ] 額定電流顯示 / 設定（呼叫 `/api/channel/{id}/nominal`）
+- [ ] 電流使用率進度條（Flowing / Nominal × 100%）
+- [ ] 狀態指示燈（正常 / 80%警告 / 過載 / 短路）
 
-##### 4.2.2 通道控制面板 (每個通道)
-- [ ] 開/關 切換按鈕
-- [ ] 即時電流顯示 (數字 + 進度條)
-- [ ] 狀態指示燈:
-  - 🟢 正常
-  - 🟡 警告 (80%)
-  - 🔴 異常 (過載/短路)
-- [ ] 額定電流設定按鈕
-- [ ] 使用率百分比顯示
+##### 4.2.4 即時更新（WebSocket）
+- [ ] Vue 訂閱 `/ws/status`，自動更新所有面板數據
+- [ ] 斷線自動重試邏輯
 
-##### 4.2.3 進階功能
-- [ ] 歷史資料圖表 (matplotlib)
-  - 電流趨勢線
-  - 時間軸可調整
-  - 多通道疊加顯示
-- [ ] 事件日誌視窗
-  - 開關操作記錄
-  - 異常事件記錄
-  - 匯出 CSV
-- [ ] 設定視窗
-  - 更新頻率調整
-  - 警報閾值設定
-  - 外觀主題切換
-  - 多設備管理
+##### 4.2.5 設定頁
+- [ ] 連線 IP 管理（對應 CLI `setting` 指令）
+- [ ] 額定電流批次設定（對應 CLI `init` 指令）
 
-##### 4.2.4 技術規劃
+##### 4.2.6 資料夾結構
 ```
-caparoc_gui/
-├── __init__.py
-├── main_window.py      # 主視窗
-├── channel_panel.py    # 通道控制面板元件
-├── status_monitor.py   # 狀態監控執行緒
-├── config_dialog.py    # 設定對話框
-├── chart_widget.py     # 圖表元件
-├── device_manager.py   # 多設備管理 🆕
-└── styles.py           # UI 樣式定義
+web/
+├── app.py                  # FastAPI 主程式
+├── templates/
+│   └── index.html          # Vue 3 CDN 主頁
+└── static/
+    ├── css/
+    │   └── style.css
+    └── js/
+        └── app.js          # Vue 3 應用邏輯
 ```
 
-**預估工時**: 10-14 小時
+**預估工時**: 6-8 小時
 
 ---
 
@@ -551,15 +558,16 @@ caparoc_gui/
 - 即時監控
 - 穩定可靠運行
 
-**Phase 4 規劃** 🎯 (預估 2-3 個月)
-- 優先級 1 (高): 通道狀態擴增 (2-3h)
-- 優先級 2 (高): GUI 開發 (10-14h)
-- 優先級 3 (中): 數據記錄與分析 (6-8h)
-- 優先級 4 (中): 告警通知系統 (4-5h)
-- 優先級 5 (低): 多設備管理 (5-6h)
-- 優先級 6 (低): 自動化測試 (8-10h)
+**Phase 4 規劃** 🎯
+- 優先級 1 (高): Web 骨架建立 4.0 (1-2h)
+- 優先級 2 (高): Web UI 頁面設計 4.2 (6-8h) — 依賴 4.0 API Contract
+- 優先級 3 (中): 通道狀態擴增 4.1 — CLI 增強，可與 4.2 並行 (2-3h)
+- 優先級 4 (中): 數據記錄與分析 4.3 (6-8h)
+- 優先級 5 (中): 告警通知系統 4.4 (4-5h)
+- 優先級 6 (低): 多設備管理 4.5 (5-6h)
+- 優先級 7 (低): 自動化測試 4.6 (8-10h)
 
-**Phase 4 預估總工時**: 35-46 小時
+**Phase 4 預估總工時**: 25-36 小時
 
 **Phase 5 未來願景** 💭
 - 企業級遠端管理

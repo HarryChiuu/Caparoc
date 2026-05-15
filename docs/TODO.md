@@ -307,30 +307,21 @@ def _show_monitor_status(self, status, changes):
 
 ### Phase 4: Web UI 與進階功能 🚀
 
-#### 4.0 Web 服務骨架建立
+#### 4.0 Web 服務骨架建立 ✅ **已完成（2026-05-15）**
 
-> 前置條件：3.6.1 完成 ✅
+**完成內容**:
+- [x] 建立 `web/` 目錄（`web/app.py`, `web/templates/index.html`, `web/static/css/style.css`, `web/static/js/app.js`）
+- [x] 安裝 `fastapi`, `uvicorn[standard]`, `jinja2`, `python-multipart`，更新 `requirements.txt`
+- [x] `web/app.py`：FastAPI 實例，`lifespan` 事件呼叫 `backend.connect()` / `disconnect()`
+- [x] `/api/status` endpoint（回傳設備完整狀態 JSON）
+- [x] `/api/connect`, `/api/disconnect` endpoint
+- [x] `/api/channel/{id}/on`, `/api/channel/{id}/off`, `/api/channel/{id}/nominal` endpoint
+- [x] WebSocket `/ws/status`（每秒推送 `_read_current_status()` 資料）
+- [x] `web/templates/index.html`：Vue 3 CDN 骨架，顯示連線狀態 / 系統資訊 / 通道面板
+- [x] `web/static/js/app.js`：Vue 3 應用邏輯，WebSocket 自動重連
+- [x] 驗證：`http://localhost:8000` 正常開啟，API 讀到真實設備 24.04V，CH1/CH3 ON
 
-**資料夾結構**:
-- [ ] 建立 `web/` 目錄（`web/app.py`, `web/templates/index.html`, `web/static/css/`, `web/static/js/`）
-
-**後端（FastAPI）**:
-- [ ] 安裝 `fastapi`, `uvicorn`，更新 `requirements.txt`
-- [ ] `web/app.py`：FastAPI 實例，`lifespan` 事件呼叫 `backend.connect()` / `disconnect()`
-- [ ] `/api/status` stub endpoint（先回傳假資料，確認 CORS 正常）
-- [ ] `/api/connect`, `/api/disconnect` endpoint
-- [ ] `/api/channel/{id}/on`, `/api/channel/{id}/off`, `/api/channel/{id}/nominal` endpoint
-- [ ] WebSocket `/ws/status`（定期推送 `_read_current_status()` 資料）
-- [ ] 確認 `http://localhost:8000` 可正常開啟並顯示頁面
-
-**API Contract（定義後前後端可獨立開發）**:
-- [ ] 整理 URL 表 + JSON schema（所有 endpoint 輸入/輸出格式）
-
-**前端（Vue 3 CDN）**:
-- [ ] `web/templates/index.html`：載入 Vue 3 CDN，建立最小 Vue 應用骨架
-- [ ] Vue 呼叫 `/api/status` 並顯示 JSON，確認資料流通
-
-**預估工時**: 1-2 小時
+**實際工時**: 1 小時
 
 ---
 

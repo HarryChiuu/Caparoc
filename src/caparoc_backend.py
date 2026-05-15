@@ -76,6 +76,10 @@ class CaparocBackend:
         self.last_activity_time = time.time()  # 記錄最後活動時間
         self.logger = get_logger()
 
+        # 長駐連線管理（3.6.1 — 供 Web 服務使用）
+        self._cip_driver = None   # CIPDriver 實例（context manager 外部持有）
+        self._connected = False   # 連線狀態旗標
+
     # ==================== 通道偏移計算 ====================
 
     def get_channel_offset(self, module, channel):
@@ -206,6 +210,137 @@ class CaparocBackend:
     def _update_activity(self):
         """更新最後活動時間（在每次用戶操作時調用）"""
         self.last_activity_time = time.time()
+
+    # ==================== 長駐連線管理（3.6.1 — Web UI 用）====================
+
+    @property
+    def is_connected(self) -> bool:
+        """回傳目前連線狀態（True = driver 已開啟且連線旗標有效）"""
+        return self._connected and self.driver is not None
+
+    def connect(self) -> bool:
+        """
+        建立並初始化 CIPDriver 連線（供 Web 服務長駐使用）。
+
+        流程：
+          1. 開啟 TCP 連線（CIPDriver.__enter__）
+          2. 驗證裝置可讀取（check_device_connection）
+          3. 從設備同步實際通道狀態至 output_data buffer
+          4. _activate_connection_state（connected=True）
+          5. 啟動 heartbeat 保活
+
+        Returns:
+            True  — 連線成功
+            False — 連線失敗（driver 已被清理）
+        """
+        if self.is_connected:
+            self.logger.warning("connect() 呼叫時已有連線，略過",
+                                extra={'log_module': 'CONN'})
+            return True
+
+        try:
+            self.logger.info(f"正在連線至 {self.device_ip}...",
+                             extra={'log_module': 'CONN', 'ip': self.device_ip})
+
+            self._cip_driver = CIPDriver(self.device_ip)
+            self._cip_driver.__enter__()
+            self.driver = self._cip_driver
+
+            # 驗證裝置回應
+            conn_result = self.check_device_connection(self.driver)
+            if not conn_result['connected']:
+                error = conn_result.get('error', '未知錯誤')
+                self.logger.error(f"連線驗證失敗: {error}",
+                                  extra={'log_module': 'CONN', 'ip': self.device_ip})
+                self._cleanup_driver()
+                return False
+
+            # 儲存模組數量
+            if conn_result['device_info']:
+                self.module_count = conn_result['device_info'].get('module_count', 0)
+
+            # 同步設備實際狀態至 output buffer（避免誤關正在運作的通道）
+            self._sync_output_from_device()
+
+            # 激活 CIP 連線狀態（必須執行，否則 set_channel 無效）
+            self._activate_connection_state(self.driver)
+
+            # 啟動心跳保活
+            self._start_heartbeat(self.driver)
+
+            self.channels_initialized = True
+            self._connected = True
+
+            dev = conn_result['device_info']
+            self.logger.info(
+                f"連線成功: {self.device_ip}, {self.module_count} 模組, "
+                f"{self.get_total_channels()} 通道, 電壓 {dev.get('voltage', '?')}",
+                extra={'log_module': 'CONN', 'ip': self.device_ip,
+                       'modules': self.module_count,
+                       'voltage': dev.get('voltage', '')}
+            )
+            return True
+
+        except Exception as e:
+            self.logger.error(f"connect() 例外: {e}",
+                              extra={'log_module': 'CONN', 'ip': self.device_ip})
+            self._cleanup_driver()
+            return False
+
+    def disconnect(self):
+        """
+        安全關閉連線（供 Web 服務停止或重連使用）。
+
+        流程：
+          1. 停止監控（如果運行中）
+          2. 停止心跳
+          3. 關閉 CIPDriver
+        """
+        self.logger.info(f"正在中斷連線: {self.device_ip}",
+                         extra={'log_module': 'CONN', 'ip': self.device_ip})
+
+        if self.monitor_running:
+            self.stop_monitor()
+
+        self._stop_heartbeat()
+        self._cleanup_driver()
+        self.channels_initialized = False
+
+    def _cleanup_driver(self):
+        """清理 CIPDriver 資源（內部方法，disconnect / 連線失敗時呼叫）"""
+        self._connected = False
+        if self._cip_driver is not None:
+            try:
+                self._cip_driver.__exit__(None, None, None)
+            except Exception:
+                pass
+            self._cip_driver = None
+        self.driver = None
+
+    def _sync_output_from_device(self):
+        """
+        讀取設備實際通道狀態，重建 output_data buffer。
+        防止首次連線時誤關已在運行的通道。
+        """
+        try:
+            response = self.driver.generic_message(
+                service=0x0E,
+                class_code=0x04,
+                instance=self.input_instance,
+                attribute=3,
+                connected=False
+            )
+            if response and hasattr(response, 'value') and len(response.value) >= 18:
+                data = response.value
+                self.current_output_data = bytearray(18)
+                byte1_value = 0x80  # bit7=1 (release)
+                for ch in range(1, 5):
+                    offset = self.get_channel_offset(1, ch)
+                    if len(data) > offset and (data[offset] & 0x01):
+                        byte1_value |= (1 << (ch - 1))
+                self.current_output_data[1] = byte1_value
+        except Exception:
+            pass  # 同步失敗不影響後續操作，使用預設空白狀態
 
     # ==================== Config Assembly ====================
 

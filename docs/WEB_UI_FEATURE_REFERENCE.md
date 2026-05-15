@@ -1,0 +1,411 @@
+# CAPAROC 控制器 — 功能與 API 參考
+
+> **用途**：Web UI 規劃參考，整理目前 CLI 既有功能、後端 API、資料結構與通訊細節。  
+> **版本**：v3.8（2026-05-14）  
+> **架構**：`CaparocBackend` (caparoc_backend.py) ← `CaparocController(CaparocBackend)` (caparoc_controller.py)
+
+---
+
+## 1. CLI 指令總覽
+
+### 1.1 額定電流設定
+
+| 指令 | 說明 | 範例 |
+|------|------|------|
+| `init <ch> <amps>` | 設定通道額定電流（1–20A），使用 Read-Modify-Write 安全更新 | `init 2 4` |
+| `verify <ch>` | 驗證通道目前的額定電流設定值 | `verify 1` |
+
+- `<ch>`：全域通道編號（1–總通道數，多模組時自動轉換為模組/通道）
+- `<amps>`：額定電流整數值（1–20A）
+- 設定後自動驗證，最多重試 6 次（每次 0.5s）
+
+---
+
+### 1.2 通道開關控制
+
+| 指令 | 說明 | 範例 |
+|------|------|------|
+| `on <ch>` | 開啟指定通道 | `on 1` |
+| `off <ch>` | 關閉指定通道 | `off 3` |
+
+- 每次控制後自動等待 0.5s 並回讀電流確認
+- 使用 Output Assembly 0x64，Byte[1] 控制開關位元（bit0=CH1 … bit3=CH4），Bit7 固定=1（release）
+
+---
+
+### 1.3 狀態查詢
+
+| 指令 | 說明 |
+|------|------|
+| `s` 或 `status` | 顯示完整狀態（全域系統 + 所有通道） |
+
+**顯示內容**：
+- 全域系統狀態位元組（欠壓/過壓/系統錯誤/80%警告/總電流關斷/Config處理中）
+- 系統電壓（V）、全域總電流（A）、模組數量
+- 每個通道：開關狀態、實際電流（A）、額定電流（A）、警告旗標
+
+---
+
+### 1.4 即時監控
+
+| 指令 | 說明 | 範例 |
+|------|------|------|
+| `monitor start [interval] [mode]` | 啟動監控背景執行緒 | `monitor start 5 silent` |
+| `monitor stop` | 停止監控 | — |
+| `monitor status` | 顯示監控目前狀態 | — |
+
+**參數**：
+- `interval`：更新頻率（秒），最低 0.5s，預設 2s
+- `mode`：
+  - `silent`（預設）— 背景執行，僅有變化時輸出警報
+  - `display` — 每次輪詢都輸出完整狀態表格
+
+**偵測事件**：
+- 通道開/關狀態變化
+- 電流異常變化（> 30%）
+- 電壓變化（> 1V）
+- 新出現的 80% 警告 / 過載 / 短路
+
+---
+
+### 1.5 連線設定（setting 選單）
+
+```
+setting
+```
+
+進入互動式選單後有 4 個子選項：
+
+| 選項 | 說明 |
+|------|------|
+| `[1]` 變更並連線 | 輸入新 IP 後立即重連，log 記錄 [SETTING] |
+| `[2]` 恢復預設值 | 從 `config/device_config.json` 讀取預設 IP 並重連 |
+| `[3]` 存為預設值 | 將目前連線 IP 寫入 `config/device_config.json`（不重連） |
+| `[4]` 硬體 IP 修改 | 透過 CIP Class 0xF5 硬寫設備 IP、雙重確認、成功後自動存檔並重連 |
+
+---
+
+### 1.6 系統指令
+
+| 指令 | 說明 |
+|------|------|
+| `h` 或 `help` | 顯示全部指令說明 |
+| `reconnect` | 停止監控與心跳，重新觸發連線流程 |
+| `q` 或 `quit` | 安全退出（停止監控、心跳，記錄 log） |
+
+---
+
+## 2. 後端 API（`CaparocBackend`）
+
+> Web UI 直接呼叫這些方法，不需要 CLI 互動層。
+
+### 2.1 連線管理
+
+#### `check_device_connection(driver) → dict`
+驗證裝置是否可連線（讀取 Input Assembly 0x65）。
+
+```python
+{
+    'connected':   bool,
+    'error':       str | None,
+    'device_info': {
+        'device_type':    'CAPAROC PM EIP',
+        'module_count':   int,          # 偵測到的模組數（0–16）
+        'total_channels': int,          # 模組數 × 4
+        'voltage':        '24.0V'       # 字串格式
+    }
+}
+```
+
+#### `_activate_connection_state(driver) → bool`
+建立 CIP 連線狀態（`connected=True`），**必須在第一次控制前執行**，否則 set_channel / set_nominal_current 無效。
+
+#### `_start_heartbeat(driver)` / `_stop_heartbeat()`
+啟動/停止心跳執行緒（閒置 300s 自動發送一次 CIP 請求保活）。
+
+---
+
+### 2.2 系統狀態
+
+#### `check_global_system_status() → dict`
+讀取 Input Assembly Byte 0–5，解析全域狀態。
+
+```python
+{
+    'safe':               bool,   # True = 無嚴重錯誤
+    'warning':           list,   # 警告訊息列表（字串）
+    'error':             list,   # 錯誤訊息列表（字串）
+    'voltage':            float,  # 系統電壓（V）
+    'total_current':      float,  # 全域總電流（A）
+    'module_count':       int,    # 偵測到的模組數量
+    'global_status_byte': int     # 原始 Byte 0 值
+}
+```
+
+**`global_status_byte` 位元定義**：
+
+| Bit | 意義 |
+|-----|------|
+| 0 | 欠壓（Undervoltage） |
+| 1 | 過壓（Overvoltage） |
+| 2 | 系統錯誤（System Error） |
+| 3 | 80% 總電流警告 |
+| 4 | 總電流關斷 |
+| 7 | Config Assembly 處理中 |
+
+---
+
+### 2.3 即時狀態（監控用）
+
+#### `_read_current_status() → dict | None`
+輕量化狀態讀取，供監控執行緒或 Web 輪詢使用。
+
+```python
+{
+    'timestamp':          float,   # time.time()
+    'global_status_byte': int,
+    'module_count':       int,
+    'total_current':      float,   # A
+    'voltage':            float,   # V
+    'channels': {
+        1: {
+            'module':           int,    # 模組編號
+            'channel':          int,    # 模組內通道編號
+            'is_on':            bool,
+            'flowing_current':  float,  # 實際電流（A），解析度 0.1A
+            'nominal_current':  float,  # 額定電流（A）
+            'warning_80':       bool,
+            'overload':         bool,
+            'short_circuit':    bool,
+            'hardware_fault':   bool,
+            'total_shutdown':   bool
+        },
+        2: { ... },   # 依模組數量動態生成
+        ...
+    }
+}
+```
+
+---
+
+### 2.4 通道控制
+
+#### `set_channel(channel, state) → bool`
+控制單一通道開關。
+
+```python
+set_channel(1, True)   # 開啟 CH1
+set_channel(3, False)  # 關閉 CH3
+```
+
+- `channel`：全域通道編號（1–`get_total_channels()`）
+- `state`：`True` = 開啟 / `False` = 關閉
+- 寫入後等待 0.5s 並回讀確認
+- 回傳 `True` = 成功，`False` = 失敗（Driver 未初始化或 CIP 寫入錯誤）
+
+---
+
+### 2.5 額定電流設定
+
+#### `set_nominal_current(module, channel, current_amps, verify=True) → bool`
+透過 Config Assembly Read-Modify-Write 安全設定額定電流。
+
+```python
+set_nominal_current(1, 2, 4, verify=True)   # 模組1 通道2 設為 4A
+```
+
+- `module`：1–16
+- `channel`：1–4
+- `current_amps`：1–20（整數）
+- `verify=True`：設定後輪詢最多 6 次驗證（每 0.5s），確認設備已應用
+
+#### `_verify_nominal_current(driver, module, channel) → int | None`
+從 Input Assembly 讀取實際額定電流值（含 debug 輸出）。
+
+---
+
+### 2.6 網路設定（硬體 IP）
+
+#### `read_device_network_config(driver) → dict`
+透過 CIP Class 0xF5 讀取設備目前網路設定。
+
+```python
+{
+    'success':            bool,
+    'ip':                 str,   # e.g. '192.168.2.111'
+    'subnet':             str,   # e.g. '255.255.255.0'
+    'gateway':            str,   # e.g. '0.0.0.0'（未設定時）
+    'config_control':     int,   # 0=Static, 1=BOOTP, 2=DHCP
+    'config_control_str': str,   # 'Static IP' / 'BOOTP' / 'DHCP'
+    'status':             int,   # CIP Attr 1 原始值（-1=未讀取）
+    'error':              str | None
+}
+```
+
+#### `set_device_ip(driver, new_ip, subnet, gateway) → dict`
+透過 CIP Class 0xF5 硬寫設備 IP（寫入後設備 IP 立即改變，連線中斷為正常現象）。
+
+```python
+{
+    'success': bool,
+    'error':   str | None
+}
+```
+
+---
+
+### 2.7 工具方法
+
+| 方法 | 說明 | 回傳 |
+|------|------|------|
+| `get_total_channels()` | 取得系統總通道數（module_count × 4） | `int` |
+| `get_module_and_channel(global_ch)` | 全域通道編號 → (模組, 通道) | `(int, int)` |
+| `get_channel_offset(module, channel)` | 計算通道在 Input Assembly 中的 byte offset | `int` |
+| `get_config_channel_offset(module, channel)` | 計算通道在 Config Assembly 中的 Nominal Current byte offset | `int` |
+| `start_monitor(interval, mode)` | 啟動監控背景執行緒 | `bool` |
+| `stop_monitor()` | 停止監控 | `bool` |
+| `show_monitor_info()` | 輸出監控狀態（終端顯示用） | — |
+
+---
+
+## 3. 關鍵資料結構
+
+### 3.1 Input Assembly（0x65，244 bytes）
+
+| Byte | 說明 |
+|------|------|
+| 0 | 全域系統狀態（bit 0–4, 7） |
+| 1 | 模組計數器（0–16） |
+| 2–3 | 全域總電流（little-endian uint16, ÷10 = A） |
+| 4–5 | 輸入電壓（little-endian uint16, ÷100 = V） |
+| 6+ | 通道資料區塊（每模組 12 bytes，每通道 3 bytes） |
+
+**通道 3-byte 結構**（offset = `6 + (module-1)*12 + (channel-1)*3`）：
+
+| Byte | 說明 |
+|------|------|
+| +0 | Status（bit0=開關、bit1=80%警告、bit2=過載、bit3=短路、bit4=硬體故障、bit5=總電流關斷） |
+| +1 | 額定電流（USINT，A） |
+| +2 | 實際電流（USINT，÷10 = A） |
+
+---
+
+### 3.2 Output Assembly（0x64，18 bytes）
+
+| Byte | 說明 |
+|------|------|
+| 0 | 通常為 0 |
+| 1 | 通道開關控制（bit7=release 恆=1；bit0–3 = CH1–CH4 開關） |
+| 2–17 | 保留 |
+
+---
+
+### 3.3 Config Assembly（0x66，讀/寫）
+
+| Byte 區段 | 說明 |
+|-----------|------|
+| 0–5 | Header（保留） |
+| 6+ | 每通道 3 bytes：[Nominal Current] [Programming Lock] [Status: 0=Off/1=On/2=NoChange] |
+
+> ⚠️ 寫入時 Status 欄位務必設為 `2`（No Change），避免誤關其他通道
+
+---
+
+## 4. 連線生命週期
+
+```
+啟動
+  ↓
+CIPDriver(ip).__enter__()      ← with 區塊進入
+  ↓
+check_device_connection()      ← 驗證連線 + 取得模組數
+  ↓
+check_global_system_status()   ← 初始安全檢查
+  ↓
+讀取 Input Assembly            ← 同步設備實際通道狀態至 output_data buffer
+  ↓
+_activate_connection_state()   ← connected=True，WEB UI 顯示 connected
+  ↓
+_start_heartbeat()             ← 閒置 300s 後自動保活
+  ↓
+主控制迴圈
+  ↓
+_stop_heartbeat() + stop_monitor()
+  ↓
+CIPDriver.__exit__()           ← 連線關閉
+```
+
+> ⚠️ **目前限制（3.6.1 尚未完成）**：連線生命週期綁定在 `with CIPDriver(...) as driver:` 區塊內，Web 服務長駐使用需等 3.6.1 重構後才支援。
+
+---
+
+## 5. 設定與 Log
+
+### 5.1 IP 設定檔
+- 路徑：`config/device_config.json`
+- 格式：`{"default_ip": "192.168.2.111"}`
+- 讀取：`_load_default_ip()`
+- 寫入：`_save_default_ip(ip)`
+
+### 5.2 Log 系統
+- 管理：`logging_manager.py`（`setup()` 初始化）
+- 格式：`%(asctime)s [%(levelname)s] [%(log_module)s] %(message)s`
+- 輸出：`src/logs/*.log`
+
+**log_module 標籤**：
+
+| 模組 | 觸發場景 |
+|------|----------|
+| `SYS` | 程式啟動/退出 |
+| `CONN` | 連線成功/失敗 |
+| `CTRL` | 通道開關操作 |
+| `INIT` | 額定電流設定 |
+| `SETTING` | IP 設定選單操作 |
+
+---
+
+## 6. Web UI 設計建議（參考）
+
+### 6.1 主要顯示區塊
+
+| 區塊 | 資料來源 | 建議更新頻率 |
+|------|----------|-------------|
+| 連線狀態 / IP | `check_device_connection()` | 初始化時 + 重連 |
+| 系統狀態（電壓/電流/模組數） | `_read_current_status()` | 2s 輪詢 |
+| 通道狀態（開關/電流/警告） | `_read_current_status()` | 2s 輪詢 |
+| 設備網路設定 | `read_device_network_config()` | 按需讀取 |
+
+### 6.2 主要控制動作
+
+| 動作 | 呼叫方法 |
+|------|----------|
+| 開啟/關閉通道 | `backend.set_channel(ch, True/False)` |
+| 設定額定電流 | `backend.set_nominal_current(module, channel, amps)` |
+| 重新整理狀態 | `backend._read_current_status()` |
+| 變更連線 IP | 修改 `backend.device_ip` + 重建 CIPDriver |
+| 讀取設備 IP | `backend.read_device_network_config(driver)` |
+| 硬寫設備 IP | `backend.set_device_ip(driver, new_ip, subnet, gateway)` |
+
+### 6.3 連線生命週期（3.6.1 已完成）
+
+Web UI 直接呼叫 `backend.connect()` / `backend.disconnect()` / `backend.is_connected`，無需 `with CIPDriver:` 區塊：
+
+```python
+backend = CaparocBackend("192.168.2.111")
+
+# 啟動 Web 服務時
+if backend.connect():
+    print("已連線，可開始輪詢或 WebSocket 推送")
+
+# 需要重連時
+backend.disconnect()
+backend.device_ip = "192.168.2.200"
+backend.connect()
+
+# 停止服務時
+backend.disconnect()
+```
+
+---
+
+*最後更新：2026-05-14*

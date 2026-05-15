@@ -256,16 +256,19 @@ def _show_monitor_status(self, status, changes):
 > GUI 框架決策：**Dash**（純 Python，內建即時更新，無需寫 HTML/JS）  
 > 進入方式：Python 服務常駐，瀏覽器開啟 `http://localhost:8050`
 
-#### 3.6.1 CaparocBackend 連線管理重構 ⚠️ 最重要
+#### 3.6.1 CaparocBackend 連線管理重構 ✅ **已完成（2026-05-15）**
 
 **問題**: 目前連線生命週期綁定在 `with CIPDriver(...) as driver:` 內，Web 服務無法長駐使用。
 
-**需要新增至 `caparoc_backend.py`**:
-- [ ] `connect()` — 手動建立 CIPDriver 連線、activate state、啟動 heartbeat
-- [ ] `disconnect()` — 停止 heartbeat、關閉 CIPDriver
-- [ ] `is_connected` — 連線狀態屬性
+**完成內容**:
+- [x] `connect()` — 開啟 CIPDriver、驗證連線、同步 output buffer、activate state、啟動 heartbeat
+- [x] `disconnect()` — 停止監控與心跳、關閉 CIPDriver
+- [x] `is_connected` — property，回傳 `bool`（True = driver 已開啟且旗標有效）
+- [x] `_cleanup_driver()` — 內部資源清理輔助方法
+- [x] `_sync_output_from_device()` — 讀取設備實際通道狀態，重建 output buffer（防誤關正在運作的通道）
+- [x] CLI（`caparoc_controller.py`）繼承這些方法，完全向後相容
 
-**預估工時**: 1-2 小時
+**實際工時**: 0.5 小時
 
 ---
 

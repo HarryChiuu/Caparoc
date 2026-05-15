@@ -2,6 +2,40 @@
 
 ---
 
+## [2026-05-15] Phase 3.6.1 - CaparocBackend 長駐連線管理（Web UI 前置）
+
+### 🎯 動機
+現有連線生命週期完全綁定在 `with CIPDriver(...) as driver:` 區塊內，Web 服務無法在請求之間保持連線長駐，必須先抽出可手動控制的連線 API。
+
+### 🔧 實作內容
+
+**`src/caparoc_backend.py` — 新增 5 個方法**
+
+| 方法 | 類型 | 說明 |
+|------|------|------|
+| `is_connected` | property | `True` = driver 已開啟且連線旗標有效 |
+| `connect()` | method | 開啟 CIPDriver → 驗證裝置 → sync output buffer → activate state → 啟動 heartbeat |
+| `disconnect()` | method | 停監控 → 停心跳 → `_cleanup_driver()` → 清除 `channels_initialized` |
+| `_cleanup_driver()` | 內部 | 關閉 CIPDriver（`__exit__`）、清空 `driver` / `_cip_driver` 參考 |
+| `_sync_output_from_device()` | 內部 | 讀取 Input Assembly，重建 output_data buffer，**防止首次連線誤關正在運作的通道** |
+
+**`__init__` 新增兩個屬性**
+```python
+self._cip_driver = None   # CIPDriver 實例（長駐模式用）
+self._connected = False   # 連線狀態旗標
+```
+
+### 💡 設計說明
+- `connect()` / `disconnect()` 只在 `CaparocBackend` 層實作；`CaparocController` 繼承後自動擁有，**CLI `run()` 保持不變，完全向後相容**
+- `_sync_output_from_device()` 安全性：若讀取失敗則靜默略過，使用空白初始狀態（避免阻斷連線流程）
+- Web 服務啟動時呼叫 `backend.connect()`，停止時呼叫 `backend.disconnect()`，中間所有請求共用同一 driver 實例
+
+### 📊 統計
+- **修改檔案**: `src/caparoc_backend.py`（+115 行，新增連線管理區塊 L217–L343）
+- **工時**: 0.5 小時
+
+---
+
 ## [2026-05-14] setting 選單重設計（職責分離與使用流程優化）
 
 ### 🎯 動機

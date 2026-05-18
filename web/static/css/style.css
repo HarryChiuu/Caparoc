@@ -338,3 +338,94 @@ button:hover, .btn:hover { background: #1f4a90; }
     background: #2a2f45; color: #dde3f0;
 }
 .toggle-btn:hover { background: #363d5a; }
+
+/* ── 系統日誌頁 ──────────────────────────── */
+.log-header {
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 10px; margin-bottom: 14px;
+    border-bottom: 1px solid #2a2f45; padding-bottom: 10px;
+}
+.log-header h2 { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+
+.log-toolbar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.log-select {
+    padding: 5px 10px; border-radius: 6px;
+    border: 1px solid #2a2f45; background: #12151c;
+    color: #dde3f0; font-size: 0.85rem; cursor: pointer;
+}
+.log-select:focus { outline: none; border-color: #7eb8f7; }
+
+.log-pagesize { display: flex; gap: 0; }
+.log-pagesize .btn { border-radius: 0; border-right: 1px solid #1c2030; }
+.log-pagesize .btn:first-child { border-radius: 6px 0 0 6px; }
+.log-pagesize .btn:last-child  { border-radius: 0 6px 6px 0; border-right: none; }
+
+.btn-ghost {
+    background: #1f2540; color: #8a9ab8;
+    border: 1px solid #2a2f45;
+}
+.btn-ghost:hover { background: #2a2f45; color: #dde3f0; }
+.btn-ghost:disabled { opacity: 0.35; cursor: default; }
+.btn-ghost:disabled:hover { background: #1f2540; }
+
+.log-table-wrap {
+    background: #12151c; border-radius: 8px;
+    overflow: auto; max-height: calc(100vh - 280px); min-height: 200px;
+}
+.log-empty {
+    padding: 40px; text-align: center;
+    color: #5a6a88; font-size: 0.9rem;
+}
+.log-table {
+    width: 100%; border-collapse: collapse; font-size: 0.84rem;
+    font-family: ''Consolas'', ''Cascadia Mono'', monospace;
+}
+.log-table th {
+    position: sticky; top: 0; z-index: 1;
+    padding: 8px 12px; text-align: left;
+    background: #1c2030; color: #7a8aaa;
+    font-weight: 600; font-size: 0.78rem;
+    border-bottom: 1px solid #2a2f45;
+}
+.log-table col.col-time  { width: 82px; }
+.log-table col.col-level { width: 84px; }
+.log-table td {
+    padding: 6px 12px; vertical-align: top;
+    border-bottom: 1px solid #181c2c;
+}
+.log-table tr:last-child td { border-bottom: none; }
+
+/* 每列底色 */
+.log-row-debug    td { background: transparent; }
+.log-row-info     td { background: transparent; }
+.log-row-system   td { background: #1e1a30; }
+.log-row-warning  td { background: #221800; }
+.log-row-error    td { background: #220808; }
+.log-row-critical td { background: #2d0010; }
+
+.log-time { color: #6a7a98; white-space: nowrap; font-size: 0.8rem; }
+.log-msg  { color: #c8d4e8; word-break: break-word; }
+
+/* 等級徽章 */
+.log-badge {
+    display: inline-block; padding: 1px 7px; border-radius: 4px;
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.4px;
+    white-space: nowrap;
+}
+.log-debug    { background: #1f2540; color: #7a8aaa; }
+.log-info     { background: #1a2f50; color: #7eb8f7; }
+.log-system   { background: #27164a; color: #a78bfa; }
+.log-warning  { background: #3a2200; color: #ff9800; }
+.log-error    { background: #3a0f0f; color: #f44336; }
+.log-critical { background: #4a0018; color: #ff1744; }
+
+/* 分頁列 */
+.log-pagination {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 10px; flex-wrap: wrap; gap: 8px;
+}
+.log-total { font-size: 0.82rem; color: #6a7a98; }
+.log-pager { display: flex; align-items: center; gap: 6px; }
+.log-page-info { font-size: 0.82rem; color: #8a9ab8; min-width: 60px; text-align: center; }

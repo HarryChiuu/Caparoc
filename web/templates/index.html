@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CAPAROC 控制台</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=4.2.2b" />
+    <link rel="stylesheet" href="/static/css/style.css?v=4.2.3" />
 </head>
 <body>
     <div id="app">
@@ -192,11 +192,72 @@
                 <!-- 系統日誌 -->
                 <template v-if="currentPage === 'logs'">
                     <section class="panel">
-                        <h2>系統日誌</h2>
-                        <div class="placeholder">
-                            <div class="placeholder-icon">📋</div>
-                            <div class="placeholder-title">開發中</div>
-                            <div class="placeholder-desc">後端日誌查看（4.2.3 實作）</div>
+                        <!-- 標題列 + 工具列 -->
+                        <div class="log-header">
+                            <h2>系統日誌</h2>
+                            <div class="log-toolbar">
+                                <select v-model="logFilter" class="log-select">
+                                    <option value="all">全部等級</option>
+                                    <option value="warn">WARNING+</option>
+                                    <option value="error">ERROR</option>
+                                </select>
+                                <div class="log-pagesize">
+                                    <button :class="['btn', 'btn-sm', logPageSize === 10 ? '' : 'btn-ghost']"
+                                            @click="setPageSize(10)">10</button>
+                                    <button :class="['btn', 'btn-sm', logPageSize === 20 ? '' : 'btn-ghost']"
+                                            @click="setPageSize(20)">20</button>
+                                </div>
+                                <button :class="['btn', 'btn-sm', logAutoScroll ? '' : 'btn-ghost']"
+                                        @click="toggleLogAuto"
+                                        :title="logAutoScroll ? '點擊暫停自動更新' : '點擊開啟自動更新'">
+                                    {{ logAutoScroll ? '⏸ 暫停' : '▶ 自動更新' }}
+                                </button>
+                                <button class="btn btn-sm btn-danger" @click="clearLogs">清空</button>
+                            </div>
+                        </div>
+
+                        <!-- 日誌表格 -->
+                        <div class="log-table-wrap">
+                            <div class="log-empty" v-if="logEntries.length === 0">目前無日誌記錄</div>
+                            <table class="log-table" v-else>
+                                <colgroup>
+                                    <col class="col-time" />
+                                    <col class="col-level" />
+                                    <col />
+                                </colgroup>
+                                <thead>
+                                    <tr>
+                                        <th>時間</th>
+                                        <th>等級</th>
+                                        <th>訊息</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="e in logEntries" :key="e.id"
+                                        :class="'log-row log-row-' + e.level.toLowerCase()">
+                                        <td class="log-time">{{ e.time }}</td>
+                                        <td>
+                                            <span :class="'log-badge log-' + e.level.toLowerCase()">
+                                                {{ e.level }}
+                                            </span>
+                                        </td>
+                                        <td class="log-msg">{{ e.msg }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- 分頁列 -->
+                        <div class="log-pagination">
+                            <span class="log-total">共 {{ logTotal }} 筆</span>
+                            <div class="log-pager" v-if="logTotalPages > 1">
+                                <button class="btn btn-sm btn-ghost"
+                                        @click="logPrevPage" :disabled="logPage === 0">‹</button>
+                                <span class="log-page-info">{{ logPage + 1 }} / {{ logTotalPages }}</span>
+                                <button class="btn btn-sm btn-ghost"
+                                        @click="logNextPage"
+                                        :disabled="logPage >= logTotalPages - 1">›</button>
+                            </div>
                         </div>
                     </section>
                 </template>
@@ -226,6 +287,6 @@
     </div>
 
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="/static/js/app.js?v=4.2.2b"></script>
+    <script src="/static/js/app.js?v=4.2.3"></script>
 </body>
 </html>

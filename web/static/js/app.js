@@ -1,4 +1,4 @@
-const { createApp, reactive, ref, onMounted, onUnmounted } = Vue;
+const { createApp, reactive, ref, computed, watch, onMounted, onUnmounted } = Vue;
 
 createApp({
     setup() {
@@ -155,10 +155,95 @@ createApp({
             setTimeout(() => { batchStatus.msg = ''; }, 4000);
         }
 
+
+        // -- 系統日誌 --
+        const logEntries   = ref([]);
+        const logTotal     = ref(0);
+        const logPage      = ref(0);
+        const logPageSize  = ref(20);
+        const logFilter    = ref('all');
+        const logAutoScroll = ref(true);
+        let   _logTimer    = null;
+
+        const logTotalPages = computed(() =>
+            Math.max(1, Math.ceil(logTotal.value / logPageSize.value))
+        );
+
+        async function fetchLogs() {
+            const offset = logPage.value * logPageSize.value;
+            try {
+                const r = await fetch(
+                    `/api/logs?level=${logFilter.value}&limit=${logPageSize.value}&offset=${offset}`
+                );
+                if (r.ok) {
+                    const data = await r.json();
+                    logTotal.value   = data.total;
+                    logEntries.value = data.entries;
+                    // 頁碼超出範圍時自動修正
+                    const maxPage = Math.max(0, logTotalPages.value - 1);
+                    if (logPage.value > maxPage) logPage.value = maxPage;
+                }
+            } catch (_) {}
+        }
+
+        async function clearLogs() {
+            await fetch('/api/logs/clear', { method: 'POST' });
+            logEntries.value = [];
+            logTotal.value   = 0;
+            logPage.value    = 0;
+        }
+
+        function setPageSize(n) {
+            logPageSize.value = n;
+            logPage.value     = 0;
+            fetchLogs();
+        }
+
+        function toggleLogAuto() {
+            logAutoScroll.value = !logAutoScroll.value;
+        }
+
+        function logPrevPage() {
+            if (logPage.value > 0) { logPage.value--; fetchLogs(); }
+        }
+
+        function logNextPage() {
+            if (logPage.value < logTotalPages.value - 1) { logPage.value++; fetchLogs(); }
+        }
+
+        // 切換到 logs 頁時啟動輪詢；離開時停止
+        watch(currentPage, (page) => {
+            clearInterval(_logTimer);
+            _logTimer = null;
+            if (page === 'logs') {
+                fetchLogs();
+                if (logAutoScroll.value)
+                    _logTimer = setInterval(fetchLogs, 2000);
+            }
+        });
+
+        // 自動更新開關
+        watch(logAutoScroll, (auto) => {
+            clearInterval(_logTimer);
+            _logTimer = null;
+            if (auto && currentPage.value === 'logs') {
+                logPage.value = 0;
+                fetchLogs();
+                _logTimer = setInterval(fetchLogs, 2000);
+            }
+        });
+
+        // 篩選條件變更 → 回到第 0 頁重新取
+        watch(logFilter, () => {
+            logPage.value = 0;
+            fetchLogs();
+        });
+
         onMounted(connectWs);
         onUnmounted(() => {
             clearTimeout(wsRetryTimer);
             if (ws) ws.close();
+            clearInterval(_logTimer);
         });
 
         return {
@@ -169,6 +254,10 @@ createApp({
             doConnect, doDisconnect, toggleCh,
             nominalInputs, nominalFeedback, batchNominal, batchStatus,
             setNominal, setAllNominal,
+            logEntries, logTotal, logPage, logPageSize, logFilter,
+            logAutoScroll, logTotalPages,
+            fetchLogs, clearLogs, setPageSize,
+            toggleLogAuto, logPrevPage, logNextPage,
         };
     }
 }).mount('#app');

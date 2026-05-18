@@ -418,23 +418,30 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-##### 4.2.3 系統日誌頁
+##### 4.2.3 系統日誌頁 ✅ **已完成（2026-05-18）**
 
 > **目的**：在網頁查看 backend 運作日誌，取代需要看終端機的問題  
 > **依賴**：4.2.1 完成 ✅（後端修改獨立於 4.2.2）  
-> **預估工時**：1.5-2 小時
+> **後端 API**：`GET /api/logs?level=&limit=&offset=`、`POST /api/logs/clear`
 
 **後端（`web/app.py`）**：
-- [ ] 新增 `_LogHandler`（繼承 `logging.Handler`）：攔截 CaparocBackend logger，寫入 `deque(maxlen=500)`
-- [ ] 新增 `GET /api/logs?level=&limit=100` endpoint，回傳 log 陣列
-- [ ] 新增 `POST /api/logs/clear` endpoint
+- [x] 新增 `_SYSTEM_LEVEL = 25`（介於 INFO/WARNING），`logging.addLevelName` 註冊
+- [x] `_CaparocLogHandler`：繼承 `logging.Handler`，寫入 `deque(maxlen=500)`
+- [x] 掛載到 `caparoc` logger（含所有 `caparoc.*` 子層）
+- [x] `GET /api/logs?level=all|warn|error&limit=N&offset=N` — offset 分頁，最新在前
+- [x] `POST /api/logs/clear` — 清空緩衝
+- [x] lifespan / connect / disconnect 事件發出 SYSTEM 等級 log
 
 **前端**：
-- [ ] `logs` 頁定時拉取（每 2 秒）`/api/logs`
-- [ ] 顯示欄位：時間戳、等級（INFO / WARNING / ERROR，不同顏色）、訊息
-- [ ] 等級篩選下拉選單（全部 / WARNING+ / ERROR）
-- [ ] 「清空顯示」按鈕（僅清前端 buffer）
-- [ ] 自動捲動至最新一筆（可切換鎖定/解鎖）
+- [x] `logs` 頁定時輪詢（每 2 秒）`/api/logs`，切換頁面時停止
+- [x] 顏色區分：INFO（藍）、WARNING（橘）、ERROR（紅）、SYSTEM（紫）、CRITICAL（深紅）、DEBUG（灰）
+- [x] 等級篩選下拉選單（全部 / WARNING+ / ERROR）
+- [x] 每頁顯示條數切換（10 / 20），分段按鈕 UI
+- [x] 分頁：上一頁 / 第 X / Y 頁 / 下一頁
+- [x] 「暫停 / 自動更新」切換按鈕（暫停時停止輪詢，恢復時跳回第 0 頁）
+- [x] 「清空」按鈕（呼叫後端 API + 清空前端 buffer）
+
+**實際工時**：1.5 小時
 
 ---
 

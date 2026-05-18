@@ -12,6 +12,8 @@ CAPAROC Web UI 服務 (Phase 4.0)
 import sys
 import asyncio
 import json
+import logging
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -27,6 +29,44 @@ _ROOT_DIR = _WEB_DIR.parent
 sys.path.insert(0, str(_ROOT_DIR / "src"))
 
 from caparoc_backend import CaparocBackend  # noqa: E402
+
+# ==================== Log 攔截器 ====================
+# 自訂 SYSTEM 等級（25，介於 INFO=20 與 WARNING=30 之間）
+_SYSTEM_LEVEL = 25
+logging.addLevelName(_SYSTEM_LEVEL, "SYSTEM")
+
+# 記憶體 log 緩衝（最多 500 筆，FIFO）
+_LOG_BUFFER: deque = deque(maxlen=500)
+_log_serial = 0
+
+
+class _CaparocLogHandler(logging.Handler):
+    """攔截 caparoc logger，將記錄寫入記憶體 buffer。"""
+
+    _TIME_FMT = "%H:%M:%S"
+
+    def emit(self, record: logging.LogRecord):
+        global _log_serial
+        try:
+            _log_serial += 1
+            _LOG_BUFFER.append({
+                "id":     _log_serial,
+                "ts":     record.created,
+                "time":   self.formatTime(record, self._TIME_FMT),
+                "level":  record.levelname,
+                "logger": record.name,
+                "msg":    self.format(record),
+            })
+        except Exception:
+            pass
+
+
+_log_handler = _CaparocLogHandler()
+_log_handler.setLevel(logging.DEBUG)
+# 掛載到 caparoc 根 logger（含 caparoc.web 子層）
+logging.getLogger("caparoc").addHandler(_log_handler)
+
+_WEB_LOGGER = logging.getLogger("caparoc.web")
 
 # ==================== 全域設定 ====================
 _CONFIG_PATH = _ROOT_DIR / "config" / "device_config.json"
@@ -45,12 +85,18 @@ backend = CaparocBackend(_default_ip)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """服務啟動時嘗試連線；停止時安全斷線。"""
+    _WEB_LOGGER.log(_SYSTEM_LEVEL, f"Web 服務啟動，嘗試連線至 {backend.device_ip}...")
     # 啟動時連線失敗不阻斷服務，可透過 POST /api/connect 手動連線
     try:
-        await asyncio.to_thread(backend.connect)
-    except Exception:
-        pass
+        ok = await asyncio.to_thread(backend.connect)
+        if ok:
+            _WEB_LOGGER.log(_SYSTEM_LEVEL, f"設備連線成功 ({backend.device_ip})")
+        else:
+            _WEB_LOGGER.warning(f"設備連線失敗 ({backend.device_ip})，可透過連線設定頁手動重試")
+    except Exception as e:
+        _WEB_LOGGER.error(f"啟動連線例外: {e}")
     yield
+    _WEB_LOGGER.log(_SYSTEM_LEVEL, "Web 服務關閉中...")
     try:
         await asyncio.to_thread(backend.disconnect)
     except Exception:
@@ -144,7 +190,9 @@ async def api_connect(ip: str = Query(default=None)):
         backend.device_ip = ip
     success = await asyncio.to_thread(backend.connect)
     if success:
+        _WEB_LOGGER.log(_SYSTEM_LEVEL, f"手動連線成功 ({backend.device_ip})")
         return {"success": True, "ip": backend.device_ip}
+    _WEB_LOGGER.warning(f"手動連線失敗 ({backend.device_ip})")
     raise HTTPException(status_code=503, detail=f"無法連線至 {backend.device_ip}")
 
 
@@ -152,6 +200,7 @@ async def api_connect(ip: str = Query(default=None)):
 async def api_disconnect():
     """斷開連線。"""
     await asyncio.to_thread(backend.disconnect)
+    _WEB_LOGGER.log(_SYSTEM_LEVEL, f"手動斷線 ({backend.device_ip})")
     return {"success": True}
 
 
@@ -188,6 +237,36 @@ def set_nominal(channel_id: int, current_amps: float = Query(...)):
     if not ok:
         raise HTTPException(status_code=500, detail="設定失敗，請確認設備連線")
     return {"success": True, "channel": channel_id, "nominal_amps": amps_int}
+
+
+# ==================== Log API ====================
+@app.get("/api/logs")
+def get_logs(
+    level:  str = Query(default="all"),           # all | warn | error
+    limit:  int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    """取得記憶體 log 緩衝（最新在前，支援分頁與等級篩選）。"""
+    _WARN_LEVELS  = {"WARNING", "ERROR", "CRITICAL", "SYSTEM"}
+    _ERROR_LEVELS = {"ERROR", "CRITICAL"}
+
+    entries = list(_LOG_BUFFER)
+    if level == "warn":
+        entries = [e for e in entries if e["level"] in _WARN_LEVELS]
+    elif level == "error":
+        entries = [e for e in entries if e["level"] in _ERROR_LEVELS]
+
+    entries.reverse()                    # 最新在前
+    total = len(entries)
+    page  = entries[offset: offset + limit]
+    return {"total": total, "offset": offset, "limit": limit, "entries": page}
+
+
+@app.post("/api/logs/clear")
+def clear_logs():
+    """清空記憶體 log 緩衝。"""
+    _LOG_BUFFER.clear()
+    return {"success": True}
 
 
 # ==================== WebSocket ====================

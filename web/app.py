@@ -177,12 +177,17 @@ def channel_off(channel_id: int):
 
 @app.post("/api/channel/{channel_id}/nominal")
 def set_nominal(channel_id: int, current_amps: float = Query(...)):
-    """設定通道額定電流（1-based 全域通道編號，0.5-25.5 A）。"""
+    """設定通道額定電流（1-based 全域通道編號，1-20 A 整數）。"""
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="未連線")
+    amps_int = int(round(current_amps))
+    if amps_int < 1 or amps_int > 20:
+        raise HTTPException(status_code=422, detail="額定電流範圍 1–20 A")
     module, ch = backend.get_module_and_channel(channel_id)
-    backend.set_nominal_current(module, ch, current_amps)
-    return {"success": True, "channel": channel_id, "nominal_amps": current_amps}
+    ok = backend.set_nominal_current(module, ch, amps_int)
+    if not ok:
+        raise HTTPException(status_code=500, detail="設定失敗，請確認設備連線")
+    return {"success": True, "channel": channel_id, "nominal_amps": amps_int}
 
 
 # ==================== WebSocket ====================

@@ -117,9 +117,9 @@ createApp({
         const batchStatus = reactive({ ok: false, msg: '' });
 
         async function setNominal(chId) {
-            const val = parseFloat(nominalInputs[chId]);
-            if (isNaN(val) || val < 0.5 || val > 25.5) {
-                nominalFeedback[chId] = { ok: false, msg: '請輸入 0.5–25.5' };
+            const val = Math.round(parseFloat(nominalInputs[chId]));
+            if (isNaN(val) || val < 1 || val > 20) {
+                nominalFeedback[chId] = { ok: false, msg: '請輸入 1–20 A' };
                 return;
             }
             try {
@@ -138,10 +138,10 @@ createApp({
         }
 
         async function setAllNominal() {
-            const val = parseFloat(batchNominal.value);
-            if (isNaN(val) || val < 0.5 || val > 25.5) {
+            const val = Math.round(parseFloat(batchNominal.value));
+            if (isNaN(val) || val < 1 || val > 20) {
                 batchStatus.ok = false;
-                batchStatus.msg = '請輸入 0.5–25.5';
+                batchStatus.msg = '請輸入 1–20 A';
                 return;
             }
             let ok = 0, fail = 0;

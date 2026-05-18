@@ -399,18 +399,22 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-##### 4.2.2 通道設定頁（額定電流 UI）
+##### 4.2.2 通道設定頁（額定電流 UI）✅ **已完成（2026-05-18）**
 
 > **目的**：補齊 CLI `init` 指令在 Web UI 的對應功能（API 已存在，只缺 UI）  
 > **依賴**：4.2.1 完成 ✅  
-> **預估工時**：1-1.5 小時  
 > **後端 API**：`POST /api/channel/{id}/nominal?current_amps=X`（已實作）
 
-- [ ] `channel-settings` 頁顯示所有通道表格（通道編號、模組、目前額定電流、輸入欄位、操作）
-- [ ] 每列：數字輸入欄（0.5–25.5 A）+ 「設定」按鈕 → 呼叫 `/api/channel/{id}/nominal`
-- [ ] 設定成功後即時更新顯示值，並顯示成功/失敗提示
-- [ ] 「全部套用」按鈕：批次設定所有通道為相同額定電流
-- [ ] 表格資料從 WebSocket 狀態自動填入目前值
+- [x] `channel-settings` 頁顯示所有通道表格（通道編號、模組、目前額定電流、輸入欄位、操作）
+- [x] 每列：整數輸入欄（1–20 A）+ 「設定」按鈕 → 呼叫 `/api/channel/{id}/nominal`
+- [x] 設定成功後即時更新顯示值，並顯示成功/失敗提示（3 秒後自動清除）
+- [x] 「全部套用」按鈕：批次設定所有通道為相同額定電流
+- [x] 表格資料從 WebSocket 狀態自動填入目前值
+- [x] **bug fix**：API 加入回傳值檢查（`backend.set_nominal_current()` 回傳 False 時回 HTTP 500）
+- [x] **bug fix**：float 輸入先 `int(round(...))` 再傳入，修正 `struct.pack('<B')` 型別錯誤
+- [x] **bug fix**：輸入範圍改為 1–20 A（對齊 backend 驗證）
+
+**實際工時**：1.5 小時
 
 ---
 
@@ -458,6 +462,35 @@ def _show_monitor_status(self, status, changes):
 ---
 
 **Phase 4.2 預估總工時**：5.5-7 小時（4.2.1 已完成）
+
+---
+
+##### 4.2.5 設定值外部化（config 管理）
+
+> **目的**：將散落在程式碼中的硬編碼數字集中到 `config/web_config.json`，方便部署時調整  
+> **依賴**：4.2.1 ✅，無其他依賴  
+> **預估工時**：1 小時
+
+**目前硬編碼、可外部化的項目**：
+
+| 設定項 | 目前位置 | 目前值 | 建議 key |
+|--------|---------|--------|---------|
+| Web 伺服器 port | `web/app.py` `__main__` | `8000` | `web_port` |
+| WebSocket 推送間隔 | `web/app.py` ws_status | `1` 秒 | `ws_push_interval` |
+| 額定電流有效範圍 | `src/caparoc_backend.py` L505 | `1–20` A | `nominal_current_min/max` |
+| 顯示小數位數（Web） | `web/static/js/app.js` fmt() | `1` 位 | `display_decimal_places` |
+| 監控預設輪詢間隔（CLI） | CLI argument default | `2` 秒 | `monitor_interval_s` |
+
+**備註**：
+- `fmt()` 的 `.toFixed(1)` **只影響 Web UI**；CLI 的 `:.1f` 在 `caparoc_backend.py` 獨立定義，兩者不共用  
+- 建議新增 `config/web_config.json`，由 `web/app.py` 載入；CLI 設定仍放 `config/device_config.json`  
+- `nominal_current_range` 前後端都需要同一來源，可考慮讓 API `GET /api/config/limits` 提供給前端
+
+**工作項目**：
+- [ ] 建立 `config/web_config.json`（web_port, ws_push_interval, display_decimal_places）
+- [ ] `web/app.py` 啟動時讀取 web_config.json
+- [ ] `app.js` 從 `GET /api/config/limits` 取得 nominal_current_range，動態設定 input min/max
+- [ ] `caparoc_backend.py` 從 `config/device_config.json` 或常數檔讀取 nominal range
 
 ---
 

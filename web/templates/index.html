@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CAPAROC 控制台</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=4.2.2" />
+    <link rel="stylesheet" href="/static/css/style.css?v=4.2.2b" />
 </head>
 <body>
     <div id="app">
@@ -142,9 +142,9 @@
                             <div class="batch-bar">
                                 <span style="font-size:0.82rem;color:#7a8aaa;white-space:nowrap">全部套用</span>
                                 <input type="number" v-model="batchNominal"
-                                       min="0.5" max="25.5" step="0.5"
+                                       min="1" max="20" step="1"
                                        placeholder="A" class="nominal-input" />
-                                <button class="btn btn-sm" @click="setAllNominal">套用至全部通道</button>
+                                <button class="btn" @click="setAllNominal">套用至全部通道</button>
                                 <span class="feedback-msg"
                                       :class="batchStatus.ok ? 'ok' : 'err'"
                                       v-if="batchStatus.msg">{{ batchStatus.msg }}</span>
@@ -169,12 +169,12 @@
                                         <td>
                                             <input type="number"
                                                    v-model="nominalInputs[ch.id]"
-                                                   min="0.5" max="25.5" step="0.5"
+                                                   min="1" max="20" step="1"
                                                    :placeholder="ch.nominal_amps"
                                                    class="nominal-input" />
                                         </td>
                                         <td>
-                                            <button class="btn btn-sm" @click="setNominal(ch.id)">設定</button>
+                                            <button class="btn" @click="setNominal(ch.id)">設定</button>
                                             <span class="feedback-msg"
                                                   :class="nominalFeedback[ch.id]?.ok ? 'ok' : 'err'"
                                                   v-if="nominalFeedback[ch.id]?.msg">
@@ -226,6 +226,6 @@
     </div>
 
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="/static/js/app.js?v=4.2.2"></script>
+    <script src="/static/js/app.js?v=4.2.2b"></script>
 </body>
 </html>

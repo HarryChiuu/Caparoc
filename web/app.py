@@ -31,6 +31,9 @@ sys.path.insert(0, str(_ROOT_DIR / "src"))
 from caparoc_backend import CaparocBackend  # noqa: E402
 
 # ==================== Log 攔截器 ====================
+import re as _re
+from datetime import date as _date
+
 # 自訂 SYSTEM 等級（25，介於 INFO=20 與 WARNING=30 之間）
 _SYSTEM_LEVEL = 25
 logging.addLevelName(_SYSTEM_LEVEL, "SYSTEM")
@@ -38,6 +41,39 @@ logging.addLevelName(_SYSTEM_LEVEL, "SYSTEM")
 # 記憶體 log 緩衝（最多 500 筆，FIFO）
 _LOG_BUFFER: deque = deque(maxlen=500)
 _log_serial = 0
+
+# 解析 .log 檔行格式：2026-05-18 14:30:00 [INFO] [SYS] 訊息
+_LOG_LINE_RE = _re.compile(
+    r"^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) \[(\w+)\] \[([^\]]+)\] (.+)$"
+)
+
+
+def _preload_log_file(max_lines: int = 400) -> None:
+    """啟動時預載今日 .log 檔（最新 max_lines 筆），讓網頁可看到歷史記錄。"""
+    global _log_serial
+    today = _date.today().strftime("%Y-%m-%d")
+    log_path = _ROOT_DIR / "logs" / f"caparoc_{today}.log"
+    if not log_path.exists():
+        return
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        recent = lines[-max_lines:]          # 取最後 N 行
+        for line in recent:
+            m = _LOG_LINE_RE.match(line)
+            if not m:
+                continue
+            date_str, time_str, level, _module, msg = m.groups()
+            _log_serial += 1
+            _LOG_BUFFER.append({
+                "id":     _log_serial,
+                "ts":     0,              # 歷史記錄不需要精確 epoch
+                "time":   time_str,
+                "level":  level,
+                "logger": "caparoc",
+                "msg":    msg,
+            })
+    except Exception:
+        pass
 
 
 class _CaparocLogHandler(logging.Handler):
@@ -55,11 +91,14 @@ class _CaparocLogHandler(logging.Handler):
                 "time":   self.formatTime(record, self._TIME_FMT),
                 "level":  record.levelname,
                 "logger": record.name,
-                "msg":    self.format(record),
+                "msg":    record.getMessage(),
             })
         except Exception:
             pass
 
+
+# 預載今日歷史記錄（在 addHandler 前，避免重複寫入）
+_preload_log_file()
 
 _log_handler = _CaparocLogHandler()
 _log_handler.setLevel(logging.DEBUG)

@@ -3,32 +3,32 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CAPAROC ?批??/title>
+    <title>CAPAROC 控制台</title>
     <link rel="stylesheet" href="/static/css/style.css?v=4.2" />
 </head>
 <body>
     <div id="app">
 
-        <!-- ??箏???-->
+        <!-- 頂部固定列 -->
         <header class="topbar">
             <div class="topbar-left">
-                <button class="sidebar-toggle" @click="toggleSidebar" title="撅?/?嗅??詨">??/button>
+                <button class="sidebar-toggle" @click="toggleSidebar" title="展開/收合選單">☰</button>
                 <span class="brand">CAPAROC</span>
             </div>
             <div class="conn-bar">
                 <span class="dot" :class="state.connected ? 'dot-on' : 'dot-off'"></span>
                 <span class="conn-label">
-                    {{ state.connected ? '撌脤?? 繚 ' + state.device_ip : '?芷??' }}
+                    {{ state.connected ? '已連線 · ' + state.device_ip : '未連線' }}
                 </span>
-                <button class="btn-sm" v-if="!state.connected" @click="doConnect">???</button>
-                <button class="btn-sm btn-danger" v-else @click="doDisconnect">?瑞?</button>
+                <button class="btn-sm" v-if="!state.connected" @click="doConnect">連線</button>
+                <button class="btn-sm btn-danger" v-else @click="doDisconnect">斷線</button>
             </div>
         </header>
 
-        <!-- 銝餌???-->
+        <!-- 主版面 -->
         <div class="layout">
 
-            <!-- 撌血撠汗??-->
+            <!-- 左側導覽列 -->
             <nav class="sidebar" :class="{ collapsed: sidebarCollapsed }">
                 <ul class="nav-list">
                     <li v-for="item in navItems" :key="item.page"
@@ -41,40 +41,40 @@
                 </ul>
             </nav>
 
-            <!-- 銝餃摰孵???-->
+            <!-- 主內容區域 -->
             <main class="main-content">
 
-                <!-- ?? ?銵冽 ?? -->
+                <!-- 儀表板 -->
                 <template v-if="currentPage === 'dashboard'">
 
                     <section class="panel" v-if="state.connected">
-                        <h2>蝟餌絞???/h2>
+                        <h2>系統狀態</h2>
                         <div class="sys-grid">
                             <div class="stat-box">
                                 <div class="stat-val">{{ fmt(state.voltage) }}<span class="unit">V</span></div>
-                                <div class="stat-label">頛詨?餃?</div>
+                                <div class="stat-label">輸入電壓</div>
                             </div>
                             <div class="stat-box">
                                 <div class="stat-val">{{ fmt(state.total_current) }}<span class="unit">A</span></div>
-                                <div class="stat-label">蝮賡瘚?/div>
+                                <div class="stat-label">總電流</div>
                             </div>
                             <div class="stat-box">
                                 <div class="stat-val">{{ state.module_count }}</div>
-                                <div class="stat-label">璅∠??賊?</div>
+                                <div class="stat-label">模組數量</div>
                             </div>
                             <div class="stat-box" v-if="state.undervoltage || state.overvoltage || state.system_error">
-                                <div class="stat-val warn-text">??/div>
+                                <div class="stat-val warn-text">⚠</div>
                                 <div class="stat-label">
-                                    <span v-if="state.undervoltage">甈? </span>
-                                    <span v-if="state.overvoltage">?? </span>
-                                    <span v-if="state.system_error">蝟餌絞?航炊</span>
+                                    <span v-if="state.undervoltage">欠壓 </span>
+                                    <span v-if="state.overvoltage">過壓 </span>
+                                    <span v-if="state.system_error">系統錯誤</span>
                                 </div>
                             </div>
                         </div>
                     </section>
 
                     <section class="panel" v-if="state.connected && state.channels.length">
-                        <h2>???批</h2>
+                        <h2>通道控制</h2>
                         <div class="ch-grid">
                             <div class="ch-card"
                                  v-for="ch in state.channels" :key="ch.id"
@@ -83,7 +83,7 @@
                                     <span class="ch-name">CH{{ ch.id }}</span>
                                     <span class="ch-mod">M{{ ch.module }}</span>
                                     <button class="toggle-btn" @click="toggleCh(ch)">
-                                        {{ ch.on ? '??' : '??' }}
+                                        {{ ch.on ? '關閉' : '開啟' }}
                                     </button>
                                 </div>
                                 <div class="ch-current">{{ fmt(ch.current_amps) }} <span class="unit">A</span></div>
@@ -92,77 +92,77 @@
                                          :class="barClass(ch)"></div>
                                 </div>
                                 <div class="ch-meta">
-                                    憿? {{ ch.nominal_amps }} A
+                                    額定 {{ ch.nominal_amps }} A
                                     <span class="pct">{{ barPct(ch).toFixed(0) }}%</span>
                                 </div>
                                 <div class="ch-flags">
                                     <span class="flag warn" v-if="ch.warn_80">80%</span>
-                                    <span class="flag fault" v-if="ch.overload">??</span>
-                                    <span class="flag fault" v-if="ch.short_circuit">?剛楝</span>
-                                    <span class="flag fault" v-if="ch.hardware_fault">蝖祇???</span>
+                                    <span class="flag fault" v-if="ch.overload">過載</span>
+                                    <span class="flag fault" v-if="ch.short_circuit">短路</span>
+                                    <span class="flag fault" v-if="ch.hardware_fault">硬體故障</span>
                                 </div>
                             </div>
                         </div>
                     </section>
 
                     <section class="panel center" v-if="!state.connected">
-                        <h2>撠???</h2>
-                        <p class="hint-text">隢?敺???閮剖????Ｗ遣蝡??</p>
-                        <button class="btn" style="margin-top:16px" @click="navigate('connection')">?????閮剖?</button>
+                        <h2>尚未連線</h2>
+                        <p class="hint-text">請前往「連線設定」頁面建立連線</p>
+                        <button class="btn" style="margin-top:16px" @click="navigate('connection')">前往連線設定</button>
                     </section>
 
                 </template>
 
-                <!-- ?? ?”?? ?? -->
+                <!-- 圖表監控 -->
                 <template v-if="currentPage === 'charts'">
                     <section class="panel">
-                        <h2>?”??</h2>
+                        <h2>圖表監控</h2>
                         <div class="placeholder">
-                            <div class="placeholder-icon">??</div>
-                            <div class="placeholder-title">?銝?/div>
-                            <div class="placeholder-desc">?餅?/?餃?甇瑕?脩???隞餃? 4嚗?/div>
+                            <div class="placeholder-icon">📈</div>
+                            <div class="placeholder-title">開發中</div>
+                            <div class="placeholder-desc">電流/電壓歷史曲線圖（4.2.4 實作）</div>
                         </div>
                     </section>
                 </template>
 
-                <!-- ?? ??閮剖? ?? -->
+                <!-- 通道設定 -->
                 <template v-if="currentPage === 'channel-settings'">
                     <section class="panel">
-                        <h2>??閮剖?</h2>
+                        <h2>通道設定</h2>
                         <div class="placeholder">
-                            <div class="placeholder-icon">??</div>
-                            <div class="placeholder-title">?銝?/div>
-                            <div class="placeholder-desc">憿??餅?閮剖?嚗遙??2嚗?/div>
+                            <div class="placeholder-icon">⚙️</div>
+                            <div class="placeholder-title">開發中</div>
+                            <div class="placeholder-desc">額定電流設定（4.2.2 實作）</div>
                         </div>
                     </section>
                 </template>
 
-                <!-- ?? 蝟餌絞?亥? ?? -->
+                <!-- 系統日誌 -->
                 <template v-if="currentPage === 'logs'">
                     <section class="panel">
-                        <h2>蝟餌絞?亥?</h2>
+                        <h2>系統日誌</h2>
                         <div class="placeholder">
-                            <div class="placeholder-icon">??</div>
-                            <div class="placeholder-title">?銝?/div>
-                            <div class="placeholder-desc">敺垢?亥??亦?嚗遙??3嚗?/div>
+                            <div class="placeholder-icon">📋</div>
+                            <div class="placeholder-title">開發中</div>
+                            <div class="placeholder-desc">後端日誌查看（4.2.3 實作）</div>
                         </div>
                     </section>
                 </template>
 
-                <!-- ?? ???閮剖? ?? -->
+                <!-- 連線設定 -->
                 <template v-if="currentPage === 'connection'">
                     <section class="panel">
-                        <h2>???閮剖?</h2>
+                        <h2>連線設定</h2>
                         <div class="conn-form-block">
-                            <label class="field-label">閮剖? IP 雿?</label>
+                            <label class="field-label">設備 IP 位址</label>
                             <div class="conn-form">
                                 <input v-model="ipInput" placeholder="192.168.2.111" @keyup.enter="doConnect" />
-                                <button class="btn" v-if="!state.connected" @click="doConnect">???</button>
-                                <button class="btn btn-danger" v-else @click="doDisconnect">?瑞?</button>
+                                <button class="btn" v-if="!state.connected" @click="doConnect">連線</button>
+                                <button class="btn btn-danger" v-else @click="doDisconnect">斷線</button>
                             </div>
                             <p class="err-msg" v-if="state.error">{{ state.error }}</p>
                             <p class="conn-status-text" v-if="state.connected">
-                                ??撌脤????{{ state.device_ip }}嚗{ state.module_count }} ?芋蝯?
+                                ✅ 已連線至 {{ state.device_ip }}，{{ state.module_count }} 個模組
                             </p>
                         </div>
                     </section>

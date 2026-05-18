@@ -1,4 +1,4 @@
-﻿const { createApp, reactive, ref, onMounted, onUnmounted } = Vue;
+const { createApp, reactive, ref, onMounted, onUnmounted } = Vue;
 
 createApp({
     setup() {

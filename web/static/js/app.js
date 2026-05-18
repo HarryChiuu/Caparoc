@@ -43,7 +43,7 @@ createApp({
         let wsRetryTimer = null;
 
         function fmt(v) {
-            return (v != null) ? Number(v).toFixed(2) : '—';
+            return (v != null) ? Number(v).toFixed(1) : '—';
         }
 
         function barPct(ch) {
@@ -110,6 +110,51 @@ createApp({
             await fetch(`/api/channel/${ch.id}/${action}`, { method: 'POST' });
         }
 
+        // -- 通道設定 --
+        const nominalInputs = reactive({});
+        const nominalFeedback = reactive({});
+        const batchNominal = ref('');
+        const batchStatus = reactive({ ok: false, msg: '' });
+
+        async function setNominal(chId) {
+            const val = parseFloat(nominalInputs[chId]);
+            if (isNaN(val) || val < 0.5 || val > 25.5) {
+                nominalFeedback[chId] = { ok: false, msg: '請輸入 0.5–25.5' };
+                return;
+            }
+            try {
+                const r = await fetch(`/api/channel/${chId}/nominal?current_amps=${val}`, { method: 'POST' });
+                if (r.ok) {
+                    nominalFeedback[chId] = { ok: true, msg: '✓ 已設定' };
+                    nominalInputs[chId] = '';
+                    setTimeout(() => { nominalFeedback[chId] = { ok: false, msg: '' }; }, 3000);
+                } else {
+                    const body = await r.json().catch(() => ({}));
+                    nominalFeedback[chId] = { ok: false, msg: body.detail ?? '設定失敗' };
+                }
+            } catch (e) {
+                nominalFeedback[chId] = { ok: false, msg: '無法連線' };
+            }
+        }
+
+        async function setAllNominal() {
+            const val = parseFloat(batchNominal.value);
+            if (isNaN(val) || val < 0.5 || val > 25.5) {
+                batchStatus.ok = false;
+                batchStatus.msg = '請輸入 0.5–25.5';
+                return;
+            }
+            let ok = 0, fail = 0;
+            for (const ch of state.channels) {
+                const r = await fetch(`/api/channel/${ch.id}/nominal?current_amps=${val}`, { method: 'POST' });
+                r.ok ? ok++ : fail++;
+            }
+            batchStatus.ok = fail === 0;
+            batchStatus.msg = fail === 0 ? `✓ 全部 ${ok} 個通道設定完成` : `${ok} 成功，${fail} 失敗`;
+            batchNominal.value = '';
+            setTimeout(() => { batchStatus.msg = ''; }, 4000);
+        }
+
         onMounted(connectWs);
         onUnmounted(() => {
             clearTimeout(wsRetryTimer);
@@ -122,6 +167,8 @@ createApp({
             navigate, toggleSidebar,
             fmt, barPct, cardClass, barClass,
             doConnect, doDisconnect, toggleCh,
+            nominalInputs, nominalFeedback, batchNominal, batchStatus,
+            setNominal, setAllNominal,
         };
     }
 }).mount('#app');

@@ -163,6 +163,36 @@ body {
 .flag.warn  { background: #ff980033; color: #ff9800; }
 .flag.fault { background: #f4433633; color: #f44336; }
 
+/* ── 通道設定頁 ─────────────────────────── */
+.batch-bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: #161928; border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 14px;
+}
+.nominal-input {
+    width: 78px; padding: 6px 10px;
+    border: 1px solid #2a2f45; border-radius: 6px;
+    background: #12151c; color: #dde3f0;
+    font-size: 0.9rem; text-align: center;
+}
+.nominal-input:focus { outline: none; border-color: #7eb8f7; }
+.ch-table {
+    width: 100%; border-collapse: collapse; font-size: 0.88rem;
+}
+.ch-table th {
+    text-align: left; padding: 8px 12px;
+    color: #7a8aaa; border-bottom: 1px solid #2a2f45; font-weight: 600;
+}
+.ch-table td { padding: 8px 12px; border-bottom: 1px solid #1c2038; vertical-align: middle; }
+.ch-table tr:last-child td { border-bottom: none; }
+.ch-table tr:hover td { background: #1a1e2e; }
+.td-ch { font-weight: 700; color: #dde3f0; }
+.td-mod { color: #7a8aaa; font-size: 0.78rem; }
+.td-nominal { color: #7eb8f7; }
+.feedback-msg { font-size: 0.8rem; margin-left: 6px; white-space: nowrap; }
+.feedback-msg.ok  { color: #4caf50; }
+.feedback-msg.err { color: #f44336; }
+
 /* ── 連線設定頁 ─────────────────────────── */
 .conn-form-block { max-width: 460px; }
 .field-label { display: block; font-size: 0.82rem; color: #7a8aaa; margin-bottom: 8px; }

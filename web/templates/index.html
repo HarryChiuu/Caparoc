@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CAPAROC 控制台</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=4.2" />
+    <link rel="stylesheet" href="/static/css/style.css?v=4.2.2" />
 </head>
 <body>
     <div id="app">
@@ -129,11 +129,63 @@
                 <template v-if="currentPage === 'channel-settings'">
                     <section class="panel">
                         <h2>通道設定</h2>
-                        <div class="placeholder">
+
+                        <!-- 未連線 -->
+                        <div v-if="!state.connected" class="placeholder">
                             <div class="placeholder-icon">⚙️</div>
-                            <div class="placeholder-title">開發中</div>
-                            <div class="placeholder-desc">額定電流設定（4.2.2 實作）</div>
+                            <div class="placeholder-title">尚未連線</div>
+                            <div class="placeholder-desc">請先建立設備連線後再設定通道</div>
                         </div>
+
+                        <template v-else>
+                            <!-- 批次套用 -->
+                            <div class="batch-bar">
+                                <span style="font-size:0.82rem;color:#7a8aaa;white-space:nowrap">全部套用</span>
+                                <input type="number" v-model="batchNominal"
+                                       min="0.5" max="25.5" step="0.5"
+                                       placeholder="A" class="nominal-input" />
+                                <button class="btn btn-sm" @click="setAllNominal">套用至全部通道</button>
+                                <span class="feedback-msg"
+                                      :class="batchStatus.ok ? 'ok' : 'err'"
+                                      v-if="batchStatus.msg">{{ batchStatus.msg }}</span>
+                            </div>
+
+                            <!-- 通道表格 -->
+                            <table class="ch-table">
+                                <thead>
+                                    <tr>
+                                        <th>通道</th>
+                                        <th>模組</th>
+                                        <th>目前額定電流</th>
+                                        <th>新值 (A)</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="ch in state.channels" :key="ch.id">
+                                        <td class="td-ch">CH{{ ch.id }}</td>
+                                        <td class="td-mod">M{{ ch.module }}</td>
+                                        <td class="td-nominal">{{ ch.nominal_amps }} A</td>
+                                        <td>
+                                            <input type="number"
+                                                   v-model="nominalInputs[ch.id]"
+                                                   min="0.5" max="25.5" step="0.5"
+                                                   :placeholder="ch.nominal_amps"
+                                                   class="nominal-input" />
+                                        </td>
+                                        <td>
+                                            <button class="btn btn-sm" @click="setNominal(ch.id)">設定</button>
+                                            <span class="feedback-msg"
+                                                  :class="nominalFeedback[ch.id]?.ok ? 'ok' : 'err'"
+                                                  v-if="nominalFeedback[ch.id]?.msg">
+                                                {{ nominalFeedback[ch.id].msg }}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </template>
+
                     </section>
                 </template>
 
@@ -174,6 +226,6 @@
     </div>
 
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="/static/js/app.js?v=4.2"></script>
+    <script src="/static/js/app.js?v=4.2.2"></script>
 </body>
 </html>

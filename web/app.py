@@ -124,18 +124,21 @@ backend = CaparocBackend(_default_ip)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """服務啟動時嘗試連線；停止時安全斷線。"""
-    _WEB_LOGGER.log(_SYSTEM_LEVEL, f"Web 服務啟動，嘗試連線至 {backend.device_ip}...")
+    _WEB_LOGGER.log(_SYSTEM_LEVEL, f"Web 服務啟動，嘗試連線至 {backend.device_ip}...",
+                     extra={'log_module': 'WEB'})
     # 啟動時連線失敗不阻斷服務，可透過 POST /api/connect 手動連線
     try:
         ok = await asyncio.to_thread(backend.connect)
         if ok:
-            _WEB_LOGGER.log(_SYSTEM_LEVEL, f"設備連線成功 ({backend.device_ip})")
+            _WEB_LOGGER.log(_SYSTEM_LEVEL, f"設備連線成功 ({backend.device_ip})",
+                             extra={'log_module': 'WEB'})
         else:
-            _WEB_LOGGER.warning(f"設備連線失敗 ({backend.device_ip})，可透過連線設定頁手動重試")
+            _WEB_LOGGER.warning(f"設備連線失敗 ({backend.device_ip})，可透過連線設定頁手動重試",
+                                extra={'log_module': 'WEB'})
     except Exception as e:
-        _WEB_LOGGER.error(f"啟動連線例外: {e}")
+        _WEB_LOGGER.error(f"啟動連線例外: {e}", extra={'log_module': 'WEB'})
     yield
-    _WEB_LOGGER.log(_SYSTEM_LEVEL, "Web 服務關閉中...")
+    _WEB_LOGGER.log(_SYSTEM_LEVEL, "Web 服務關閉中...", extra={'log_module': 'WEB'})
     try:
         await asyncio.to_thread(backend.disconnect)
     except Exception:
@@ -229,9 +232,10 @@ async def api_connect(ip: str = Query(default=None)):
         backend.device_ip = ip
     success = await asyncio.to_thread(backend.connect)
     if success:
-        _WEB_LOGGER.log(_SYSTEM_LEVEL, f"手動連線成功 ({backend.device_ip})")
+        _WEB_LOGGER.log(_SYSTEM_LEVEL, f"手動連線成功 ({backend.device_ip})",
+                         extra={'log_module': 'WEB'})
         return {"success": True, "ip": backend.device_ip}
-    _WEB_LOGGER.warning(f"手動連線失敗 ({backend.device_ip})")
+    _WEB_LOGGER.warning(f"手動連線失敗 ({backend.device_ip})", extra={'log_module': 'WEB'})
     raise HTTPException(status_code=503, detail=f"無法連線至 {backend.device_ip}")
 
 
@@ -239,7 +243,7 @@ async def api_connect(ip: str = Query(default=None)):
 async def api_disconnect():
     """斷開連線。"""
     await asyncio.to_thread(backend.disconnect)
-    _WEB_LOGGER.log(_SYSTEM_LEVEL, f"手動斷線 ({backend.device_ip})")
+    _WEB_LOGGER.log(_SYSTEM_LEVEL, f"手動斷線 ({backend.device_ip})", extra={'log_module': 'WEB'})
     return {"success": True}
 
 

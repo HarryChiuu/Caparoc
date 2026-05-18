@@ -4,7 +4,10 @@ body {
     font-family: 'Segoe UI', Arial, sans-serif;
     background: #12151c;
     color: #dde3f0;
-    min-height: 100vh;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
 /* ── 頂部列 ─────────────────────────────── */
@@ -13,17 +16,192 @@ body {
     align-items: center;
     justify-content: space-between;
     background: #1c2030;
-    padding: 10px 24px;
+    padding: 10px 20px;
     border-bottom: 1px solid #2a2f45;
-    position: sticky;
-    top: 0;
+    flex-shrink: 0;
     z-index: 10;
 }
+.topbar-left { display: flex; align-items: center; gap: 10px; }
 .brand { font-size: 1rem; font-weight: 600; color: #7eb8f7; letter-spacing: 1px; }
 .conn-bar { display: flex; align-items: center; gap: 10px; font-size: 0.88rem; }
-.dot { width: 9px; height: 9px; border-radius: 50%; }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 .dot-on  { background: #4caf50; box-shadow: 0 0 6px #4caf5088; }
 .dot-off { background: #555; }
+
+.sidebar-toggle {
+    background: none; border: none;
+    color: #8a9ab8; font-size: 1.2rem;
+    padding: 4px 7px; cursor: pointer;
+    border-radius: 4px; line-height: 1;
+}
+.sidebar-toggle:hover { background: #2a2f45; color: #dde3f0; }
+
+/* ── 版面結構 ────────────────────────────── */
+.layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* ── 左側導覽列 ─────────────────────────── */
+.sidebar {
+    width: 192px;
+    min-width: 192px;
+    background: #161928;
+    border-right: 1px solid #2a2f45;
+    overflow-y: auto;
+    overflow-x: hidden;
+    transition: width 0.2s, min-width 0.2s;
+    flex-shrink: 0;
+}
+.sidebar.collapsed { width: 50px; min-width: 50px; }
+
+.nav-list { list-style: none; padding: 10px 0; }
+.nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    cursor: pointer;
+    color: #8a9ab8;
+    font-size: 0.87rem;
+    border-left: 2px solid transparent;
+    transition: background 0.15s, color 0.15s;
+    white-space: nowrap;
+    overflow: hidden;
+}
+.nav-item:hover { background: #1f2540; color: #cad3e8; }
+.nav-item.active { background: #1e3460; color: #7eb8f7; border-left-color: #7eb8f7; }
+
+.nav-icon { font-size: 1.05rem; flex-shrink: 0; width: 22px; text-align: center; }
+.nav-label { transition: opacity 0.15s; }
+.sidebar.collapsed .nav-label { opacity: 0; pointer-events: none; }
+
+/* ── 主內容區域 ──────────────────────────── */
+.main-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 14px;
+}
+
+/* ── 面板 ───────────────────────────────── */
+.panel {
+    margin: 0 0 14px 0;
+    background: #1c2030;
+    border-radius: 10px;
+    padding: 18px 20px;
+}
+.panel h2 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #7eb8f7;
+    margin-bottom: 14px;
+    border-bottom: 1px solid #2a2f45;
+    padding-bottom: 8px;
+}
+.panel.center { text-align: center; }
+
+/* ── 系統狀態 ───────────────────────────── */
+.sys-grid { display: flex; gap: 12px; flex-wrap: wrap; }
+.stat-box {
+    flex: 1; min-width: 110px;
+    background: #12151c;
+    border-radius: 8px;
+    padding: 12px 14px;
+    text-align: center;
+}
+.stat-val { font-size: 1.6rem; font-weight: 700; color: #7eb8f7; }
+.stat-val .unit { font-size: 0.88rem; margin-left: 2px; color: #89a0c0; }
+.stat-label { font-size: 0.75rem; color: #7a8aaa; margin-top: 4px; }
+.warn-text { color: #ffb300; }
+
+/* ── 通道卡片 ───────────────────────────── */
+.ch-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+    gap: 12px;
+}
+.ch-card {
+    background: #12151c;
+    border: 1px solid #2a2f45;
+    border-radius: 10px;
+    padding: 14px;
+    transition: border-color .2s;
+}
+.ch-card.on    { border-color: #4caf5077; }
+.ch-card.warn  { border-color: #ff980077; }
+.ch-card.fault { border-color: #f4433677; }
+
+.ch-top { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+.ch-name { font-weight: 700; font-size: 1rem; flex: 1; }
+.ch-mod  { font-size: 0.72rem; color: #7a8aaa; }
+
+.ch-current { font-size: 1.5rem; font-weight: 700; color: #7eb8f7; margin-bottom: 8px; }
+.ch-current .unit { font-size: 0.85rem; color: #89a0c0; margin-left: 2px; }
+
+.bar-wrap {
+    height: 5px; background: #2a2f45;
+    border-radius: 3px; overflow: hidden; margin-bottom: 6px;
+}
+.bar-fill { height: 100%; border-radius: 3px; transition: width .4s; }
+.bar-ok   { background: #4caf50; }
+.bar-warn { background: #ff9800; }
+.bar-fault{ background: #f44336; }
+
+.ch-meta {
+    font-size: 0.76rem; color: #7a8aaa;
+    display: flex; justify-content: space-between;
+}
+.pct { color: #aab4cc; }
+
+.ch-flags { margin-top: 6px; display: flex; gap: 4px; flex-wrap: wrap; }
+.flag {
+    font-size: 0.7rem; padding: 1px 6px;
+    border-radius: 3px; font-weight: 600;
+}
+.flag.warn  { background: #ff980033; color: #ff9800; }
+.flag.fault { background: #f4433633; color: #f44336; }
+
+/* ── 連線設定頁 ─────────────────────────── */
+.conn-form-block { max-width: 460px; }
+.field-label { display: block; font-size: 0.82rem; color: #7a8aaa; margin-bottom: 8px; }
+.conn-form { display: flex; gap: 8px; margin: 0 0 10px; }
+.conn-form input {
+    padding: 8px 14px; border-radius: 6px;
+    border: 1px solid #2a2f45; background: #12151c;
+    color: #dde3f0; font-size: 0.95rem; flex: 1;
+}
+.conn-form input:focus { outline: none; border-color: #7eb8f7; }
+.err-msg { color: #f44336; font-size: 0.88rem; }
+.conn-status-text { font-size: 0.88rem; color: #4caf50; margin-top: 8px; }
+.hint-text { color: #7a8aaa; font-size: 0.9rem; margin-top: 8px; }
+
+/* ── Placeholder ────────────────────────── */
+.placeholder {
+    text-align: center;
+    padding: 56px 20px;
+    color: #5a6a88;
+}
+.placeholder-icon { font-size: 2.8rem; margin-bottom: 12px; }
+.placeholder-title { font-size: 1rem; font-weight: 600; color: #7a8aaa; margin-bottom: 6px; }
+.placeholder-desc { font-size: 0.84rem; }
+
+/* ── 按鈕 ───────────────────────────────── */
+button, .btn {
+    padding: 8px 18px; border-radius: 6px; border: none;
+    background: #2a5ba8; color: #fff;
+    font-size: 0.88rem; cursor: pointer; transition: background .15s;
+}
+button:hover, .btn:hover { background: #1f4a90; }
+.btn-sm { padding: 5px 12px; font-size: 0.82rem; }
+.btn-danger { background: #8b2020; }
+.btn-danger:hover { background: #6e1818; }
+.toggle-btn {
+    padding: 4px 10px; font-size: 0.78rem;
+    background: #2a2f45; color: #dde3f0;
+}
+.toggle-btn:hover { background: #363d5a; }
 
 /* ── 面板 ───────────────────────────────── */
 .panel {

@@ -2,11 +2,11 @@
 """
 CAPAROC Web UI 服務 (Phase 4.0)
 
-啟動方式（從專案根目錄）：
-    uvicorn web.app:app --reload --port 8000
+直接執行（自動開啟瀏覽器）：
+    python web/app.py
 
-開啟瀏覽器：
-    http://localhost:8000
+或用 uvicorn（從專案根目錄）：
+    uvicorn web.app:app --reload --port 8000
 """
 
 import sys
@@ -16,9 +16,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -74,7 +73,6 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory=str(_WEB_DIR / "static")), name="static")
-templates = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
 
 
 # ==================== 狀態格式化輔助 ====================
@@ -121,8 +119,8 @@ def _format_status(raw: dict | None) -> dict:
 
 # ==================== 頁面路由 ====================
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+async def index():
+    return FileResponse(_WEB_DIR / "templates" / "index.html")
 
 
 # ==================== REST API ====================
@@ -201,3 +199,19 @@ async def ws_status(websocket: WebSocket):
         pass
     except Exception:
         pass
+
+
+# ==================== 直接執行入口 ====================
+if __name__ == "__main__":
+    import threading
+    import webbrowser
+    import uvicorn
+
+    PORT = 8000
+    URL = f"http://localhost:{PORT}"
+
+    # 等伺服器就緒後再開瀏覽器（延遲 1.5 秒）
+    threading.Timer(1.5, lambda: webbrowser.open(URL)).start()
+
+    print(f"[CAPAROC] 伺服器啟動中... 開啟 {URL}")
+    uvicorn.run(app, host="0.0.0.0", port=PORT)

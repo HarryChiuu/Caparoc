@@ -1,8 +1,8 @@
 # CAPAROC 控制器 - 使用手冊
 
-> **程式版本**: v3.7 (Phase 3.6.3 架構)  
-> **更新日期**: 2026-05-14  
-> **主程式**: `src/caparoc_controller.py`（CLI）+ `src/caparoc_backend.py`（裝置邏輯）
+> **程式版本**: v4.0 (Phase 4.0 架構)  
+> **更新日期**: 2026-05-18  
+> **主程式**: `src/caparoc_controller.py`（CLI）+ `src/caparoc_backend.py`（裝置邏輯）+ `web/app.py`（Web UI）
 
 ---
 
@@ -12,6 +12,7 @@ CAPAROC 控制器是基於 EtherNet/IP 協議的互動式控制程式，提供�
 
 ### ✨ 主要功能
 
+- ✅ **Web UI 控制介面** - 執行 `python web/app.py` 自動開啟瀏覽器，提供圖形化操作
 - ✅ **額定電流設定** - 使用 `init` 命令設定 1-20A 範圍
 - ✅ **通道開關控制** - 使用 `on`/`off` 命令控制通道
 - ✅ **狀態監控** - 查詢全域系統狀態與通道詳細資訊
@@ -735,6 +736,83 @@ python src/caparoc_controller.py --verbose
 
 ---
 
+---
+
+## 🌐 Web UI 操作介面
+
+除了命令列（CLI），本程式也提供瀏覽器圖形介面，操作更直觀。
+
+### 啟動方式
+
+```bash
+# 進入專案目錄
+cd c:\Users\harry\Project\Caparoc5
+
+# 執行 Web UI
+python web/app.py
+```
+
+執行後會自動進行以下流程：
+
+```
+1. 🖥️  啟動 FastAPI 伺服器 (Port 8000)
+   ↓
+2. 🔌 自動連線設備 (讀取 config/device_config.json 的 IP)
+   ↓
+3. 🌐 約 1.5 秒後，自動在預設瀏覽器開啟頁面
+```
+
+**終端機輸出範例**：
+```
+[CAPAROC] 伺服器啟動中... 開啟 http://localhost:8000
+INFO:     Started server process [12345]
+✅ CIP 連線已建立 (WEB UI 應顯示 'connected')
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000
+```
+
+> ⚠️ **注意**：終端機視窗必須保持開啟，關閉終端機等同於關閉伺服器。
+
+---
+
+### 不小心關掉瀏覽器？
+
+伺服器仍在執行，直接在瀏覽器網址列輸入：
+
+```
+http://localhost:8000
+```
+
+即可重新連回頁面，不需要重新執行程式。
+
+---
+
+### Web UI 頁面功能說明
+
+| 區塊 | 功能 |
+|------|------|
+| 頂部狀態列 | 顯示連線狀態（綠/紅指示燈）、設備 IP、連線/斷線按鈕 |
+| 系統狀態面板 | 即時電壓、總電流、模組數量、全域警告旗標 |
+| 通道控制卡片 | 每個通道的開/關按鈕、電流、使用率進度條、錯誤指示 |
+
+頁面資料每秒自動更新（WebSocket），無需手動重整。
+
+---
+
+### CLI 與 Web UI 比較
+
+| 功能 | CLI | Web UI |
+|------|-----|--------|
+| 啟動方式 | `python src/caparoc_controller.py` | `python web/app.py` |
+| 操作介面 | 終端機文字命令 | 瀏覽器圖形介面 |
+| 通道開/關 | `on <ch>` / `off <ch>` | 點擊通道卡片按鈕 |
+| 狀態查詢 | `s` | 頁面即時顯示 |
+| 即時監控 | `monitor start` | WebSocket 自動推送 |
+| 額定電流設定 | `init <ch> <amps>` | 通道卡片（開發中）|
+| IP 變更 | `setting` 選單 | 連線表單（伺服器重啟後生效）|
+
+---
+
 ## 📚 相關文件
 
 - **TODO.md** - 功能規劃與待實作項目
@@ -755,7 +833,7 @@ python src/caparoc_controller.py --verbose
 
 ---
 
-**文件版本**: 2.2  
-**更新日期**: 2026-05-14  
-**適用程式**: caparoc_controller.py v3.7+ (Phase 3.6.3 架構)  
+**文件版本**: 2.3  
+**更新日期**: 2026-05-18  
+**適用程式**: caparoc_controller.py v3.7+ / web/app.py v4.0+  
 **作者**: Harry Chiu

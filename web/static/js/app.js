@@ -1,7 +1,30 @@
-const { createApp, reactive, ref, onMounted, onUnmounted } = Vue;
+﻿const { createApp, reactive, ref, onMounted, onUnmounted } = Vue;
 
 createApp({
     setup() {
+
+        // -- 頁面導覽 --
+        const currentPage = ref('dashboard');
+        const sidebarCollapsed = ref(false);
+
+        const navItems = [
+            { page: 'dashboard',        icon: '📊', label: '儀表板' },
+            { page: 'charts',           icon: '📈', label: '圖表監控' },
+            { page: 'channel-settings', icon: '⚙️',  label: '通道設定' },
+            { page: 'logs',             icon: '📋', label: '系統日誌' },
+            { page: 'connection',       icon: '🔧', label: '連線設定' },
+        ];
+
+        function navigate(page) {
+            currentPage.value = page;
+            if (window.innerWidth < 640) sidebarCollapsed.value = true;
+        }
+
+        function toggleSidebar() {
+            sidebarCollapsed.value = !sidebarCollapsed.value;
+        }
+
+        // -- 設備狀態 --
         const state = reactive({
             connected: false,
             device_ip: '',
@@ -19,7 +42,6 @@ createApp({
         let ws = null;
         let wsRetryTimer = null;
 
-        // ── 格式化 ──────────────────────────────────────
         function fmt(v) {
             return (v != null) ? Number(v).toFixed(2) : '—';
         }
@@ -42,7 +64,6 @@ createApp({
             return 'bar-ok';
         }
 
-        // ── 狀態套用 ────────────────────────────────────
         function applyStatus(data) {
             state.connected     = data.connected ?? false;
             state.device_ip     = data.device_ip ?? '';
@@ -56,7 +77,6 @@ createApp({
             state.system_error  = data.system_error ?? false;
         }
 
-        // ── WebSocket ────────────────────────────────────
         function connectWs() {
             clearTimeout(wsRetryTimer);
             if (ws) { try { ws.close(); } catch (_) {} }
@@ -66,7 +86,6 @@ createApp({
             ws.onerror   = () => { ws.close(); };
         }
 
-        // ── REST 操作 ────────────────────────────────────
         async function doConnect() {
             state.error = '';
             const ip = ipInput.value.trim();
@@ -99,6 +118,8 @@ createApp({
 
         return {
             state, ipInput,
+            currentPage, sidebarCollapsed, navItems,
+            navigate, toggleSidebar,
             fmt, barPct, cardClass, barClass,
             doConnect, doDisconnect, toggleCh,
         };

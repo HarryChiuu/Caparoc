@@ -9,9 +9,12 @@
 <body>
     <div id="app">
 
-        <!-- 頂部狀態列 -->
+        <!-- 頂部固定列 -->
         <header class="topbar">
-            <span class="brand">CAPAROC Web UI</span>
+            <div class="topbar-left">
+                <button class="sidebar-toggle" @click="toggleSidebar" title="展開/收合選單">☰</button>
+                <span class="brand">CAPAROC</span>
+            </div>
             <div class="conn-bar">
                 <span class="dot" :class="state.connected ? 'dot-on' : 'dot-off'"></span>
                 <span class="conn-label">
@@ -21,6 +24,159 @@
                 <button class="btn-sm btn-danger" v-else @click="doDisconnect">斷線</button>
             </div>
         </header>
+
+        <!-- 主版面 -->
+        <div class="layout">
+
+            <!-- 左側導覽列 -->
+            <nav class="sidebar" :class="{ collapsed: sidebarCollapsed }">
+                <ul class="nav-list">
+                    <li v-for="item in navItems" :key="item.page"
+                        class="nav-item"
+                        :class="{ active: currentPage === item.page }"
+                        @click="navigate(item.page)">
+                        <span class="nav-icon">{{ item.icon }}</span>
+                        <span class="nav-label">{{ item.label }}</span>
+                    </li>
+                </ul>
+            </nav>
+
+            <!-- 主內容區域 -->
+            <main class="main-content">
+
+                <!-- ── 儀表板 ── -->
+                <template v-if="currentPage === 'dashboard'">
+
+                    <section class="panel" v-if="state.connected">
+                        <h2>系統狀態</h2>
+                        <div class="sys-grid">
+                            <div class="stat-box">
+                                <div class="stat-val">{{ fmt(state.voltage) }}<span class="unit">V</span></div>
+                                <div class="stat-label">輸入電壓</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-val">{{ fmt(state.total_current) }}<span class="unit">A</span></div>
+                                <div class="stat-label">總電流</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-val">{{ state.module_count }}</div>
+                                <div class="stat-label">模組數量</div>
+                            </div>
+                            <div class="stat-box" v-if="state.undervoltage || state.overvoltage || state.system_error">
+                                <div class="stat-val warn-text">⚠</div>
+                                <div class="stat-label">
+                                    <span v-if="state.undervoltage">欠壓 </span>
+                                    <span v-if="state.overvoltage">過壓 </span>
+                                    <span v-if="state.system_error">系統錯誤</span>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="panel" v-if="state.connected && state.channels.length">
+                        <h2>通道控制</h2>
+                        <div class="ch-grid">
+                            <div class="ch-card"
+                                 v-for="ch in state.channels" :key="ch.id"
+                                 :class="cardClass(ch)">
+                                <div class="ch-top">
+                                    <span class="ch-name">CH{{ ch.id }}</span>
+                                    <span class="ch-mod">M{{ ch.module }}</span>
+                                    <button class="toggle-btn" @click="toggleCh(ch)">
+                                        {{ ch.on ? '關閉' : '開啟' }}
+                                    </button>
+                                </div>
+                                <div class="ch-current">{{ fmt(ch.current_amps) }} <span class="unit">A</span></div>
+                                <div class="bar-wrap">
+                                    <div class="bar-fill" :style="{ width: barPct(ch) + '%' }"
+                                         :class="barClass(ch)"></div>
+                                </div>
+                                <div class="ch-meta">
+                                    額定 {{ ch.nominal_amps }} A
+                                    <span class="pct">{{ barPct(ch).toFixed(0) }}%</span>
+                                </div>
+                                <div class="ch-flags">
+                                    <span class="flag warn" v-if="ch.warn_80">80%</span>
+                                    <span class="flag fault" v-if="ch.overload">過載</span>
+                                    <span class="flag fault" v-if="ch.short_circuit">短路</span>
+                                    <span class="flag fault" v-if="ch.hardware_fault">硬體故障</span>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="panel center" v-if="!state.connected">
+                        <h2>尚未連線</h2>
+                        <p class="hint-text">請前往「連線設定」頁面建立連線</p>
+                        <button class="btn" style="margin-top:16px" @click="navigate('connection')">前往連線設定</button>
+                    </section>
+
+                </template>
+
+                <!-- ── 圖表監控 ── -->
+                <template v-if="currentPage === 'charts'">
+                    <section class="panel">
+                        <h2>圖表監控</h2>
+                        <div class="placeholder">
+                            <div class="placeholder-icon">📈</div>
+                            <div class="placeholder-title">開發中</div>
+                            <div class="placeholder-desc">電流/電壓歷史曲線圖（任務 4）</div>
+                        </div>
+                    </section>
+                </template>
+
+                <!-- ── 通道設定 ── -->
+                <template v-if="currentPage === 'channel-settings'">
+                    <section class="panel">
+                        <h2>通道設定</h2>
+                        <div class="placeholder">
+                            <div class="placeholder-icon">⚙️</div>
+                            <div class="placeholder-title">開發中</div>
+                            <div class="placeholder-desc">額定電流設定（任務 2）</div>
+                        </div>
+                    </section>
+                </template>
+
+                <!-- ── 系統日誌 ── -->
+                <template v-if="currentPage === 'logs'">
+                    <section class="panel">
+                        <h2>系統日誌</h2>
+                        <div class="placeholder">
+                            <div class="placeholder-icon">📋</div>
+                            <div class="placeholder-title">開發中</div>
+                            <div class="placeholder-desc">後端日誌查看（任務 3）</div>
+                        </div>
+                    </section>
+                </template>
+
+                <!-- ── 連線設定 ── -->
+                <template v-if="currentPage === 'connection'">
+                    <section class="panel">
+                        <h2>連線設定</h2>
+                        <div class="conn-form-block">
+                            <label class="field-label">設備 IP 位址</label>
+                            <div class="conn-form">
+                                <input v-model="ipInput" placeholder="192.168.2.111" @keyup.enter="doConnect" />
+                                <button class="btn" v-if="!state.connected" @click="doConnect">連線</button>
+                                <button class="btn btn-danger" v-else @click="doDisconnect">斷線</button>
+                            </div>
+                            <p class="err-msg" v-if="state.error">{{ state.error }}</p>
+                            <p class="conn-status-text" v-if="state.connected">
+                                ✅ 已連線至 {{ state.device_ip }}，{{ state.module_count }} 個模組
+                            </p>
+                        </div>
+                    </section>
+                </template>
+
+            </main>
+        </div>
+
+    </div>
+
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
 
         <!-- 未連線時顯示連線表單 -->
         <section class="panel center" v-if="!state.connected">

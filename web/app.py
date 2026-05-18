@@ -120,7 +120,11 @@ def _format_status(raw: dict | None) -> dict:
 # ==================== 頁面路由 ====================
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return FileResponse(_WEB_DIR / "templates" / "index.html")
+    resp = FileResponse(_WEB_DIR / "templates" / "index.html")
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 # ==================== REST API ====================

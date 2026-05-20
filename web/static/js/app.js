@@ -39,6 +39,7 @@ createApp({
         });
 
         const ipInput = ref('');
+        const connecting = ref(false);  // 防止重複點擊連線
         let ws = null;
         let wsRetryTimer = null;
 
@@ -89,6 +90,8 @@ createApp({
         }
 
         async function doConnect() {
+            if (connecting.value) return;   // 防止重複點擊
+            connecting.value = true;
             state.error = '';
             const ip = ipInput.value.trim();
             const qs = ip ? `?ip=${encodeURIComponent(ip)}` : '';
@@ -100,6 +103,8 @@ createApp({
                 }
             } catch (e) {
                 state.error = '無法連線到伺服器';
+            } finally {
+                connecting.value = false;
             }
         }
 
@@ -218,9 +223,10 @@ createApp({
             clearInterval(_logTimer);
             _logTimer = null;
             if (page === 'logs') {
+                logPage.value = 0;   // 進入日誌頁永遠先看最新
                 fetchLogs();
                 if (logAutoScroll.value)
-                    _logTimer = setInterval(fetchLogs, 2000);
+                    _logTimer = setInterval(() => { logPage.value = 0; fetchLogs(); }, 2000);
             }
         });
 
@@ -231,7 +237,7 @@ createApp({
             if (auto && currentPage.value === 'logs') {
                 logPage.value = 0;
                 fetchLogs();
-                _logTimer = setInterval(fetchLogs, 2000);
+                _logTimer = setInterval(() => { logPage.value = 0; fetchLogs(); }, 2000);
             }
         });
 
@@ -253,6 +259,7 @@ createApp({
             currentPage, sidebarCollapsed, navItems,
             navigate, toggleSidebar,
             fmt, barPct, cardClass, barClass,
+            connecting,
             doConnect, doDisconnect, toggleCh,
             nominalInputs, nominalFeedback, batchNominal, batchStatus,
             setNominal, setAllNominal,

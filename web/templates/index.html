@@ -20,7 +20,7 @@
                 <span class="conn-label">
                     {{ state.connected ? '已連線 · ' + state.device_ip : '未連線' }}
                 </span>
-                <button class="btn-sm" v-if="!state.connected" @click="doConnect">連線</button>
+                <button class="btn-sm" v-if="!state.connected" @click="doConnect" :disabled="connecting">{{ connecting ? '連線中...' : '連線' }}</button>
                 <button class="btn-sm btn-danger" v-else @click="doDisconnect">斷線</button>
             </div>
         </header>
@@ -212,6 +212,7 @@
                                         :title="logAutoScroll ? '點擊暫停自動更新' : '點擊開啟自動更新'">
                                     {{ logAutoScroll ? '⏸ 暫停' : '▶ 自動更新' }}
                                 </button>
+                                <button class="btn btn-sm btn-ghost" @click="fetchLogs" title="立即重新整理">🔄</button>
                                 <button class="btn btn-sm btn-danger" @click="clearLogs">清空</button>
                             </div>
                         </div>
@@ -269,8 +270,8 @@
                         <div class="conn-form-block">
                             <label class="field-label">設備 IP 位址</label>
                             <div class="conn-form">
-                                <input v-model="ipInput" placeholder="192.168.2.111" @keyup.enter="doConnect" />
-                                <button class="btn" v-if="!state.connected" @click="doConnect">連線</button>
+                                <input v-model="ipInput" placeholder="192.168.50.111" @keyup.enter="doConnect" />
+                                <button class="btn" v-if="!state.connected" @click="doConnect" :disabled="connecting">{{ connecting ? '連線中...' : '連線' }}</button>
                                 <button class="btn btn-danger" v-else @click="doDisconnect">斷線</button>
                             </div>
                             <p class="err-msg" v-if="state.error">{{ state.error }}</p>
@@ -287,6 +288,6 @@
     </div>
 
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="/static/js/app.js?v=4.2.3"></script>
+    <script src="/static/js/app.js?v=4.2.4"></script>
 </body>
 </html>

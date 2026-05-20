@@ -2,6 +2,26 @@
 
 ---
 
+## [2026-05-20] Phase 4.2.3–4.2.4 Web UI 系統日誌頁與多項 Bug 修正
+
+### 🔧 系統日誌頁功能（4.2.3）
+- 新增「系統日誌」分頁：等級篩選（ALL/WARN+/ERROR）、10/20 分頁、⏸/▶ 自動更新、清空
+- 後端 `GET /api/logs`（分頁+篩選）、`POST /api/logs/clear`
+- `_CaparocLogHandler` 攔截 `caparoc` logger → 記憶體 buffer；啟動時 `_preload_log_file()` 預載今日 .log
+- log 顏色編碼：INFO 藍、SYSTEM 紫、WARNING 橙、ERROR 紅
+
+### 🐛 Bug 修正（4.2.4）
+- **連線按鈕重複觸發**：`doConnect()` 加 `connecting` 旗標，請求進行中按鈕 disabled 並顯示「連線中...」
+- **日誌自動更新失效**：進入日誌頁與自動刷新皆重置至第 0 頁（最新），避免停在舊頁無法看到新紀錄
+- **新增 🔄 手動重新整理按鈕**：log toolbar 加入，可在暫停自動更新時手動觸發 `fetchLogs()`
+- **IP 輸入框預設值錯誤**：改從首次 WebSocket 資料初始化，不再寫死 `192.168.2.111`
+- **設備失聯後無法重連**：WebSocket 偵測到讀取失敗時自動呼叫 `disconnect()`，清除 `_connected` 旗標使重連可行
+- **log 寫入路徑依賴 CWD**：`logging_manager.py` 改以專案根目錄為基準，不再因啟動目錄不同而散落至 `web/logs/` 或 `src/logs/`
+- **設備失聯無 log**：`_read_current_status` 失聯首次寫 `[CONN] WARNING`，恢復後寫 `[CONN] INFO`；heartbeat 失敗同樣記錄
+- **app.js 版本快取**：`index.html` 引用改為 `?v=4.2.4`，破除瀏覽器快取
+
+---
+
 ## [2026-05-15] Phase 3.6.1 - CaparocBackend 長駐連線管理（Web UI 前置）
 
 ### 🎯 動機

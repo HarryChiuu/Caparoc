@@ -80,6 +80,10 @@ class CaparocBackend:
         self._cip_driver = None   # CIPDriver 實例（context manager 外部持有）
         self._connected = False   # 連線狀態旗標
 
+        # 設備通訊狀態追蹤（防止 log spam）
+        self._last_read_ok = True    # _read_current_status 上次是否成功
+        self._hb_fail_logged = False # heartbeat 連續失敗是否已記錄過
+
     # ==================== 通道偏移計算 ====================
 
     def get_channel_offset(self, module, channel):
@@ -180,8 +184,19 @@ class CaparocBackend:
                             unconnected_send=False
                         )
                         self.last_activity_time = time.time()
-                    except Exception:
-                        pass
+                        if self._hb_fail_logged:
+                            self.logger.info(
+                                f"心跳恢復正常 ({self.device_ip})",
+                                extra={'log_module': 'CONN', 'ip': self.device_ip}
+                            )
+                            self._hb_fail_logged = False
+                    except Exception as e:
+                        if not self._hb_fail_logged:
+                            self.logger.warning(
+                                f"心跳失敗 ({self.device_ip})，設備可能已失聯: {e}",
+                                extra={'log_module': 'CONN', 'ip': self.device_ip}
+                            )
+                            self._hb_fail_logged = True
 
                 time.sleep(5.0)
 
@@ -987,7 +1002,7 @@ class CaparocBackend:
                 time.sleep(self.monitor_interval)
 
             except Exception as e:
-                print(f"⚠️  監控執行緒錯誤: {e}")
+                self.logger.error(f"監控執行緒錯誤: {e}", extra={'log_module': 'CONN'})
                 time.sleep(self.monitor_interval)
 
         print("🛑 監控執行緒已停止")
@@ -1007,6 +1022,12 @@ class CaparocBackend:
             )
 
             if not response or not hasattr(response, 'value'):
+                if self._last_read_ok:
+                    self.logger.warning(
+                        f"設備失聯 ({self.device_ip})，CIP 回應無效",
+                        extra={'log_module': 'CONN', 'ip': self.device_ip}
+                    )
+                    self._last_read_ok = False
                 return None
 
             data = response.value
@@ -1044,7 +1065,7 @@ class CaparocBackend:
                             'total_shutdown': bool(status_byte & 0x20)
                         }
 
-            return {
+            result = {
                 'timestamp':         time.time(),
                 'global_status_byte': global_status_byte,
                 'module_count':      module_count,
@@ -1052,9 +1073,21 @@ class CaparocBackend:
                 'voltage':           voltage,
                 'channels':          channels
             }
+            if not self._last_read_ok:
+                self.logger.info(
+                    f"設備恢復回應 ({self.device_ip})",
+                    extra={'log_module': 'CONN', 'ip': self.device_ip}
+                )
+                self._last_read_ok = True
+            return result
 
         except Exception as e:
-            print(f"⚠️  讀取狀態失敗: {e}")
+            if self._last_read_ok:
+                self.logger.warning(
+                    f"設備失聯 ({self.device_ip})，讀取狀態失敗: {type(e).__name__}: {e}",
+                    extra={'log_module': 'CONN', 'ip': self.device_ip}
+                )
+                self._last_read_ok = False
             return None
 
     def _detect_changes(self, current_status):

@@ -3,12 +3,19 @@ channels:
   - defaults
   - conda-forge
 dependencies:
-  - python=3.11
+  - python=3.12
   - pip
   - pip:
       # 核心依賴（必須）
       - pycomm3>=1.2.14
-      
+
+      # Web UI 依賴（Phase 4.0）
+      - fastapi>=0.136.0
+      - uvicorn[standard]>=0.47.0
+      - jinja2>=3.1.6
+      - python-multipart>=0.0.28
+      - websockets>=14.0
+
       # 開發與測試工具（可選，按需安裝）
       # - pytest>=7.4.0
       # - pytest-cov>=4.1.0

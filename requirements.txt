@@ -1,18 +1,20 @@
 # Caparoc_breaker_control - Python Dependencies
 # CAPAROC 電子斷路器遠端控制程式所需套件
+# 實際環境: Python 3.12, conda env sv
 
 # ============================================
 # 核心依賴 (必須安裝)
 # ============================================
-pycomm3>=1.2.14         # EtherNet/IP 和 CIP 通訊協議
+pycomm3>=1.2.14          # EtherNet/IP 和 CIP 通訊協議
 
 # ============================================
 # Web UI 依賴 (Phase 4.0)
 # ============================================
-fastapi>=0.110.0        # Web 框架
-uvicorn[standard]>=0.29.0  # ASGI 伺服器（含 websockets）
-jinja2>=3.1.0           # HTML 模板引擎
-python-multipart>=0.0.9 # Form data 支援
+fastapi>=0.136.0         # Web 框架
+uvicorn[standard]>=0.47.0   # ASGI 伺服器（含 websockets）
+jinja2>=3.1.6             # HTML 模板引擎
+python-multipart>=0.0.28  # Form data 支援
+websockets>=14.0          # WebSocket 協議實作（uvicorn 依賴，顯式列出）
 
 # ============================================
 # 開發與測試工具 (可選)

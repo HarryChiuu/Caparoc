@@ -183,6 +183,9 @@ class LogManager:
 
         # 建立 logs/ 目錄
         log_dir = Path(self.config['log_dir'])
+        if not log_dir.is_absolute():
+            # 相對路徑以專案根目錄為基準（src/ 的上一層），不受 CWD 影響
+            log_dir = Path(__file__).parent.parent / log_dir
         log_dir.mkdir(parents=True, exist_ok=True)
 
         today = datetime.now().strftime('%Y-%m-%d')

@@ -1,4 +1,4 @@
-const { createApp, reactive, ref, computed, watch, onMounted, onUnmounted } = Vue;
+const { createApp, reactive, ref, computed, watch, onMounted, onUnmounted, nextTick } = Vue;
 
 createApp({
     setup() {
@@ -43,6 +43,15 @@ createApp({
         let ws = null;
         let wsRetryTimer = null;
 
+        // 圖表監控 - 狀態 & 歷史緩衝（宣告於 applyStatus 之前）
+        const chartWindow   = ref(60);
+        const chartPaused   = ref(false);
+        const _chartHistory = { timestamps: [], voltage: [], totalCurrent: [], channels: {} };
+        const CHART_MAX_PTS = 120;
+        const CHART_COLORS  = ['#3b82f6','#10b981','#f97316','#8b5cf6','#ef4444','#06b6d4','#84cc16','#ec4899'];
+        let   _globalChart  = null;
+        let   _channelChart = null;
+
         function fmt(v) {
             return (v != null) ? Number(v).toFixed(1) : '—';
         }
@@ -78,6 +87,26 @@ createApp({
             state.undervoltage  = data.undervoltage ?? false;
             state.overvoltage   = data.overvoltage ?? false;
             state.system_error  = data.system_error ?? false;
+            // 圖表歷史累積（不論是否在圖表頁都持續記錄）
+            if (!chartPaused.value) {
+                const t = new Date();
+                const lbl = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
+                _chartHistory.timestamps.push(lbl);
+                _chartHistory.voltage.push(data.voltage ?? 0);
+                _chartHistory.totalCurrent.push(data.total_current ?? 0);
+                for (const ch of (data.channels ?? [])) {
+                    if (!_chartHistory.channels[ch.id]) _chartHistory.channels[ch.id] = [];
+                    _chartHistory.channels[ch.id].push(ch.current_amps ?? 0);
+                }
+                if (_chartHistory.timestamps.length > CHART_MAX_PTS) {
+                    _chartHistory.timestamps.shift();
+                    _chartHistory.voltage.shift();
+                    _chartHistory.totalCurrent.shift();
+                    for (const id in _chartHistory.channels)
+                        if (_chartHistory.channels[id].length > CHART_MAX_PTS) _chartHistory.channels[id].shift();
+                }
+                if (currentPage.value === 'charts' && _globalChart && _channelChart) _updateCharts();
+            }
         }
 
         function connectWs() {
@@ -218,8 +247,115 @@ createApp({
             if (logPage.value < logTotalPages.value - 1) { logPage.value++; fetchLogs(); }
         }
 
+        // -- 圖表監控函式 --
+        function _getChartSlice() {
+            const n = chartWindow.value;
+            const sortedIds = Object.keys(_chartHistory.channels).map(Number).sort((a, b) => a - b);
+            return {
+                labels:       _chartHistory.timestamps.slice(-n),
+                voltage:      _chartHistory.voltage.slice(-n),
+                totalCurrent: _chartHistory.totalCurrent.slice(-n),
+                channelIds:   sortedIds,
+                channelData:  Object.fromEntries(sortedIds.map(id => [id, (_chartHistory.channels[id] || []).slice(-n)])),
+            };
+        }
+
+        function _destroyCharts() {
+            if (_globalChart)  { _globalChart.destroy();  _globalChart  = null; }
+            if (_channelChart) { _channelChart.destroy(); _channelChart = null; }
+        }
+
+        function _initCharts() {
+            _destroyCharts();
+            const slice = _getChartSlice();
+            const gcEl = document.getElementById('globalChart');
+            const ccEl = document.getElementById('channelChart');
+            if (!gcEl || !ccEl) return;
+            _globalChart = new Chart(gcEl.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: slice.labels,
+                    datasets: [
+                        { label: '電壓 (V)',   data: slice.voltage,       yAxisID: 'yV',
+                          borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.08)',
+                          tension: 0.3, pointRadius: 0, borderWidth: 2 },
+                        { label: '總電流 (A)', data: slice.totalCurrent,  yAxisID: 'yA',
+                          borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,0.08)',
+                          tension: 0.3, pointRadius: 0, borderWidth: 2 },
+                    ],
+                },
+                options: {
+                    animation: false, responsive: true, maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        yV: { type: 'linear', position: 'left',
+                              title: { display: true, text: '電壓 (V)', color: '#3b82f6' },
+                              grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#3b82f6' } },
+                        yA: { type: 'linear', position: 'right', min: 0,
+                              title: { display: true, text: '電流 (A)', color: '#f97316' },
+                              grid: { drawOnChartArea: false }, ticks: { color: '#f97316' } },
+                        x:  { grid: { color: 'rgba(255,255,255,0.05)' },
+                              ticks: { maxTicksLimit: 6, color: '#9aaac4', maxRotation: 0 } },
+                    },
+                    plugins: { legend: { labels: { color: '#c5d0e6', usePointStyle: true } } },
+                },
+            });
+            _channelChart = new Chart(ccEl.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: slice.labels,
+                    datasets: slice.channelIds.map((id, i) => ({
+                        label: `CH${id}`, data: slice.channelData[id] || [],
+                        borderColor: CHART_COLORS[i % CHART_COLORS.length],
+                        backgroundColor: 'transparent', tension: 0.3, pointRadius: 0, borderWidth: 1.5,
+                    })),
+                },
+                options: {
+                    animation: false, responsive: true, maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        y: { min: 0,
+                             title: { display: true, text: '電流 (A)', color: '#9aaac4' },
+                             grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9aaac4' } },
+                        x: { grid: { color: 'rgba(255,255,255,0.05)' },
+                             ticks: { maxTicksLimit: 6, color: '#9aaac4', maxRotation: 0 } },
+                    },
+                    plugins: { legend: { labels: { color: '#c5d0e6', usePointStyle: true } } },
+                },
+            });
+        }
+
+        function _updateCharts() {
+            if (!_globalChart || !_channelChart) return;
+            const slice = _getChartSlice();
+            _globalChart.data.labels           = slice.labels;
+            _globalChart.data.datasets[0].data = slice.voltage;
+            _globalChart.data.datasets[1].data = slice.totalCurrent;
+            _globalChart.update('none');
+            slice.channelIds.forEach((id, i) => {
+                const ds = _channelChart.data.datasets.find(d => d.label === `CH${id}`);
+                if (ds) { ds.data = slice.channelData[id]; }
+                else {
+                    _channelChart.data.datasets.push({
+                        label: `CH${id}`, data: slice.channelData[id],
+                        borderColor: CHART_COLORS[i % CHART_COLORS.length],
+                        backgroundColor: 'transparent', tension: 0.3, pointRadius: 0, borderWidth: 1.5,
+                    });
+                }
+            });
+            _channelChart.data.labels = slice.labels;
+            _channelChart.update('none');
+        }
+
+        function setChartWindow(n) {
+            chartWindow.value = n;
+            if (_globalChart && _channelChart) _updateCharts();
+        }
+
+        function toggleChartPause() { chartPaused.value = !chartPaused.value; }
+
         // 切換到 logs 頁時啟動輪詢；離開時停止
-        watch(currentPage, (page) => {
+        watch(currentPage, (page, prevPage) => {
             clearInterval(_logTimer);
             _logTimer = null;
             if (page === 'logs') {
@@ -228,6 +364,8 @@ createApp({
                 if (logAutoScroll.value)
                     _logTimer = setInterval(() => { logPage.value = 0; fetchLogs(); }, 2000);
             }
+            if (page === 'charts')     { nextTick(_initCharts); }
+            if (prevPage === 'charts') { _destroyCharts(); }
         });
 
         // 自動更新開關
@@ -247,11 +385,18 @@ createApp({
             fetchLogs();
         });
 
+        // 連線狀態變化時，若在圖表頁則重新初始化或銷毀圖表
+        watch(() => state.connected, (connected) => {
+            if (currentPage.value !== 'charts') return;
+            if (connected) { nextTick(_initCharts); } else { _destroyCharts(); }
+        });
+
         onMounted(connectWs);
         onUnmounted(() => {
             clearTimeout(wsRetryTimer);
             if (ws) ws.close();
             clearInterval(_logTimer);
+            _destroyCharts();
         });
 
         return {
@@ -267,6 +412,7 @@ createApp({
             logAutoScroll, logTotalPages,
             fetchLogs, clearLogs, setPageSize,
             toggleLogAuto, logPrevPage, logNextPage,
+            chartWindow, chartPaused, setChartWindow, toggleChartPause,
         };
     }
 }).mount('#app');

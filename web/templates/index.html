@@ -116,12 +116,40 @@
                 <!-- 圖表監控 -->
                 <template v-if="currentPage === 'charts'">
                     <section class="panel">
-                        <h2>圖表監控</h2>
-                        <div class="placeholder">
-                            <div class="placeholder-icon">📈</div>
-                            <div class="placeholder-title">開發中</div>
-                            <div class="placeholder-desc">電流/電壓歷史曲線圖（4.2.4 實作）</div>
+                        <div class="chart-header">
+                            <h2>圖表監控</h2>
+                            <div class="chart-toolbar">
+                                <div class="chart-win-btns">
+                                    <button :class="['btn','btn-sm', chartWindow===30?'':'btn-ghost']" @click="setChartWindow(30)">30s</button>
+                                    <button :class="['btn','btn-sm', chartWindow===60?'':'btn-ghost']" @click="setChartWindow(60)">60s</button>
+                                    <button :class="['btn','btn-sm', chartWindow===120?'':'btn-ghost']" @click="setChartWindow(120)">120s</button>
+                                </div>
+                                <button :class="['btn','btn-sm', chartPaused?'btn-ghost':'']" @click="toggleChartPause">
+                                    {{ chartPaused ? '▶ 恢復' : '⏸ 暫停' }}
+                                </button>
+                            </div>
                         </div>
+
+                        <div v-if="!state.connected" class="placeholder">
+                            <div class="placeholder-icon">📈</div>
+                            <div class="placeholder-title">尚未連線</div>
+                            <div class="placeholder-desc">請先建立設備連線後查看圖表</div>
+                        </div>
+
+                        <template v-else>
+                            <div class="chart-section">
+                                <h3 class="chart-subtitle">電壓 / 總電流</h3>
+                                <div class="chart-wrap">
+                                    <canvas id="globalChart"></canvas>
+                                </div>
+                            </div>
+                            <div class="chart-section" style="margin-top:20px">
+                                <h3 class="chart-subtitle">各通道電流</h3>
+                                <div class="chart-wrap">
+                                    <canvas id="channelChart"></canvas>
+                                </div>
+                            </div>
+                        </template>
                     </section>
                 </template>
 
@@ -287,7 +315,8 @@
 
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="/static/js/app.js?v=4.2.4"></script>
+    <script src="/static/js/app.js?v=4.2.5"></script>
 </body>
 </html>

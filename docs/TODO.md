@@ -473,6 +473,72 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
+##### 4.2.4-bug 告警事件未寫入 log（Bug Fix）
+
+> **問題根源**：`_detect_changes()` 偵測到短路/過載/80% 警告/通道開關/電壓異常後，將結果加入
+> `changes['system_alerts']` / `channel_state_changes`，但 `_monitor_worker()` 只把這些資訊
+> 傳給 `_show_monitor_status()` / `_show_monitor_alerts()`（CLI print），**完全未呼叫
+> `self.logger.warning()`**，導致告警僅出現在終端機，不會寫入 log 檔或 Web 日誌頁。
+
+- [ ] `_monitor_worker()` 迴圈中，對 `changes['system_alerts']` 每一則呼叫
+  `self.logger.warning(msg, extra={'log_module': 'CONN'})`
+- [ ] 防 spam：已記錄過的告警不重複（可用 set 或 dict 追蹤目前活躍告警，恢復時再清除）
+- [ ] `channel_state_changes`（開/關事件）呼叫 `self.logger.info()`
+- [ ] `current_anomalies`（電流突變 >30%）呼叫 `self.logger.warning()`
+
+**受影響的告警類型**：
+
+| 告警 | `_detect_changes` 已偵測 | 目前 logger 呼叫 | 預期行為 |
+|------|------------------------|-----------------|---------|
+| 短路 (short_circuit) | ✅ | ❌ 無 | WARNING log |
+| 過載 (overload) | ✅ | ❌ 無 | WARNING log |
+| 80% 電流警告 | ✅ | ❌ 無 | WARNING log |
+| 通道開/關 | ✅ | ❌ 無 | INFO log |
+| 電流突變 >30% | ✅ | ❌ 無 | WARNING log |
+| 電壓突變 >1V | ✅ | ❌ 無 | WARNING log |
+
+**預估工時**：0.5 小時
+
+---
+
+##### 4.2.6 圖表監控頁增強（通道圖拆分 + 歷史查詢）
+
+> **目的**：解決目前圖表頁兩個設計問題：  
+> 1. 各通道電流擠在同一張圖 → 通道數多時難以辨識  
+> 2. 只有 120 秒記憶體 buffer → 重整頁面即失去歷史資料
+
+**通道圖拆分方案（考慮最多 64 通道 / 16 模組）**：
+
+選用方案 B「**按模組分標籤**」：
+- 上方標籤列：`M1` / `M2` / ... / `M{n}` — 點擊切換
+- 選定模組後顯示該模組 4 個通道的**獨立折線圖**（4 個 Chart 實例）
+- 每張小圖獨立顯示：時間 X 軸 + 電流 Y 軸 + 通道名稱標題
+- 切換標籤時 destroy/init 圖表，避免記憶體堆疊
+- 不論 1 模組或 16 模組均可正確顯示，不需修改架構
+
+棄用原因：
+- 方案 A（每通道 sparkline 卡片）：64 個 Chart.js 實例性能不佳
+- 方案 C（勾選通道大圖）：需額外 UI，不直觀
+
+**後端歷史資料儲存（短期方案）**：
+- 後端新增 `_history_buffer`：`deque(maxlen=1800)`，每秒由 WebSocket handler 推入
+  `{ts, voltage, total_current, channels:{id:{current_amps}}}`
+- 新增 `GET /api/history?minutes=N`（N 預設 10，最多 30）
+- 前端進入圖表頁時，先呼叫 `/api/history` 填充 `_chartHistory`，再由 WebSocket 繼續即時更新
+- 重整頁面後仍可看到最近 30 分鐘的資料（服務不重啟的前提下）
+
+**工作項目**：
+- [ ] `web/app.py`：新增 `_history_buffer = deque(maxlen=1800)`；WebSocket handler 推送時同步寫入
+- [ ] `web/app.py`：新增 `GET /api/history?minutes=N` endpoint
+- [ ] `app.js`：`_initCharts()` 先 fetch `/api/history` 預填 `_chartHistory`，再開始即時更新
+- [ ] `app.js`：圖表頁加入模組標籤切換（`chartModule` ref）；改為 4 個通道獨立 Chart 實例
+- [ ] `index.html`：模組標籤 UI（按鈕組）+ 4 個 `<canvas>` 元素（用 `v-for` 或 `v-show`）
+- [ ] `style.css`：模組標籤樣式、4 張小圖佈局（CSS Grid 2×2）
+
+**預估工時**：2.5 小時
+
+---
+
 ##### 4.2.5 設定值外部化（config 管理）
 
 > **目的**：將散落在程式碼中的硬編碼數字集中到 `config/web_config.json`，方便部署時調整  

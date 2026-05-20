@@ -988,6 +988,14 @@ class CaparocBackend:
                 if current_status:
                     changes = self._detect_changes(current_status)
 
+                    # 將偵測到的變化寫入 log（_detect_changes 已做狀態轉換偵測，不會重複觸發）
+                    for msg in changes['system_alerts']:
+                        self.logger.warning(msg, extra={'log_module': 'CONN'})
+                    for msg in changes['current_anomalies']:
+                        self.logger.warning(msg, extra={'log_module': 'CONN'})
+                    for msg in changes['channel_state_changes']:
+                        self.logger.info(msg, extra={'log_module': 'CONN'})
+
                     if self.monitor_mode == 'display':
                         self._show_monitor_status(current_status, changes)
                     elif self.monitor_mode == 'silent':

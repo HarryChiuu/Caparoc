@@ -60,10 +60,12 @@
 # --------------------
 # Body 內文撰寫建議:
 #    ✓ 說明「為什麼」做這個改變，而不只是「做了什麼」
-#    ✓ 【強制】Body 必須條列本次實際變更內容（不可只寫「參照文件」或「詳見 XXX.md」）
+#    ✓ 【強制】Body 必須條列本次各檔案的實際變更內容（精簡摘要）
 #      格式建議：
-#        - web/app.py: 說明改了什麼（e.g. WebSocket 失聯時呼叫 disconnect() 清旗標）
+#        - web/app.py: 說明改了什麼（e.g. formatTime 改用 datetime 直接格式化）
 #        - app.js: 說明改了什麼（e.g. doConnect 加 connecting 旗標防重複點擊）
+#    ✓ 【強制】不可只寫「詳見 XXX.md」或「參照文件」，至少要有一行摘要
+#    ✓ 更詳細的背景說明、動機、技術細節請寫入 docs/CHANGELOG.md
 #    ✓ 如果有破壞性變更，在 Body 開頭加上 "BREAKING CHANGE:"
 #    ✓ 可以使用項目符號 (-)
 #    ✓ 每行盡量不超過 72 字元

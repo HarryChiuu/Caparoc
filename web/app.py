@@ -15,6 +15,7 @@ import json
 import logging
 from collections import deque
 from contextlib import asynccontextmanager
+from datetime import date as _date, datetime as _datetime
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
@@ -88,7 +89,7 @@ class _CaparocLogHandler(logging.Handler):
             _LOG_BUFFER.append({
                 "id":     _log_serial,
                 "ts":     record.created,
-                "time":   self.formatTime(record, self._TIME_FMT),
+                "time":   _datetime.fromtimestamp(record.created).strftime(self._TIME_FMT),
                 "level":  record.levelname,
                 "logger": record.name,
                 "msg":    record.getMessage(),

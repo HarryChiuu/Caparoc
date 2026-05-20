@@ -321,6 +321,9 @@ async def ws_status(websocket: WebSocket):
         while True:
             if backend.is_connected:
                 raw = await asyncio.to_thread(backend._read_current_status)
+                if raw is None:
+                    # 設備失聯：清理連線旗標，讓前端可以正常重連
+                    await asyncio.to_thread(backend.disconnect)
                 payload = _format_status(raw)
             else:
                 payload = {"connected": False, "device_ip": backend.device_ip}

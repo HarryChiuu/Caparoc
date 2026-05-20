@@ -38,7 +38,7 @@ createApp({
             error: '',
         });
 
-        const ipInput = ref('192.168.2.111');
+        const ipInput = ref('');
         let ws = null;
         let wsRetryTimer = null;
 
@@ -67,6 +67,8 @@ createApp({
         function applyStatus(data) {
             state.connected     = data.connected ?? false;
             state.device_ip     = data.device_ip ?? '';
+            // 首次收到 WebSocket 資料時，用實際 IP 初始化輸入框
+            if (!ipInput.value && state.device_ip) { ipInput.value = state.device_ip; }
             state.error         = state.connected ? '' : (data.error ?? '');
             state.voltage       = data.voltage ?? 0;
             state.total_current = data.total_current ?? 0;

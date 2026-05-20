@@ -120,10 +120,12 @@
                             <h2>圖表監控</h2>
                             <div class="chart-toolbar">
                                 <div class="chart-win-btns">
-                                    <button :class="['btn','btn-sm', chartWindow===30?'':'btn-ghost']" @click="setChartWindow(30)">30s</button>
-                                    <button :class="['btn','btn-sm', chartWindow===60?'':'btn-ghost']" @click="setChartWindow(60)">60s</button>
-                                    <button :class="['btn','btn-sm', chartWindow===120?'':'btn-ghost']" @click="setChartWindow(120)">120s</button>
+                                    <button :class="['btn','btn-sm', chartWindow===30?'':'btn-ghost']"   @click="setChartWindow(30)">30s</button>
+                                    <button :class="['btn','btn-sm', chartWindow===60?'':'btn-ghost']"   @click="setChartWindow(60)">1分</button>
+                                    <button :class="['btn','btn-sm', chartWindow===600?'':'btn-ghost']"  @click="setChartWindow(600)">10分</button>
+                                    <button :class="['btn','btn-sm', chartWindow===1800?'':'btn-ghost']" @click="setChartWindow(1800)">30分</button>
                                 </div>
+                                <button v-if="chartHistoryMode" class="btn btn-sm" @click="jumpToLive" title="回到最新資料">▶ 即時</button>
                                 <button :class="['btn','btn-sm', chartPaused?'btn-ghost':'']" @click="toggleChartPause">
                                     {{ chartPaused ? '▶ 恢復' : '⏸ 暫停' }}
                                 </button>
@@ -137,16 +139,31 @@
                         </div>
 
                         <template v-else>
+                            <!-- 全域曲線 -->
                             <div class="chart-section">
                                 <h3 class="chart-subtitle">電壓 / 總電流</h3>
                                 <div class="chart-wrap">
                                     <canvas id="globalChart"></canvas>
                                 </div>
                             </div>
-                            <div class="chart-section" style="margin-top:20px">
-                                <h3 class="chart-subtitle">各通道電流</h3>
+
+                            <!-- 各模組通道電流（每模組一張圖） -->
+                            <div v-for="mod in activeModules" :key="mod"
+                                 class="chart-section" style="margin-top:20px">
+                                <div class="chart-section-header">
+                                    <h3 class="chart-subtitle">M{{ mod }} 通道電流</h3>
+                                    <div class="chart-ch-checks">
+                                        <label v-for="ch in channelsByModule[mod]" :key="ch.id"
+                                               class="ch-check-label">
+                                            <input type="checkbox"
+                                                   :checked="chartChannelVisible[ch.id] !== false"
+                                                   @change="toggleChannelVisible(ch.id)" />
+                                            <span>CH{{ ch.channel }}</span>
+                                        </label>
+                                    </div>
+                                </div>
                                 <div class="chart-wrap">
-                                    <canvas id="channelChart"></canvas>
+                                    <canvas :id="'moduleChart-' + mod"></canvas>
                                 </div>
                             </div>
                         </template>
@@ -316,7 +333,9 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="/static/js/app.js?v=4.2.5"></script>
+    <script src="/static/js/app.js?v=4.2.6"></script>
 </body>
 </html>

@@ -44,13 +44,15 @@ createApp({
         let wsRetryTimer = null;
 
         // 圖表監控 - 狀態 & 歷史緩衝（宣告於 applyStatus 之前）
-        const chartWindow   = ref(60);
-        const chartPaused   = ref(false);
+        const chartWindow        = ref(30);
+        const chartPaused        = ref(false);
+        const chartHistoryMode   = ref(false);
+        const chartChannelVisible = reactive({});
         const _chartHistory = { timestamps: [], voltage: [], totalCurrent: [], channels: {} };
-        const CHART_MAX_PTS = 120;
+        const CHART_MAX_PTS = 1800;
         const CHART_COLORS  = ['#3b82f6','#10b981','#f97316','#8b5cf6','#ef4444','#06b6d4','#84cc16','#ec4899'];
         let   _globalChart  = null;
-        let   _channelChart = null;
+        const _moduleCharts = {};
 
         function fmt(v) {
             return (v != null) ? Number(v).toFixed(1) : '—';
@@ -84,6 +86,10 @@ createApp({
             state.total_current = data.total_current ?? 0;
             state.module_count  = data.module_count ?? 0;
             state.channels      = data.channels ?? [];
+            // 初始化新通道的可見性（預設全部顯示）
+            for (const ch of state.channels) {
+                if (chartChannelVisible[ch.id] === undefined) chartChannelVisible[ch.id] = true;
+            }
             state.undervoltage  = data.undervoltage ?? false;
             state.overvoltage   = data.overvoltage ?? false;
             state.system_error  = data.system_error ?? false;
@@ -105,7 +111,7 @@ createApp({
                     for (const id in _chartHistory.channels)
                         if (_chartHistory.channels[id].length > CHART_MAX_PTS) _chartHistory.channels[id].shift();
                 }
-                if (currentPage.value === 'charts' && _globalChart && _channelChart) _updateCharts();
+                if (currentPage.value === 'charts' && !chartHistoryMode.value && _globalChart) _updateCharts();
             }
         }
 
@@ -247,30 +253,67 @@ createApp({
             if (logPage.value < logTotalPages.value - 1) { logPage.value++; fetchLogs(); }
         }
 
+        // -- 圖表監控 computed --
+        const activeModules = computed(() =>
+            [...new Set(state.channels.map(ch => ch.module))].sort((a, b) => a - b)
+        );
+        const channelsByModule = computed(() => {
+            const map = {};
+            for (const ch of state.channels) {
+                if (!map[ch.module]) map[ch.module] = [];
+                map[ch.module].push(ch);
+            }
+            return map;
+        });
+
         // -- 圖表監控函式 --
         function _getChartSlice() {
             const n = chartWindow.value;
-            const sortedIds = Object.keys(_chartHistory.channels).map(Number).sort((a, b) => a - b);
             return {
                 labels:       _chartHistory.timestamps.slice(-n),
                 voltage:      _chartHistory.voltage.slice(-n),
                 totalCurrent: _chartHistory.totalCurrent.slice(-n),
-                channelIds:   sortedIds,
-                channelData:  Object.fromEntries(sortedIds.map(id => [id, (_chartHistory.channels[id] || []).slice(-n)])),
             };
         }
 
         function _destroyCharts() {
-            if (_globalChart)  { _globalChart.destroy();  _globalChart  = null; }
-            if (_channelChart) { _channelChart.destroy(); _channelChart = null; }
+            if (_globalChart) { _globalChart.destroy(); _globalChart = null; }
+            for (const mod of Object.keys(_moduleCharts)) {
+                if (_moduleCharts[mod]) _moduleCharts[mod].destroy();
+                delete _moduleCharts[mod];
+            }
         }
 
-        function _initCharts() {
+        async function _initCharts() {
             _destroyCharts();
-            const slice = _getChartSlice();
+            chartHistoryMode.value = false;
+            // 從後端載入歷史資料
+            try {
+                const r = await fetch('/api/history?minutes=30');
+                if (r.ok) {
+                    const hist = await r.json();
+                    _chartHistory.timestamps   = hist.timestamps    || [];
+                    _chartHistory.voltage      = hist.voltage       || [];
+                    _chartHistory.totalCurrent = hist.total_current || [];
+                    _chartHistory.channels     = {};
+                    for (const [id, vals] of Object.entries(hist.channels || {}))
+                        _chartHistory.channels[parseInt(id)] = vals;
+                }
+            } catch (_) {}
+
+            // 確認仍在圖表頁（fetch 期間可能已離頁）
+            if (currentPage.value !== 'charts') return;
             const gcEl = document.getElementById('globalChart');
-            const ccEl = document.getElementById('channelChart');
-            if (!gcEl || !ccEl) return;
+            if (!gcEl) return;
+
+            const zoomCfg = {
+                pan:  { enabled: true,  mode: 'x',
+                        onPanComplete:  () => { chartHistoryMode.value = true; } },
+                zoom: { wheel: { enabled: true }, mode: 'x',
+                        onZoomComplete: () => { chartHistoryMode.value = true; } },
+            };
+            const slice = _getChartSlice();
+
             _globalChart = new Chart(gcEl.getContext('2d'), {
                 type: 'line',
                 data: {
@@ -297,59 +340,91 @@ createApp({
                         x:  { grid: { color: 'rgba(255,255,255,0.05)' },
                               ticks: { maxTicksLimit: 6, color: '#9aaac4', maxRotation: 0 } },
                     },
-                    plugins: { legend: { labels: { color: '#c5d0e6', usePointStyle: true } } },
-                },
-            });
-            _channelChart = new Chart(ccEl.getContext('2d'), {
-                type: 'line',
-                data: {
-                    labels: slice.labels,
-                    datasets: slice.channelIds.map((id, i) => ({
-                        label: `CH${id}`, data: slice.channelData[id] || [],
-                        borderColor: CHART_COLORS[i % CHART_COLORS.length],
-                        backgroundColor: 'transparent', tension: 0.3, pointRadius: 0, borderWidth: 1.5,
-                    })),
-                },
-                options: {
-                    animation: false, responsive: true, maintainAspectRatio: false,
-                    interaction: { mode: 'index', intersect: false },
-                    scales: {
-                        y: { min: 0,
-                             title: { display: true, text: '電流 (A)', color: '#9aaac4' },
-                             grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9aaac4' } },
-                        x: { grid: { color: 'rgba(255,255,255,0.05)' },
-                             ticks: { maxTicksLimit: 6, color: '#9aaac4', maxRotation: 0 } },
+                    plugins: {
+                        legend: { labels: { color: '#c5d0e6', usePointStyle: true } },
+                        zoom: zoomCfg,
                     },
-                    plugins: { legend: { labels: { color: '#c5d0e6', usePointStyle: true } } },
                 },
             });
+
+            // 各模組獨立電流圖
+            const n = chartWindow.value;
+            for (const mod of activeModules.value) {
+                const el = document.getElementById(`moduleChart-${mod}`);
+                if (!el) continue;
+                const modChannels = channelsByModule.value[mod] || [];
+                const datasets = modChannels.map((ch, i) => ({
+                    label: `CH${ch.channel}`,
+                    data:  (_chartHistory.channels[ch.id] || []).slice(-n),
+                    borderColor:     CHART_COLORS[i % CHART_COLORS.length],
+                    backgroundColor: 'transparent',
+                    tension: 0.3, pointRadius: 0, borderWidth: 1.5,
+                    hidden: chartChannelVisible[ch.id] === false,
+                }));
+                _moduleCharts[mod] = new Chart(el.getContext('2d'), {
+                    type: 'line',
+                    data: { labels: slice.labels, datasets },
+                    options: {
+                        animation: false, responsive: true, maintainAspectRatio: false,
+                        interaction: { mode: 'index', intersect: false },
+                        scales: {
+                            y: { min: 0,
+                                 title: { display: true, text: '電流 (A)', color: '#9aaac4' },
+                                 grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9aaac4' } },
+                            x: { grid: { color: 'rgba(255,255,255,0.05)' },
+                                 ticks: { maxTicksLimit: 6, color: '#9aaac4', maxRotation: 0 } },
+                        },
+                        plugins: {
+                            legend: { labels: { color: '#c5d0e6', usePointStyle: true } },
+                            zoom: zoomCfg,
+                        },
+                    },
+                });
+            }
         }
 
         function _updateCharts() {
-            if (!_globalChart || !_channelChart) return;
+            if (!_globalChart) return;
+            const n = chartWindow.value;
             const slice = _getChartSlice();
             _globalChart.data.labels           = slice.labels;
             _globalChart.data.datasets[0].data = slice.voltage;
             _globalChart.data.datasets[1].data = slice.totalCurrent;
             _globalChart.update('none');
-            slice.channelIds.forEach((id, i) => {
-                const ds = _channelChart.data.datasets.find(d => d.label === `CH${id}`);
-                if (ds) { ds.data = slice.channelData[id]; }
-                else {
-                    _channelChart.data.datasets.push({
-                        label: `CH${id}`, data: slice.channelData[id],
-                        borderColor: CHART_COLORS[i % CHART_COLORS.length],
-                        backgroundColor: 'transparent', tension: 0.3, pointRadius: 0, borderWidth: 1.5,
-                    });
+            for (const [modStr, modChart] of Object.entries(_moduleCharts)) {
+                if (!modChart) continue;
+                const mod = parseInt(modStr);
+                modChart.data.labels = slice.labels;
+                for (const ch of (channelsByModule.value[mod] || [])) {
+                    const ds = modChart.data.datasets.find(d => d.label === `CH${ch.channel}`);
+                    if (ds) ds.data = (_chartHistory.channels[ch.id] || []).slice(-n);
                 }
-            });
-            _channelChart.data.labels = slice.labels;
-            _channelChart.update('none');
+                modChart.update('none');
+            }
+        }
+
+        function toggleChannelVisible(chId) {
+            chartChannelVisible[chId] = !chartChannelVisible[chId];
+            const ch = state.channels.find(c => c.id === chId);
+            if (!ch) return;
+            const modChart = _moduleCharts[ch.module];
+            if (!modChart) return;
+            const ds = modChart.data.datasets.find(d => d.label === `CH${ch.channel}`);
+            if (ds) { ds.hidden = !chartChannelVisible[chId]; modChart.update('none'); }
+        }
+
+        function jumpToLive() {
+            chartHistoryMode.value = false;
+            if (_globalChart) _globalChart.resetZoom();
+            for (const chart of Object.values(_moduleCharts)) {
+                if (chart) chart.resetZoom();
+            }
+            if (_globalChart) _updateCharts();
         }
 
         function setChartWindow(n) {
             chartWindow.value = n;
-            if (_globalChart && _channelChart) _updateCharts();
+            jumpToLive();
         }
 
         function toggleChartPause() { chartPaused.value = !chartPaused.value; }
@@ -412,7 +487,9 @@ createApp({
             logAutoScroll, logTotalPages,
             fetchLogs, clearLogs, setPageSize,
             toggleLogAuto, logPrevPage, logNextPage,
-            chartWindow, chartPaused, setChartWindow, toggleChartPause,
+            chartWindow, chartPaused, chartHistoryMode, chartChannelVisible,
+            activeModules, channelsByModule,
+            setChartWindow, toggleChartPause, toggleChannelVisible, jumpToLive,
         };
     }
 }).mount('#app');

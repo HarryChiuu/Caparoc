@@ -43,6 +43,9 @@ logging.addLevelName(_SYSTEM_LEVEL, "SYSTEM")
 _LOG_BUFFER: deque = deque(maxlen=500)
 _log_serial = 0
 
+# 歷史資料緩衝（30 分鐘 × 1 次/秒 = 1800 筆）
+_history_buffer: deque = deque(maxlen=1800)
+
 # 解析 .log 檔行格式：2026-05-18 14:30:00 [INFO] [SYS] 訊息
 _LOG_LINE_RE = _re.compile(
     r"^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) \[(\w+)\] \[([^\]]+)\] (.+)$"
@@ -313,6 +316,31 @@ def clear_logs():
     return {"success": True}
 
 
+@app.get("/api/history")
+def get_history(minutes: int = Query(default=10, ge=1, le=30)):
+    """取得歷史感測資料（最近 N 分鐘，最多 30 分鐘）。"""
+    count = min(minutes * 60, len(_history_buffer))
+    entries = list(_history_buffer)[-count:] if count > 0 else []
+
+    if not entries:
+        return {"timestamps": [], "voltage": [], "total_current": [], "channels": {}}
+
+    timestamps    = [e["ts"]            for e in entries]
+    voltage       = [e["voltage"]       for e in entries]
+    total_current = [e["total_current"] for e in entries]
+
+    all_ch_ids: set = set()
+    for e in entries:
+        all_ch_ids.update(e["channels"].keys())
+
+    channels = {
+        ch_id: [e["channels"].get(ch_id, 0) for e in entries]
+        for ch_id in sorted(all_ch_ids, key=lambda x: int(x))
+    }
+    return {"timestamps": timestamps, "voltage": voltage,
+            "total_current": total_current, "channels": channels}
+
+
 # ==================== WebSocket ====================
 @app.websocket("/ws/status")
 async def ws_status(websocket: WebSocket):
@@ -329,6 +357,15 @@ async def ws_status(websocket: WebSocket):
             else:
                 payload = {"connected": False, "device_ip": backend.device_ip}
             await websocket.send_json(payload)
+            # 推送至歷史緩衝（僅已連線且有通道資料時）
+            if payload.get('connected') and payload.get('channels'):
+                _history_buffer.append({
+                    'ts':            _datetime.now().strftime("%H:%M:%S"),
+                    'voltage':       payload['voltage'],
+                    'total_current': payload['total_current'],
+                    'channels':      {str(ch['id']): ch['current_amps']
+                                      for ch in payload['channels']},
+                })
             await asyncio.sleep(1.0)
     except WebSocketDisconnect:
         pass

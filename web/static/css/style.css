@@ -447,3 +447,17 @@ button:hover, .btn:hover { background: #1f4a90; }
     position: relative; height: 220px;
     background: #161928; border-radius: 8px; padding: 8px;
 }
+
+/* 圖表通道選擇 */
+.chart-section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px; flex-wrap: wrap; gap: 8px;
+}
+.chart-ch-checks { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ch-check-label {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 0.82rem; color: #9aaac4; cursor: pointer; user-select: none;
+}
+.ch-check-label input[type=checkbox] {
+    accent-color: #7eb8f7; cursor: pointer; width: 14px; height: 14px;
+}

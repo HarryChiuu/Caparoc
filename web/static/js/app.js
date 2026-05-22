@@ -414,11 +414,12 @@ createApp({
         }
 
         function jumpToLive() {
-            chartHistoryMode.value = false;
             if (_globalChart) _globalChart.resetZoom();
             for (const chart of Object.values(_moduleCharts)) {
                 if (chart) chart.resetZoom();
             }
+            // 必須在 resetZoom() 之後設定，否則 onZoomComplete callback 會把它改回 true
+            chartHistoryMode.value = false;
             if (_globalChart) _updateCharts();
         }
 

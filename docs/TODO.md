@@ -582,6 +582,30 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
+##### 4.2.8 頂部列關閉按鈕（關閉分頁）✅ **已完成（2026-05-22）**
+
+> **目的**：在頂部列最右方新增「✕」關閉按鈕，讓使用者快速關閉瀏覽器分頁；  
+> 同時整理連線/斷線與關閉按鈕的位置邏輯。
+
+**頂部列按鈕佈局**（左 → 右）：
+
+```
+[☰  CAPAROC]          [● 已連線 · IP]  [連線 / 斷線]  [✕]
+ ← topbar-left →      ←————————— topbar-right ——————————→
+```
+
+- `conn-bar`（連線狀態 + 連線/斷線按鈕）與 `✕` 關閉按鈕同屬 `topbar-right`，靠右對齊
+- 以 `|` 分隔線視覺區隔兩個操作區域
+- 關閉按鈕觸發 `window.close()`，關閉當前瀏覽器分頁
+
+**工作項目**：
+- [x] `index.html`：將 `conn-bar` 與關閉按鈕包入 `topbar-right` div，`✕` 置於最右
+- [x] `style.css`：新增 `.topbar-right`（flex）、`.topbar-sep`（分隔線）、`.btn-close-tab` 樣式
+- [x] `app.js`：新增 `doCloseTab()` 函式（`window.close()`）並加入 return object
+- [x] `app.js`：圖表監控電壓 Y 軸 ticks 與 tooltip 顯示小數點後兩位（`toFixed(2)`）
+
+---
+
 #### 4.3 數據記錄與分析功能 🆕
 
 **目標**: 記錄設備運行數據，提供歷史分析

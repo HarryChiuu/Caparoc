@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CAPAROC 控制台</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=4.2.3" />
+    <link rel="stylesheet" href="/static/css/style.css?v=4.2.8" />
 </head>
 <body>
     <div id="app">
@@ -15,13 +15,17 @@
                 <button class="sidebar-toggle" @click="toggleSidebar" title="展開/收合選單">☰</button>
                 <span class="brand">CAPAROC</span>
             </div>
-            <div class="conn-bar">
-                <span class="dot" :class="state.connected ? 'dot-on' : 'dot-off'"></span>
-                <span class="conn-label">
-                    {{ state.connected ? '已連線 · ' + state.device_ip : '未連線' }}
-                </span>
-                <button class="btn-sm" v-if="!state.connected" @click="doConnect" :disabled="connecting">{{ connecting ? '連線中...' : '連線' }}</button>
-                <button class="btn-sm btn-danger" v-else @click="doDisconnect">斷線</button>
+            <div class="topbar-right">
+                <div class="conn-bar">
+                    <span class="dot" :class="state.connected ? 'dot-on' : 'dot-off'"></span>
+                    <span class="conn-label">
+                        {{ state.connected ? '已連線 · ' + state.device_ip : '未連線' }}
+                    </span>
+                    <button class="btn-sm" v-if="!state.connected" @click="doConnect" :disabled="connecting">{{ connecting ? '連線中...' : '連線' }}</button>
+                    <button class="btn-sm btn-danger" v-else @click="doDisconnect">斷線</button>
+                </div>
+                <div class="topbar-sep"></div>
+                <button class="btn-close-tab" @click="doCloseTab" title="關閉分頁">✕</button>
             </div>
         </header>
 
@@ -336,6 +340,6 @@
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="/static/js/app.js?v=4.2.6a"></script>
+    <script src="/static/js/app.js?v=4.2.8"></script>
 </body>
 </html>

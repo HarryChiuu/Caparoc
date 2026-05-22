@@ -333,7 +333,8 @@ createApp({
                     scales: {
                         yV: { type: 'linear', position: 'left',
                               title: { display: true, text: '電壓 (V)', color: '#3b82f6' },
-                              grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#3b82f6' } },
+                              grid: { color: 'rgba(255,255,255,0.05)' },
+                              ticks: { color: '#3b82f6', callback: v => Number(v).toFixed(2) } },
                         yA: { type: 'linear', position: 'right', min: 0,
                               title: { display: true, text: '電流 (A)', color: '#f97316' },
                               grid: { drawOnChartArea: false }, ticks: { color: '#f97316' } },
@@ -342,6 +343,16 @@ createApp({
                     },
                     plugins: {
                         legend: { labels: { color: '#c5d0e6', usePointStyle: true } },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => {
+                                    const v = ctx.parsed.y;
+                                    if (ctx.dataset.yAxisID === 'yV')
+                                        return `電壓: ${Number(v).toFixed(2)} V`;
+                                    return `總電流: ${Number(v).toFixed(1)} A`;
+                                },
+                            },
+                        },
                         zoom: zoomCfg,
                     },
                 },
@@ -430,6 +441,10 @@ createApp({
 
         function toggleChartPause() { chartPaused.value = !chartPaused.value; }
 
+        function doCloseTab() {
+            window.close();
+        }
+
         // 切換到 logs 頁時啟動輪詢；離開時停止
         watch(currentPage, (page, prevPage) => {
             clearInterval(_logTimer);
@@ -491,6 +506,7 @@ createApp({
             chartWindow, chartPaused, chartHistoryMode, chartChannelVisible,
             activeModules, channelsByModule,
             setChartWindow, toggleChartPause, toggleChannelVisible, jumpToLive,
+            doCloseTab,
         };
     }
 }).mount('#app');

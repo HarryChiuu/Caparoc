@@ -377,7 +377,7 @@ def _show_monitor_status(self, status, changes):
 > 前置條件：Phase 4.0 骨架完成 ✅  
 > 可與 Phase 4.1（CLI 增強）**並行開發**，依賴 API Contract 定義，頁面設計不需等待 Python 函式全部完成
 
-**開發順序：4.2.1 → 4.2.2 → 4.2.3 → 4.2.4（每項完成後再進行下一項）**
+**完成狀態：4.2.1 ✅ → 4.2.2 ✅ → 4.2.3 ✅ → 4.2.4 ✅ → 4.2.6 ✅ ｜ 待開發：4.2.5、4.2.7**
 
 ---
 
@@ -469,73 +469,33 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-**Phase 4.2 預估總工時**：5.5-7 小時（4.2.1 已完成）
+**Phase 4.2 進度**：4.2.1–4.2.4 ✅、4.2.4-bug ✅、4.2.6 ✅ 已完成 ｜ 4.2.5、4.2.7 待開發
 
 ---
 
-##### 4.2.4-bug 告警事件未寫入 log（Bug Fix）
+##### 4.2.4-bug 告警事件未寫入 log ✅ **已修復（2026-05-20, fa387e0）**
 
 > **問題根源**：`_detect_changes()` 偵測到短路/過載/80% 警告/通道開關/電壓異常後，將結果加入
 > `changes['system_alerts']` / `channel_state_changes`，但 `_monitor_worker()` 只把這些資訊
 > 傳給 `_show_monitor_status()` / `_show_monitor_alerts()`（CLI print），**完全未呼叫
 > `self.logger.warning()`**，導致告警僅出現在終端機，不會寫入 log 檔或 Web 日誌頁。
 
-- [ ] `_monitor_worker()` 迴圈中，對 `changes['system_alerts']` 每一則呼叫
+- [x] `_monitor_worker()` 迴圈中，對 `changes['system_alerts']` 每一則呼叫
   `self.logger.warning(msg, extra={'log_module': 'CONN'})`
-- [ ] 防 spam：已記錄過的告警不重複（可用 set 或 dict 追蹤目前活躍告警，恢復時再清除）
-- [ ] `channel_state_changes`（開/關事件）呼叫 `self.logger.info()`
-- [ ] `current_anomalies`（電流突變 >30%）呼叫 `self.logger.warning()`
+- [x] 防 spam：`_detect_changes()` 已做狀態轉換偵測（False→True 才觸發），無需額外 set/dict 追蹤
+- [x] `channel_state_changes`（開/關事件）呼叫 `self.logger.info()`
+- [x] `current_anomalies`（電流突變 >30%）呼叫 `self.logger.warning()`
 
 **受影響的告警類型**：
 
-| 告警 | `_detect_changes` 已偵測 | 目前 logger 呼叫 | 預期行為 |
-|------|------------------------|-----------------|---------|
-| 短路 (short_circuit) | ✅ | ❌ 無 | WARNING log |
-| 過載 (overload) | ✅ | ❌ 無 | WARNING log |
-| 80% 電流警告 | ✅ | ❌ 無 | WARNING log |
-| 通道開/關 | ✅ | ❌ 無 | INFO log |
-| 電流突變 >30% | ✅ | ❌ 無 | WARNING log |
-| 電壓突變 >1V | ✅ | ❌ 無 | WARNING log |
-
-**預估工時**：0.5 小時
-
----
-
-##### 4.2.6 圖表監控頁增強（通道圖拆分 + 歷史查詢）
-
-> **目的**：解決目前圖表頁兩個設計問題：  
-> 1. 各通道電流擠在同一張圖 → 通道數多時難以辨識  
-> 2. 只有 120 秒記憶體 buffer → 重整頁面即失去歷史資料
-
-**通道圖拆分方案（考慮最多 64 通道 / 16 模組）**：
-
-選用方案 B「**按模組分標籤**」：
-- 上方標籤列：`M1` / `M2` / ... / `M{n}` — 點擊切換
-- 選定模組後顯示該模組 4 個通道的**獨立折線圖**（4 個 Chart 實例）
-- 每張小圖獨立顯示：時間 X 軸 + 電流 Y 軸 + 通道名稱標題
-- 切換標籤時 destroy/init 圖表，避免記憶體堆疊
-- 不論 1 模組或 16 模組均可正確顯示，不需修改架構
-
-棄用原因：
-- 方案 A（每通道 sparkline 卡片）：64 個 Chart.js 實例性能不佳
-- 方案 C（勾選通道大圖）：需額外 UI，不直觀
-
-**後端歷史資料儲存（短期方案）**：
-- 後端新增 `_history_buffer`：`deque(maxlen=1800)`，每秒由 WebSocket handler 推入
-  `{ts, voltage, total_current, channels:{id:{current_amps}}}`
-- 新增 `GET /api/history?minutes=N`（N 預設 10，最多 30）
-- 前端進入圖表頁時，先呼叫 `/api/history` 填充 `_chartHistory`，再由 WebSocket 繼續即時更新
-- 重整頁面後仍可看到最近 30 分鐘的資料（服務不重啟的前提下）
-
-**工作項目**：
-- [ ] `web/app.py`：新增 `_history_buffer = deque(maxlen=1800)`；WebSocket handler 推送時同步寫入
-- [ ] `web/app.py`：新增 `GET /api/history?minutes=N` endpoint
-- [ ] `app.js`：`_initCharts()` 先 fetch `/api/history` 預填 `_chartHistory`，再開始即時更新
-- [ ] `app.js`：圖表頁加入模組標籤切換（`chartModule` ref）；改為 4 個通道獨立 Chart 實例
-- [ ] `index.html`：模組標籤 UI（按鈕組）+ 4 個 `<canvas>` 元素（用 `v-for` 或 `v-show`）
-- [ ] `style.css`：模組標籤樣式、4 張小圖佈局（CSS Grid 2×2）
-
-**預估工時**：2.5 小時
+| 告警 | `_detect_changes` 已偵測 | 修復後 logger 呼叫 |
+|------|------------------------|--------------------|
+| 短路 (short_circuit) | ✅ | ✅ WARNING log |
+| 過載 (overload) | ✅ | ✅ WARNING log |
+| 80% 電流警告 | ✅ | ✅ WARNING log |
+| 通道開/關 | ✅ | ✅ INFO log |
+| 電流突變 >30% | ✅ | ✅ WARNING log |
+| 電壓突變 >1V | ✅ | ✅ WARNING log |
 
 ---
 
@@ -565,6 +525,60 @@ def _show_monitor_status(self, status, changes):
 - [ ] `web/app.py` 啟動時讀取 web_config.json
 - [ ] `app.js` 從 `GET /api/config/limits` 取得 nominal_current_range，動態設定 input min/max
 - [ ] `caparoc_backend.py` 從 `config/device_config.json` 或常數檔讀取 nominal range
+
+---
+
+##### 4.2.6 圖表監控頁增強（通道圖拆分 + 歷史查詢）✅ **已完成（2026-05-21, a4750d8 + 3174cba）**
+
+> **實作方式**：依模組各建一張折線圖（每模組一個 Chart.js 實例），含 checkbox 控制通道顯示，  
+> 支援滑鼠拖曳/滾輪縮放查看歷史（chartjs-plugin-zoom），後端保存最近 30 分鐘資料。
+
+**工作項目**：
+- [x] `web/app.py`：新增 `_history_buffer = deque(maxlen=1800)`；WebSocket handler 推送時同步寫入
+- [x] `web/app.py`：新增 `GET /api/history?minutes=N` endpoint（N 預設 10，最多 30）
+- [x] `app.js`：`_initCharts()` 先 fetch `/api/history` 預填 `_chartHistory`，再開始即時更新
+- [x] `app.js`：改為每模組一張 Chart 實例（`_moduleCharts` dict）；`v-for="mod in activeModules"` 動態生成
+- [x] `app.js`：加入 chartjs-plugin-zoom（拖曳/滾輪縮放）；歷史模式停止自動更新，「▶ 即時」按鈕跳回實時
+- [x] `app.js`：修復 `jumpToLive()` — `resetZoom()` 同步觸發 `onZoomComplete` 把 `chartHistoryMode` 改回 true，改為 resetZoom 後再設 false（3174cba）
+- [x] `index.html`：每模組獨立 `<canvas>`（`v-for` 生成）+ 通道 checkbox UI
+- [x] `style.css`：模組標題欄（`.chart-section-header`）、checkbox 行（`.chart-ch-checks`）樣式
+
+---
+
+##### 4.2.7 設備網路資訊讀取（TCP/IP Interface + MAC 位址）
+
+> **目的**：透過 CIP 協議讀取 CAPAROC 設備的網路資訊，顯示於 Web UI 連線設定頁  
+> **依賴**：4.2.1 ✅（connection 頁面已存在）  
+> **協議**：EtherNet/IP CIP Generic Message（`generic_message`，service `0x0E` Get_Attribute_Single）  
+> **預估工時**：1.5 小時
+
+**CIP 物件定義**：
+
+| CIP Object | Class | Instance | Attribute | 資料說明 |
+|-----------|-------|----------|-----------|---------|
+| TCP/IP Interface | `0xF5` | `1` | `3` | Interface Configuration（IP、Subnet Mask、Gateway） |
+| TCP/IP Interface | `0xF5` | `1` | `5` | Host Name（string） |
+| Ethernet Link | `0xF6` | `1` | `3` | Physical Address（MAC，6 bytes） |
+
+> 備註：CAPAROC 為 Phoenix Contact 標準 EtherNet/IP 裝置，以上 CIP Object 需實機驗證韌體是否全數支援
+
+**後端（`src/caparoc_backend.py`）**：
+- [ ] 新增 `get_network_info()` 方法：
+  - TCP/IP Interface（`0xF5`, Inst `1`, Attr `3`）→ IP、Subnet Mask、Gateway
+  - TCP/IP Interface（`0xF5`, Inst `1`, Attr `5`）→ Host Name（optional）
+  - Ethernet Link（`0xF6`, Inst `1`, Attr `3`）→ MAC 位址（6 bytes → `XX:XX:XX:XX:XX:XX`）
+- [ ] 回傳 dict：`{"ip": ..., "subnet_mask": ..., "gateway": ..., "mac": ..., "hostname": ...}`；讀取失敗欄位填 `None`
+- [ ] 各屬性獨立 `try/except`，單一失敗不影響其他欄位
+
+**Web API（`web/app.py`）**：
+- [ ] 新增 `GET /api/device/network` endpoint → 呼叫 `backend.get_network_info()`，回傳 JSON
+- [ ] 未連線時回傳 HTTP 503
+
+**前端（`app.js` + `index.html`）**：
+- [ ] `connection` 頁面加入「設備網路資訊」區塊（`v-if="state.connected"`）
+- [ ] 顯示欄位：IP 位址、子網路遮罩、預設閘道、MAC 位址、主機名稱
+- [ ] 連線成功後（`applyStatus` 收到 `connected: true` 時）自動呼叫 `/api/device/network` 一次
+- [ ] 讀取失敗的欄位顯示「—」（不阻斷頁面顯示）
 
 ---
 

@@ -445,13 +445,18 @@ createApp({
         async function doCloseTab() {
             if (isShuttingDown.value) return;
             isShuttingDown.value = true;
-            // 停止 WebSocket 重連試
+            // 停止 WebSocket 重連
             clearTimeout(wsRetryTimer);
             if (ws) { try { ws.close(); } catch (_) {} }
             // 呼叫後端關閉
-            try { await fetch('/api/shutdown', { method: 'POST' }); } catch (_) {}
-            // 嘗試關閉分頁（舊版瀏覽器有效，新版對手動開啟的分頁無效）
-            setTimeout(() => window.close(), 400);
+            try {
+                await fetch('/api/shutdown', { method: 'POST' });
+                // 嘗試關閉分頁（window.open 開啟時有效）
+                setTimeout(() => window.close(), 400);
+            } catch (_) {
+                // API 呼叫失敗（網路問題），恢復按鈕可用
+                isShuttingDown.value = false;
+            }
         }
 
         // 切換到 logs 頁時啟動輪詢；離開時停止

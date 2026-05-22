@@ -361,10 +361,36 @@ def get_history(minutes: int = Query(default=10, ge=1, le=30)):
 
 
 # ==================== WebSocket ====================
+# 追蹤前端連線數；最後一個斷線後倒數自動關閉伺服器
+_ws_client_count = 0
+_ws_had_client   = False   # 曾有人連線過才啟動自動關閉計時
+_ws_auto_task    = None    # asyncio.Task
+
+_WS_IDLE_TIMEOUT = 10.0    # 秒：無前端連線多久後自動 shutdown
+
+
+async def _ws_idle_shutdown():
+    """無前端連線超過 _WS_IDLE_TIMEOUT 秒後自動停止伺服器。"""
+    await asyncio.sleep(_WS_IDLE_TIMEOUT)
+    _WEB_LOGGER.log(_SYSTEM_LEVEL,
+                    f"前端已離線 {_WS_IDLE_TIMEOUT:.0f} 秒，伺服器自動關閉",
+                    extra={'log_module': 'WEB'})
+    os.kill(os.getpid(), signal.SIGINT)
+
+
 @app.websocket("/ws/status")
 async def ws_status(websocket: WebSocket):
     """每秒推送設備狀態至前端；前端斷線時自動清理。"""
+    global _ws_client_count, _ws_had_client, _ws_auto_task
+
     await websocket.accept()
+    _ws_client_count += 1
+    _ws_had_client = True
+    # 有新客戶端連入 → 取消待執行的自動關閉計時
+    if _ws_auto_task and not _ws_auto_task.done():
+        _ws_auto_task.cancel()
+        _ws_auto_task = None
+
     try:
         while True:
             if backend.is_connected:
@@ -386,10 +412,13 @@ async def ws_status(websocket: WebSocket):
                                       for ch in payload['channels']},
                 })
             await asyncio.sleep(1.0)
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, Exception):
         pass
-    except Exception:
-        pass
+    finally:
+        _ws_client_count -= 1
+        # 最後一個客戶端斷線 → 啟動倒數，逾時自動 shutdown
+        if _ws_client_count <= 0:
+            _ws_auto_task = asyncio.create_task(_ws_idle_shutdown())
 
 
 # ==================== 直接執行入口 ====================

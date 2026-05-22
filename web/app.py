@@ -13,6 +13,7 @@ import sys
 import os
 import signal
 import asyncio
+import threading
 import json
 import logging
 from collections import deque
@@ -145,9 +146,12 @@ async def lifespan(app: FastAPI):
         _WEB_LOGGER.error(f"啟動連線例外: {e}", extra={'log_module': 'WEB'})
     yield
     _WEB_LOGGER.log(_SYSTEM_LEVEL, "Web 服務關閉中...", extra={'log_module': 'WEB'})
+    # 用 daemon 執行緒執行斷線，避免 pycomm3 socket 阻塞時卡死終端機
+    _t = threading.Thread(target=backend.disconnect, daemon=True)
+    _t.start()
     try:
-        await asyncio.wait_for(asyncio.to_thread(backend.disconnect), timeout=3.0)
-    except (asyncio.TimeoutError, Exception):
+        await asyncio.to_thread(_t.join, 3.0)  # 最多等 3 秒；daemon 執行緒不阻止進程退出
+    except Exception:
         pass
 
 

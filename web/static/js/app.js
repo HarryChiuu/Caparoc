@@ -40,6 +40,7 @@ createApp({
 
         const ipInput = ref('');
         const connecting = ref(false);  // 防止重複點擊連線
+        const isShuttingDown = ref(false);  // 關閉中過渡狀態
         let ws = null;
         let wsRetryTimer = null;
 
@@ -441,8 +442,16 @@ createApp({
 
         function toggleChartPause() { chartPaused.value = !chartPaused.value; }
 
-        function doCloseTab() {
-            window.close();
+        async function doCloseTab() {
+            if (isShuttingDown.value) return;
+            isShuttingDown.value = true;
+            // 停止 WebSocket 重連試
+            clearTimeout(wsRetryTimer);
+            if (ws) { try { ws.close(); } catch (_) {} }
+            // 呼叫後端關閉
+            try { await fetch('/api/shutdown', { method: 'POST' }); } catch (_) {}
+            // 嘗試關閉分頁（舊版瀏覽器有效，新版對手動開啟的分頁無效）
+            setTimeout(() => window.close(), 400);
         }
 
         // 切換到 logs 頁時啟動輪詢；離開時停止
@@ -506,7 +515,7 @@ createApp({
             chartWindow, chartPaused, chartHistoryMode, chartChannelVisible,
             activeModules, channelsByModule,
             setChartWindow, toggleChartPause, toggleChannelVisible, jumpToLive,
-            doCloseTab,
+            doCloseTab, isShuttingDown,
         };
     }
 }).mount('#app');

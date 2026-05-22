@@ -10,6 +10,8 @@ CAPAROC Web UI 服務 (Phase 4.0)
 """
 
 import sys
+import os
+import signal
 import asyncio
 import json
 import logging
@@ -144,8 +146,8 @@ async def lifespan(app: FastAPI):
     yield
     _WEB_LOGGER.log(_SYSTEM_LEVEL, "Web 服務關閉中...", extra={'log_module': 'WEB'})
     try:
-        await asyncio.to_thread(backend.disconnect)
-    except Exception:
+        await asyncio.wait_for(asyncio.to_thread(backend.disconnect), timeout=3.0)
+    except (asyncio.TimeoutError, Exception):
         pass
 
 
@@ -248,6 +250,19 @@ async def api_disconnect():
     """斷開連線。"""
     await asyncio.to_thread(backend.disconnect)
     _WEB_LOGGER.log(_SYSTEM_LEVEL, f"手動斷線 ({backend.device_ip})", extra={'log_module': 'WEB'})
+    return {"success": True}
+
+
+@app.post("/api/shutdown")
+async def api_shutdown():
+    """優雅關閉伺服器（斷線設備 + 停止程序）。"""
+    _WEB_LOGGER.log(_SYSTEM_LEVEL, "收到關閉請求，伺服器準備停止", extra={'log_module': 'WEB'})
+
+    async def _do_shutdown():
+        await asyncio.sleep(0.3)  # 讓 HTTP 回應先送出
+        os.kill(os.getpid(), signal.SIGINT)
+
+    asyncio.create_task(_do_shutdown())
     return {"success": True}
 
 

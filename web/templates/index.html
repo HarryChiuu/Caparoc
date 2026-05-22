@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CAPAROC 控制台</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=4.2.8" />
+    <link rel="stylesheet" href="/static/css/style.css?v=4.2.8a" />
 </head>
 <body>
     <div id="app">
@@ -25,7 +25,7 @@
                     <button class="btn-sm btn-danger" v-else @click="doDisconnect">斷線</button>
                 </div>
                 <div class="topbar-sep"></div>
-                <button class="btn-close-tab" @click="doCloseTab" title="關閉分頁">✕</button>
+                <button class="btn-close-tab" @click="doCloseTab" title="關閉伺服器">✕</button>
             </div>
         </header>
 
@@ -336,10 +336,19 @@
 
     </div>
 
+    <!-- 關閉中過渡遮罩 -->
+    <div v-if="isShuttingDown" class="shutdown-overlay">
+        <div class="shutdown-card">
+            <div class="shutdown-icon">⏹</div>
+            <div class="shutdown-title">伺服器已關閉</div>
+            <div class="shutdown-sub">分頁對話方塊無法自動關閉，請手動關閉此分頁</div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="/static/js/app.js?v=4.2.8"></script>
+    <script src="/static/js/app.js?v=4.2.8a"></script>
 </body>
 </html>

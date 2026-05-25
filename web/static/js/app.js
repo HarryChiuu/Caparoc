@@ -41,8 +41,10 @@ createApp({
         const ipInput = ref('');
         const connecting = ref(false);  // 防止重複點擊連線
         const isShuttingDown = ref(false);  // 關閉中過渡狀態
+        const networkInfo = ref(null);  // 設備網路資訊
         let ws = null;
         let wsRetryTimer = null;
+        let _wasConnected = false;  // 連線狀態變化偵測
 
         // 圖表監控 - 狀態 & 歷史緩衝（宣告於 applyStatus 之前）
         const chartWindow        = ref(30);
@@ -94,6 +96,10 @@ createApp({
             state.undervoltage  = data.undervoltage ?? false;
             state.overvoltage   = data.overvoltage ?? false;
             state.system_error  = data.system_error ?? false;
+            // 連線狀態變化偵測
+            if (!_wasConnected && state.connected) fetchNetworkInfo();
+            else if (_wasConnected && !state.connected) networkInfo.value = null;
+            _wasConnected = state.connected;
             // 圖表歷史累積（不論是否在圖表頁都持續記錄）
             if (!chartPaused.value) {
                 const t = new Date();
@@ -146,6 +152,15 @@ createApp({
 
         async function doDisconnect() {
             await fetch('/api/disconnect', { method: 'POST' });
+        }
+
+        async function fetchNetworkInfo() {
+            try {
+                const r = await fetch('/api/device/network');
+                networkInfo.value = r.ok ? await r.json() : null;
+            } catch (_) {
+                networkInfo.value = null;
+            }
         }
 
         async function toggleCh(ch) {
@@ -511,6 +526,7 @@ createApp({
             fmt, barPct, cardClass, barClass,
             connecting,
             doConnect, doDisconnect, toggleCh,
+            networkInfo,
             nominalInputs, nominalFeedback, batchNominal, batchStatus,
             setNominal, setAllNominal,
             logEntries, logTotal, logPage, logPageSize, logFilter,

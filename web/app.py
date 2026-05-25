@@ -257,6 +257,15 @@ async def api_disconnect():
     return {"success": True}
 
 
+@app.get("/api/device/network")
+async def api_device_network():
+    """讀取設備網路資訊（TCP/IP Interface + MAC）。"""
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="設備未連線")
+    info = await asyncio.to_thread(backend.get_network_info)
+    return info
+
+
 @app.post("/api/shutdown")
 async def api_shutdown():
     """優雅關閉伺服器（斷線設備 + 停止程序）。"""

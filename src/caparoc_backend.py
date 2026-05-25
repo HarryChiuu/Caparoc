@@ -332,6 +332,61 @@ class CaparocBackend:
             self._cip_driver = None
         self.driver = None
 
+    def get_network_info(self) -> dict:
+        """
+        讀取設備網路資訊。需已連線。
+
+        回傳 dict：ip / subnet_mask / gateway / dns1 / dns2 / hostname / mac
+        讀取失敗的欄位填 None，不影響其他欄位。
+        """
+        result = {
+            "ip": None, "subnet_mask": None, "gateway": None,
+            "dns1": None, "dns2": None, "hostname": None, "mac": None,
+        }
+        if not self.is_connected or self.driver is None:
+            return result
+
+        def _udint_to_ip(buf: bytes) -> str:
+            """CIP UDINT（小端序）→ IPv4 字串"""
+            v = struct.unpack_from('<I', buf)[0]
+            return f"{(v>>24)&0xFF}.{(v>>16)&0xFF}.{(v>>8)&0xFF}.{v&0xFF}"
+
+        # TCP/IP Interface attr5: Interface Configuration（IP + Subnet + GW + DNS + Hostname）
+        try:
+            resp = self.driver.generic_message(
+                service=0x0E, class_code=0xF5, instance=1, attribute=5,
+                connected=True, unconnected_send=False,
+            )
+            if resp and not (hasattr(resp, 'error') and resp.error):
+                raw = bytes(resp.value)
+                if len(raw) >= 20:
+                    result["ip"]          = _udint_to_ip(raw[0:4])
+                    result["subnet_mask"] = _udint_to_ip(raw[4:8])
+                    result["gateway"]     = _udint_to_ip(raw[8:12])
+                    result["dns1"]        = _udint_to_ip(raw[12:16])
+                    result["dns2"]        = _udint_to_ip(raw[16:20])
+                if len(raw) >= 22:
+                    hn_len = struct.unpack_from('<H', raw, 20)[0]
+                    if hn_len > 0 and len(raw) >= 22 + hn_len:
+                        result["hostname"] = raw[22:22 + hn_len].decode('ascii', errors='replace')
+        except Exception:
+            pass
+
+        # Ethernet Link attr3: Physical Address（MAC 6 bytes）
+        try:
+            resp = self.driver.generic_message(
+                service=0x0E, class_code=0xF6, instance=1, attribute=3,
+                connected=True, unconnected_send=False,
+            )
+            if resp and not (hasattr(resp, 'error') and resp.error):
+                raw = bytes(resp.value)
+                if len(raw) >= 6:
+                    result["mac"] = ":".join(f"{b:02X}" for b in raw[:6])
+        except Exception:
+            pass
+
+        return result
+
     def _sync_output_from_device(self):
         """
         讀取設備實際通道狀態，重建 output_data buffer。

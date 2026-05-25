@@ -431,6 +431,18 @@ button:hover, .btn:hover { background: #1f4a90; }
 .log-error    { background: #3a0f0f; color: #f44336; }
 .log-critical { background: #4a0018; color: #ff1744; }
 
+/* ── 設備網路資訊表格 ────────────────── */
+.net-info-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.net-info-table td {
+    padding: 9px 12px;
+    border-bottom: 1px solid #1c2038;
+    vertical-align: middle;
+}
+.net-info-table tr:last-child td { border-bottom: none; }
+.net-info-table td:first-child { color: #7a8aaa; width: 110px; white-space: nowrap; }
+.net-info-table td:last-child  { color: #dde3f0; }
+.net-mac { font-family: monospace; letter-spacing: 0.05em; }
+
 
 
 /* 分頁列 */

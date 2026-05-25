@@ -1192,6 +1192,19 @@ class CaparocBackend:
                 attribute=3,
                 connected=False
             )
+        except Exception as e:
+            # 通訊例外（網路斷線、TCP 超時等）。
+            # 必須在此 catch 並 return None，不可讓例外傳播到 WebSocket handler——
+            # 否則 handler 的 while 迴圈會被中斷，_ws_client_count 歸零，
+            # 觸發伺服器自動 shutdown，且 backend.disconnect() 永遠不會被呼叫，
+            # 導致 is_connected 維持 True，使用者無法重新連線。
+            if self._last_read_ok:
+                self.logger.warning(
+                    f"設備失聯 ({self.device_ip})，讀取狀態失敗: {type(e).__name__}: {e}",
+                    extra={'log_module': 'CONN', 'ip': self.device_ip}
+                )
+                self._last_read_ok = False
+            return None   # finally 仍會執行，確保鎖被釋放
         finally:
             self._cip_lock.release()
 

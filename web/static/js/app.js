@@ -172,6 +172,9 @@ createApp({
 
         const networkInfoRefreshing = ref(false);
 
+        // 全域旗標：任一 CIP on-demand 讀取進行中時為 true，防止前端並發觸發
+        let _cipReadInFlight = false;
+
         async function fetchNetworkInfo() {
             try {
                 const r = await fetch('/api/device/network');
@@ -189,13 +192,15 @@ createApp({
         }
 
         async function refreshNetworkInfo() {
-            if (!state.connected || networkInfoRefreshing.value) return;
+            if (!state.connected || networkInfoRefreshing.value || _cipReadInFlight) return;
+            _cipReadInFlight = true;
             networkInfoRefreshing.value = true;
             const prev = networkInfo.value;
             networkInfo.value = null;          // 顯示「讀取中...」
             const ok = await fetchNetworkInfo();
             if (!ok) networkInfo.value = prev; // 失敗時恢復舊值
             networkInfoRefreshing.value = false;
+            _cipReadInFlight = false;
         }
 
         const deviceInfoRefreshing = ref(false);
@@ -218,13 +223,15 @@ createApp({
         }
 
         async function refreshDeviceInfo() {
-            if (!state.connected || deviceInfoRefreshing.value) return;
+            if (!state.connected || deviceInfoRefreshing.value || _cipReadInFlight) return;
+            _cipReadInFlight = true;
             deviceInfoRefreshing.value = true;
             const prev = deviceInfo.value;  // 備份目前值
             deviceInfo.value = null;        // 清空，讓頁面顯示「讀取中...」
             const ok = await fetchDeviceInfo();
             if (!ok) deviceInfo.value = prev;  // 失敗時恢復，不讓頁面一片空白
             deviceInfoRefreshing.value = false;
+            _cipReadInFlight = false;
         }
 
         async function toggleCh(ch) {

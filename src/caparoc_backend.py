@@ -84,6 +84,10 @@ class CaparocBackend:
         self._last_read_ok = True    # _read_current_status 上次是否成功
         self._hb_fail_logged = False # heartbeat 連續失敗是否已記錄過
 
+        # CIP 通訊锁：防止多執行緒並發 generic_message 破壞 TCP 串流
+        self._cip_lock = threading.Lock()
+        self._last_known_status = None   # _read_current_status 最後一次成功的快取
+
     # ==================== 通道偏移計算 ====================
 
     def get_channel_offset(self, module, channel):
@@ -335,6 +339,7 @@ class CaparocBackend:
     def get_network_info(self) -> dict:
         """
         讀取設備網路資訊。需已連線（connected=True）。
+        每次 CIP 訊息都持有 _cip_lock，防止與 WebSocket 狀態讀取並發。
 
         回傳 dict：ip / subnet_mask / gateway / dns1 / dns2 / hostname / mac
         讀取失敗的欄位填 None，不影響其他欄位。
@@ -352,11 +357,13 @@ class CaparocBackend:
             return f"{buf[offset]}.{buf[offset+1]}.{buf[offset+2]}.{buf[offset+3]}"
 
         def _rd(cls, inst, attr):
+            """Get_Attribute_Single（connected=True），持鎖避免並發損毀。"""
             try:
-                resp = self.driver.generic_message(
-                    service=0x0E, class_code=cls, instance=inst, attribute=attr,
-                    connected=True, unconnected_send=False,
-                )
+                with self._cip_lock:
+                    resp = self.driver.generic_message(
+                        service=0x0E, class_code=cls, instance=inst, attribute=attr,
+                        connected=True, unconnected_send=False,
+                    )
                 if resp and not (hasattr(resp, 'error') and resp.error):
                     return bytes(resp.value) if resp.value is not None else b''
             except Exception:
@@ -420,6 +427,7 @@ class CaparocBackend:
     def get_device_info(self) -> dict:
         """
         讀取設備識別資訊與全域設定參數。需已連線（connected=True）。
+        每次 CIP 訊息都持有 _cip_lock，防止與 WebSocket 狀態讀取並發。
 
         回傳 dict：
           identity:      vendor_id / device_type / product_code /
@@ -445,12 +453,13 @@ class CaparocBackend:
             return result
 
         def _rd(cls, inst, attr):
-            """Get_Attribute_Single over connected session；失敗回傳 None。"""
+            """Get_Attribute_Single（connected=True），持鎖避免並發損毀。"""
             try:
-                resp = self.driver.generic_message(
-                    service=0x0E, class_code=cls, instance=inst, attribute=attr,
-                    connected=True, unconnected_send=False,
-                )
+                with self._cip_lock:
+                    resp = self.driver.generic_message(
+                        service=0x0E, class_code=cls, instance=inst, attribute=attr,
+                        connected=True, unconnected_send=False,
+                    )
                 if resp and not (hasattr(resp, 'error') and resp.error):
                     return bytes(resp.value) if resp.value is not None else b''
             except Exception:
@@ -1167,6 +1176,12 @@ class CaparocBackend:
         if not self.driver:
             return None
 
+        # 嘗試取得 CIP 鎖（最多等 2 秒）。
+        # 若 get_device_info / get_network_info 正在執行，每次 _rd() 僅持鎖 ~50ms，
+        # 通常 2 秒內可以取得鎖。若超時則返回上次快取，避免觸發斷線。
+        if not self._cip_lock.acquire(timeout=2.0):
+            return self._last_known_status
+
         try:
             response = self.driver.generic_message(
                 service=0x0E,
@@ -1175,7 +1190,10 @@ class CaparocBackend:
                 attribute=3,
                 connected=False
             )
+        finally:
+            self._cip_lock.release()
 
+        try:
             if not response or not hasattr(response, 'value'):
                 if self._last_read_ok:
                     self.logger.warning(
@@ -1234,6 +1252,7 @@ class CaparocBackend:
                     extra={'log_module': 'CONN', 'ip': self.device_ip}
                 )
                 self._last_read_ok = True
+            self._last_known_status = result   # 更新快取
             return result
 
         except Exception as e:

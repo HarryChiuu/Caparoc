@@ -175,8 +175,11 @@ createApp({
                 const r = await fetch('/api/device/network');
                 if (r.ok) {
                     const data = await r.json();
-                    networkInfo.value = data;
-                    try { localStorage.setItem('caparoc_network_info', JSON.stringify(data)); } catch (_) {}
+                    // 只在有至少一個有效欄位時才更新，避免以全 null 覆蓋快取
+                    if (data.ip != null || data.mac != null) {
+                        networkInfo.value = data;
+                        try { localStorage.setItem('caparoc_network_info', JSON.stringify(data)); } catch (_) {}
+                    }
                 }
             } catch (_) {}
         }
@@ -188,17 +191,25 @@ createApp({
                 const r = await fetch('/api/device/info');
                 if (r.ok) {
                     const data = await r.json();
-                    deviceInfo.value = data;
-                    try { localStorage.setItem('caparoc_device_info', JSON.stringify(data)); } catch (_) {}
+                    // 只在有至少一個有效識別欄位時才更新，避免以全 null 覆蓋快取
+                    const hasData = data.identity && Object.values(data.identity).some(v => v != null);
+                    if (hasData) {
+                        deviceInfo.value = data;
+                        try { localStorage.setItem('caparoc_device_info', JSON.stringify(data)); } catch (_) {}
+                        return true;
+                    }
                 }
             } catch (_) {}
+            return false;
         }
 
         async function refreshDeviceInfo() {
             if (!state.connected || deviceInfoRefreshing.value) return;
             deviceInfoRefreshing.value = true;
-            deviceInfo.value = null;   // 清空，讓頁面顯示「讀取中...」
-            await fetchDeviceInfo();
+            const prev = deviceInfo.value;  // 備份目前值
+            deviceInfo.value = null;        // 清空，讓頁面顯示「讀取中...」
+            const ok = await fetchDeviceInfo();
+            if (!ok) deviceInfo.value = prev;  // 失敗時恢復，不讓頁面一片空白
             deviceInfoRefreshing.value = false;
         }
 

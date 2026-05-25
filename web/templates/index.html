@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CAPAROC 控制台</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=4.2.10" />
+    <link rel="stylesheet" href="/static/css/style.css?v=4.2.10a" />
 </head>
 <body>
     <div id="app">
@@ -319,6 +319,7 @@
                         <h2>
                             設備識別
                             <span v-if="!state.connected" class="net-info-stale">（上次連線資訊）</span>
+                            <button v-if="state.connected" class="btn-refresh" @click="refreshDeviceInfo" :disabled="deviceInfoRefreshing" title="重新從設備讀取">↻</button>
                         </h2>
                         <div v-if="!deviceInfo && state.connected" class="hint-text">讀取中...</div>
                         <table v-else-if="deviceInfo" class="net-info-table">
@@ -367,6 +368,7 @@
                         <h2>
                             全域設定
                             <span v-if="!state.connected" class="net-info-stale">（上次連線資訊）</span>
+                            <button v-if="state.connected" class="btn-refresh" @click="refreshDeviceInfo" :disabled="deviceInfoRefreshing" title="重新從設備讀取">↻</button>
                         </h2>
                         <div v-if="!deviceInfo && state.connected" class="hint-text">讀取中...</div>
                         <table v-else-if="deviceInfo" class="net-info-table">
@@ -455,6 +457,6 @@
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="/static/js/app.js?v=4.2.10"></script>
+    <script src="/static/js/app.js?v=4.2.10a"></script>
 </body>
 </html>

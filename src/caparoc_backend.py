@@ -414,13 +414,16 @@ class CaparocBackend:
 
     def get_device_info(self) -> dict:
         """
-        讀取設備識別資訊與全域設定參數。需已連線。
+        讀取設備識別資訊與全域設定參數。需已連線（connected=True）。
 
         回傳 dict：
           identity:      vendor_id / device_type / product_code /
                          revision_major / revision_minor / serial_number / product_name
           system_config: param_lock / ui_lock / switch_on_delay_ms / operating_mode
         讀取失敗的欄位填 None，不影響其他欄位。
+
+        注意：CAPAROC 所有屬性皆需 connected=True；
+              不可 fallback 至 unconnected_send，否則會破壞 CIP driver 內部狀態。
         """
         result = {
             "identity": {
@@ -436,12 +439,12 @@ class CaparocBackend:
         if not self.is_connected or self.driver is None:
             return result
 
-        def _rd(cls, inst, attr, connected=True):
-            """發送 Get_Attribute_Single；失敗回傳 None。"""
+        def _rd(cls, inst, attr):
+            """Get_Attribute_Single over connected session；失敗回傳 None。"""
             try:
                 resp = self.driver.generic_message(
                     service=0x0E, class_code=cls, instance=inst, attribute=attr,
-                    connected=connected, unconnected_send=not connected,
+                    connected=True, unconnected_send=False,
                 )
                 if resp and not (hasattr(resp, 'error') and resp.error):
                     return bytes(resp.value) if resp.value is not None else b''
@@ -449,43 +452,35 @@ class CaparocBackend:
                 pass
             return None
 
-        # ---- Identity Object (0x01, inst 1) — 先試 connected，再試 unconnected ----
+        # ---- Identity Object (0x01, inst 1) — connected=True only ----
         for attr, size, key in (
             (1, 2, 'vendor_id'),
             (2, 2, 'device_type'),
             (3, 2, 'product_code'),
         ):
-            for conn in (True, False):
-                raw = _rd(0x01, 1, attr, conn)
-                if raw is not None and len(raw) >= size:
-                    result["identity"][key] = struct.unpack_from('<H', raw)[0]
-                    break
+            raw = _rd(0x01, 1, attr)
+            if raw is not None and len(raw) >= size:
+                result["identity"][key] = struct.unpack_from('<H', raw)[0]
 
         # Revision: USINT.USINT = major (byte0) + minor (byte1)
-        for conn in (True, False):
-            raw = _rd(0x01, 1, 4, conn)
-            if raw is not None and len(raw) >= 2:
-                result["identity"]["revision_major"] = raw[0]
-                result["identity"]["revision_minor"] = raw[1]
-                break
+        raw = _rd(0x01, 1, 4)
+        if raw is not None and len(raw) >= 2:
+            result["identity"]["revision_major"] = raw[0]
+            result["identity"]["revision_minor"] = raw[1]
 
         # Serial Number: UDINT (4 bytes LE)
-        for conn in (True, False):
-            raw = _rd(0x01, 1, 6, conn)
-            if raw is not None and len(raw) >= 4:
-                result["identity"]["serial_number"] = struct.unpack_from('<I', raw)[0]
-                break
+        raw = _rd(0x01, 1, 6)
+        if raw is not None and len(raw) >= 4:
+            result["identity"]["serial_number"] = struct.unpack_from('<I', raw)[0]
 
         # Product Name: CIP SHORT_STRING (1-byte len prefix + ASCII chars)
-        for conn in (True, False):
-            raw = _rd(0x01, 1, 7, conn)
-            if raw is not None and len(raw) >= 1:
-                slen = raw[0]
-                if len(raw) >= 1 + slen:
-                    result["identity"]["product_name"] = raw[1:1 + slen].decode('ascii', errors='replace')
-                break
+        raw = _rd(0x01, 1, 7)
+        if raw is not None and len(raw) >= 1:
+            slen = raw[0]
+            if len(raw) >= 1 + slen:
+                result["identity"]["product_name"] = raw[1:1 + slen].decode('ascii', errors='replace')
 
-        # ---- Class 0x0F 全域設定（需 connected=True）----
+        # ---- Class 0x0F 全域設定（connected=True only）----
         raw = _rd(0x0F, 1, 1)  # Global current param lock (USINT)
         if raw is not None and len(raw) >= 1:
             result["system_config"]["param_lock"] = raw[0]

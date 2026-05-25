@@ -181,6 +181,8 @@ createApp({
             } catch (_) {}
         }
 
+        const deviceInfoRefreshing = ref(false);
+
         async function fetchDeviceInfo() {
             try {
                 const r = await fetch('/api/device/info');
@@ -190,6 +192,14 @@ createApp({
                     try { localStorage.setItem('caparoc_device_info', JSON.stringify(data)); } catch (_) {}
                 }
             } catch (_) {}
+        }
+
+        async function refreshDeviceInfo() {
+            if (!state.connected || deviceInfoRefreshing.value) return;
+            deviceInfoRefreshing.value = true;
+            deviceInfo.value = null;   // 清空，讓頁面顯示「讀取中...」
+            await fetchDeviceInfo();
+            deviceInfoRefreshing.value = false;
         }
 
         async function toggleCh(ch) {
@@ -513,8 +523,10 @@ createApp({
                 if (logAutoScroll.value)
                     _logTimer = setInterval(() => { logPage.value = 0; fetchLogs(); }, 2000);
             }
-            if (page === 'charts')     { nextTick(_initCharts); }
-            if (prevPage === 'charts') { _destroyCharts(); }
+            if (page === 'charts')         { nextTick(_initCharts); }
+            if (prevPage === 'charts')     { _destroyCharts(); }
+            // 進入系統狀態頁且已連線 → 自動重新讀取最新設定
+            if (page === 'system-status' && state.connected) refreshDeviceInfo();
         });
 
         // 自動更新開關
@@ -555,7 +567,8 @@ createApp({
             fmt, barPct, cardClass, barClass,
             connecting,
             doConnect, doDisconnect, toggleCh,
-            networkInfo, deviceInfo,
+            networkInfo, deviceInfo, deviceInfoRefreshing,
+            refreshDeviceInfo,
             nominalInputs, nominalFeedback, batchNominal, batchStatus,
             setNominal, setAllNominal,
             logEntries, logTotal, logPage, logPageSize, logFilter,

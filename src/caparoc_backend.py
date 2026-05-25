@@ -352,9 +352,11 @@ class CaparocBackend:
             return result
 
         def _raw_to_ip(buf: bytes, offset: int = 0) -> str:
-            """CIP IP 位址：直接讀 4 個原始位元組（大端序網路位元組順序）。
-            注意：不可用 struct.unpack_from('<I') 再 bit-shift，會把位元組倒序！"""
-            return f"{buf[offset]}.{buf[offset+1]}.{buf[offset+2]}.{buf[offset+3]}"
+            """CIP 以 LE UDINT 儲存 IP 位址。
+            先用 struct.unpack '<I' 讀成整數（位元組反轉），
+            再以 big-endian bit-shift 逐 octet 取出，還原成正確點分十進位。"""
+            v = struct.unpack_from('<I', buf, offset)[0]
+            return f"{(v>>24)&0xFF}.{(v>>16)&0xFF}.{(v>>8)&0xFF}.{v&0xFF}"
 
         def _rd(cls, inst, attr):
             """Get_Attribute_Single（connected=True），持鎖避免並發損毀。"""

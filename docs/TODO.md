@@ -582,6 +582,33 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
+##### 4.2.9 系統狀態頁（設備識別 + 全域設定）
+
+> **目的**：新增「系統狀態」導覽頁，透過 EIP 協議讀取設備識別資訊與全域設定參數，一次性呈現設備身份與配置  
+> **依賴**：4.2.1 ✅（sidebar 架構已存在）  
+> **CIP 來源**：
+>   - Identity Object `0x01:1` — Vendor ID / Device Type / Product Code / Revision / Serial Number / Product Name  
+>   - Class `0x0F` inst 1–4 — param_lock / ui_lock / switch_on_delay_ms / operating_mode  
+> **預估工時**：2 小時
+
+**後端（`src/caparoc_backend.py`）**：
+- [ ] 新增 `get_device_info()` 方法：讀 Identity Object attr 1/2/3/4/6/7，Class 0x0F inst 1-4 attr 1
+- [ ] 各屬性獨立 `try/except`；connected=True（Identity fallback to unconnected）
+- [ ] 回傳 dict：`{"identity": {...}, "system_config": {...}}`
+
+**Web API（`web/app.py`）**：
+- [ ] 新增 `GET /api/device/info` endpoint → 呼叫 `backend.get_device_info()`
+- [ ] 未連線時回 HTTP 503
+
+**前端（`app.js` + `index.html` + `style.css`）**：
+- [ ] `navItems` 加入 `{ page: 'system-status', icon: '🖧', label: '系統狀態' }`
+- [ ] `deviceInfo` ref：localStorage 初始化（`caparoc_device_info`）
+- [ ] `applyStatus` 首次連線時自動呼叫 `fetchDeviceInfo()`
+- [ ] 系統狀態頁兩個面板：「設備識別」/ 「全域設定」
+- [ ] 未連線時顯示快取資料並標記「（上次連線資訊）」
+
+---
+
 ##### 4.2.8 頂部列關閉按鈕（關閉分頁）✅ **已完成（2026-05-22）**
 
 > **目的**：在頂部列最右方新增「✕」關閉按鈕，讓使用者快速關閉瀏覽器分頁；  

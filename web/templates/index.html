@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CAPAROC 控制台</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=4.2.9a" />
+    <link rel="stylesheet" href="/static/css/style.css?v=4.2.10" />
 </head>
 <body>
     <div id="app">
@@ -312,6 +312,105 @@
                     </section>
                 </template>
 
+                <!-- 系統狀態 -->
+                <template v-if="currentPage === 'system-status'">
+                    <!-- 設備識別 -->
+                    <section class="panel" v-if="state.connected || deviceInfo">
+                        <h2>
+                            設備識別
+                            <span v-if="!state.connected" class="net-info-stale">（上次連線資訊）</span>
+                        </h2>
+                        <div v-if="!deviceInfo && state.connected" class="hint-text">讀取中...</div>
+                        <table v-else-if="deviceInfo" class="net-info-table">
+                            <tr>
+                                <td>產品名稱</td>
+                                <td>{{ deviceInfo.identity?.product_name || '—' }}</td>
+                            </tr>
+                            <tr>
+                                <td>廠商 ID</td>
+                                <td>
+                                    {{ deviceInfo.identity?.vendor_id != null
+                                        ? deviceInfo.identity.vendor_id + ' (Phoenix Contact)'
+                                        : '—' }}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>產品代碼</td>
+                                <td>{{ deviceInfo.identity?.product_code != null ? deviceInfo.identity.product_code : '—' }}</td>
+                            </tr>
+                            <tr>
+                                <td>韌體版本</td>
+                                <td>
+                                    {{ (deviceInfo.identity?.revision_major != null && deviceInfo.identity?.revision_minor != null)
+                                        ? deviceInfo.identity.revision_major + '.' + deviceInfo.identity.revision_minor
+                                        : '—' }}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>序號</td>
+                                <td class="net-mac">
+                                    {{ deviceInfo.identity?.serial_number != null
+                                        ? '0x' + deviceInfo.identity.serial_number.toString(16).toUpperCase().padStart(8, '0')
+                                        : '—' }}
+                                </td>
+                            </tr>
+                        </table>
+                        <div v-else class="hint-text">尚無資料</div>
+                    </section>
+                    <section class="panel" v-else>
+                        <h2>設備識別</h2>
+                        <div class="hint-text">請先連線至設備</div>
+                    </section>
+
+                    <!-- 全域設定 -->
+                    <section class="panel" v-if="state.connected || deviceInfo">
+                        <h2>
+                            全域設定
+                            <span v-if="!state.connected" class="net-info-stale">（上次連線資訊）</span>
+                        </h2>
+                        <div v-if="!deviceInfo && state.connected" class="hint-text">讀取中...</div>
+                        <table v-else-if="deviceInfo" class="net-info-table">
+                            <tr>
+                                <td>運作模式</td>
+                                <td>
+                                    <span v-if="deviceInfo.system_config?.operating_mode === 0" class="sysconf-ok">Independent（獨立控制）</span>
+                                    <span v-else-if="deviceInfo.system_config?.operating_mode === 1" class="sysconf-warn">Wait for fieldbus（等待匯流排）</span>
+                                    <span v-else>—</span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>通道循序啟動延遲</td>
+                                <td>
+                                    {{ deviceInfo.system_config?.switch_on_delay_ms != null
+                                        ? deviceInfo.system_config.switch_on_delay_ms + ' ms'
+                                        : '—' }}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>電流參數鎖定</td>
+                                <td>
+                                    <span v-if="deviceInfo.system_config?.param_lock === 0" class="sysconf-ok">未鎖定</span>
+                                    <span v-else-if="deviceInfo.system_config?.param_lock === 1" class="sysconf-warn">已鎖定</span>
+                                    <span v-else>—</span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>按鈕介面鎖定</td>
+                                <td>
+                                    <span v-if="deviceInfo.system_config?.ui_lock === 0" class="sysconf-ok">未鎖定</span>
+                                    <span v-else-if="deviceInfo.system_config?.ui_lock === 1" class="sysconf-warn">已鎖定</span>
+                                    <span v-else>—</span>
+                                </td>
+                            </tr>
+                        </table>
+                        <div v-else class="hint-text">尚無資料</div>
+                    </section>
+                    <section class="panel" v-else>
+                        <h2>全域設定</h2>
+                        <div class="hint-text">請先連線至設備</div>
+                    </section>
+                </template>
+
                 <!-- 連線設定 -->
                 <template v-if="currentPage === 'connection'">
                     <section class="panel">
@@ -356,6 +455,6 @@
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="/static/js/app.js?v=4.2.9a"></script>
+    <script src="/static/js/app.js?v=4.2.10"></script>
 </body>
 </html>

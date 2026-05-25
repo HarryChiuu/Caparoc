@@ -443,6 +443,8 @@ button:hover, .btn:hover { background: #1f4a90; }
 .net-info-table td:last-child  { color: #dde3f0; }
 .net-mac { font-family: monospace; letter-spacing: 0.05em; }
 .net-info-stale { font-size: 0.75rem; font-weight: 400; color: #7a8499; margin-left: 8px; }
+.sysconf-ok   { color: #4ade80; }
+.sysconf-warn { color: #fbbf24; }
 
 
 

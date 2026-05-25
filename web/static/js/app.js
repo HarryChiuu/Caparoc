@@ -12,6 +12,7 @@ createApp({
             { page: 'charts',           icon: '📈', label: '圖表監控' },
             { page: 'channel-settings', icon: '⚙️',  label: '通道設定' },
             { page: 'logs',             icon: '📋', label: '系統日誌' },
+            { page: 'system-status',    icon: '🖧',  label: '系統狀態' },
             { page: 'connection',       icon: '🔧', label: '連線設定' },
         ];
 
@@ -45,6 +46,13 @@ createApp({
         const networkInfo = ref((() => {
             try {
                 const s = localStorage.getItem('caparoc_network_info');
+                return s ? JSON.parse(s) : null;
+            } catch (_) { return null; }
+        })());
+        // 設備識別與全域設定：從 localStorage 恢復
+        const deviceInfo = ref((() => {
+            try {
+                const s = localStorage.getItem('caparoc_device_info');
                 return s ? JSON.parse(s) : null;
             } catch (_) { return null; }
         })());
@@ -103,7 +111,10 @@ createApp({
             state.overvoltage   = data.overvoltage ?? false;
             state.system_error  = data.system_error ?? false;
             // 連線狀態變化偵測
-            if (!_wasConnected && state.connected) fetchNetworkInfo();
+            if (!_wasConnected && state.connected) {
+                fetchNetworkInfo();
+                fetchDeviceInfo();
+            }
             _wasConnected = state.connected;
             // 圖表歷史累積（不論是否在圖表頁都持續記錄）
             if (!chartPaused.value) {
@@ -166,6 +177,17 @@ createApp({
                     const data = await r.json();
                     networkInfo.value = data;
                     try { localStorage.setItem('caparoc_network_info', JSON.stringify(data)); } catch (_) {}
+                }
+            } catch (_) {}
+        }
+
+        async function fetchDeviceInfo() {
+            try {
+                const r = await fetch('/api/device/info');
+                if (r.ok) {
+                    const data = await r.json();
+                    deviceInfo.value = data;
+                    try { localStorage.setItem('caparoc_device_info', JSON.stringify(data)); } catch (_) {}
                 }
             } catch (_) {}
         }
@@ -533,7 +555,7 @@ createApp({
             fmt, barPct, cardClass, barClass,
             connecting,
             doConnect, doDisconnect, toggleCh,
-            networkInfo,
+            networkInfo, deviceInfo,
             nominalInputs, nominalFeedback, batchNominal, batchStatus,
             setNominal, setAllNominal,
             logEntries, logTotal, logPage, logPageSize, logFilter,

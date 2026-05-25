@@ -266,6 +266,15 @@ async def api_device_network():
     return info
 
 
+@app.get("/api/device/info")
+async def api_device_info():
+    """讀取設備識別資訊與全域設定參數（Identity Object + Class 0x0F 全域設定）。"""
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="設備未連線")
+    info = await asyncio.to_thread(backend.get_device_info)
+    return info
+
+
 @app.post("/api/shutdown")
 async def api_shutdown():
     """優雅關閉伺服器（斷線設備 + 停止程序）。"""

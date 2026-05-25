@@ -412,6 +412,98 @@ class CaparocBackend:
         except Exception:
             pass  # 同步失敗不影響後續操作，使用預設空白狀態
 
+    def get_device_info(self) -> dict:
+        """
+        讀取設備識別資訊與全域設定參數。需已連線。
+
+        回傳 dict：
+          identity:      vendor_id / device_type / product_code /
+                         revision_major / revision_minor / serial_number / product_name
+          system_config: param_lock / ui_lock / switch_on_delay_ms / operating_mode
+        讀取失敗的欄位填 None，不影響其他欄位。
+        """
+        result = {
+            "identity": {
+                "vendor_id": None, "device_type": None, "product_code": None,
+                "revision_major": None, "revision_minor": None,
+                "serial_number": None, "product_name": None,
+            },
+            "system_config": {
+                "param_lock": None, "ui_lock": None,
+                "switch_on_delay_ms": None, "operating_mode": None,
+            },
+        }
+        if not self.is_connected or self.driver is None:
+            return result
+
+        def _rd(cls, inst, attr, connected=True):
+            """發送 Get_Attribute_Single；失敗回傳 None。"""
+            try:
+                resp = self.driver.generic_message(
+                    service=0x0E, class_code=cls, instance=inst, attribute=attr,
+                    connected=connected, unconnected_send=not connected,
+                )
+                if resp and not (hasattr(resp, 'error') and resp.error):
+                    return bytes(resp.value) if resp.value is not None else b''
+            except Exception:
+                pass
+            return None
+
+        # ---- Identity Object (0x01, inst 1) — 先試 connected，再試 unconnected ----
+        for attr, size, key in (
+            (1, 2, 'vendor_id'),
+            (2, 2, 'device_type'),
+            (3, 2, 'product_code'),
+        ):
+            for conn in (True, False):
+                raw = _rd(0x01, 1, attr, conn)
+                if raw is not None and len(raw) >= size:
+                    result["identity"][key] = struct.unpack_from('<H', raw)[0]
+                    break
+
+        # Revision: USINT.USINT = major (byte0) + minor (byte1)
+        for conn in (True, False):
+            raw = _rd(0x01, 1, 4, conn)
+            if raw is not None and len(raw) >= 2:
+                result["identity"]["revision_major"] = raw[0]
+                result["identity"]["revision_minor"] = raw[1]
+                break
+
+        # Serial Number: UDINT (4 bytes LE)
+        for conn in (True, False):
+            raw = _rd(0x01, 1, 6, conn)
+            if raw is not None and len(raw) >= 4:
+                result["identity"]["serial_number"] = struct.unpack_from('<I', raw)[0]
+                break
+
+        # Product Name: CIP SHORT_STRING (1-byte len prefix + ASCII chars)
+        for conn in (True, False):
+            raw = _rd(0x01, 1, 7, conn)
+            if raw is not None and len(raw) >= 1:
+                slen = raw[0]
+                if len(raw) >= 1 + slen:
+                    result["identity"]["product_name"] = raw[1:1 + slen].decode('ascii', errors='replace')
+                break
+
+        # ---- Class 0x0F 全域設定（需 connected=True）----
+        raw = _rd(0x0F, 1, 1)  # Global current param lock (USINT)
+        if raw is not None and len(raw) >= 1:
+            result["system_config"]["param_lock"] = raw[0]
+
+        raw = _rd(0x0F, 2, 1)  # Global user interface lock (USINT)
+        if raw is not None and len(raw) >= 1:
+            result["system_config"]["ui_lock"] = raw[0]
+
+        raw = _rd(0x0F, 3, 1)  # Global switch-on delay (UINT, 2 bytes, ms)
+        if raw is not None and len(raw) >= 2:
+            result["system_config"]["switch_on_delay_ms"] = struct.unpack_from('<H', raw)[0]
+
+        raw = _rd(0x0F, 4, 1)  # Global operating mode (USINT)
+        if raw is not None and len(raw) >= 1:
+            result["system_config"]["operating_mode"] = raw[0]
+
+        return result
+
     # ==================== Config Assembly ====================
 
     def get_config_channel_offset(self, module, channel):

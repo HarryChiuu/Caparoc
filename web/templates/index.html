@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CAPAROC 控制台</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=4.2.9" />
+    <link rel="stylesheet" href="/static/css/style.css?v=4.2.9a" />
 </head>
 <body>
     <div id="app">
@@ -13,7 +13,7 @@
         <header class="topbar">
             <div class="topbar-left">
                 <button class="sidebar-toggle" @click="toggleSidebar" title="展開/收合選單">☰</button>
-                <span class="brand">CAPAROC</span>
+                <span class="brand">CAPAROC PM EIP ECB controller</span>
             </div>
             <div class="topbar-right">
                 <div class="conn-bar">
@@ -330,13 +330,16 @@
                         </div>
                     </section>
                     <!-- 設備網路資訊 -->
-                    <section class="panel" v-if="state.connected">
-                        <h2>設備網路資訊</h2>
-                        <div v-if="!networkInfo" class="hint-text">讀取中...</div>
-                        <table v-else class="net-info-table">
+                    <section class="panel" v-if="state.connected || networkInfo">
+                        <h2>
+                            設備網路資訊
+                            <span v-if="!state.connected" class="net-info-stale">（上次連線資訊）</span>
+                        </h2>
+                        <div v-if="!networkInfo && state.connected" class="hint-text">讀取中...</div>
+                        <table v-else-if="networkInfo" class="net-info-table">
                             <tr><td>主機名稱</td><td>{{ networkInfo.hostname || '—' }}</td></tr>
                             <tr><td>IP 位址</td><td>{{ networkInfo.ip || '—' }}</td></tr>
-                            <tr><td>子網路遠罩</td><td>{{ networkInfo.subnet_mask || '—' }}</td></tr>
+                            <tr><td>子網路遮罩</td><td>{{ networkInfo.subnet_mask || '—' }}</td></tr>
                             <tr><td>預設閘道</td><td>{{ (networkInfo.gateway && networkInfo.gateway !== '0.0.0.0') ? networkInfo.gateway : '—' }}</td></tr>
                             <tr><td>MAC 位址</td><td class="net-mac">{{ networkInfo.mac || '—' }}</td></tr>
                         </table>
@@ -353,6 +356,6 @@
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="/static/js/app.js?v=4.2.9"></script>
+    <script src="/static/js/app.js?v=4.2.9a"></script>
 </body>
 </html>

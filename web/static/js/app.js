@@ -41,7 +41,13 @@ createApp({
         const ipInput = ref('');
         const connecting = ref(false);  // 防止重複點擊連線
         const isShuttingDown = ref(false);  // 關閉中過渡狀態
-        const networkInfo = ref(null);  // 設備網路資訊
+        // 設備網路資訊：從 localStorage 恢復（斷線後保留上次資料）
+        const networkInfo = ref((() => {
+            try {
+                const s = localStorage.getItem('caparoc_network_info');
+                return s ? JSON.parse(s) : null;
+            } catch (_) { return null; }
+        })());
         let ws = null;
         let wsRetryTimer = null;
         let _wasConnected = false;  // 連線狀態變化偵測
@@ -98,7 +104,6 @@ createApp({
             state.system_error  = data.system_error ?? false;
             // 連線狀態變化偵測
             if (!_wasConnected && state.connected) fetchNetworkInfo();
-            else if (_wasConnected && !state.connected) networkInfo.value = null;
             _wasConnected = state.connected;
             // 圖表歷史累積（不論是否在圖表頁都持續記錄）
             if (!chartPaused.value) {
@@ -157,10 +162,12 @@ createApp({
         async function fetchNetworkInfo() {
             try {
                 const r = await fetch('/api/device/network');
-                networkInfo.value = r.ok ? await r.json() : null;
-            } catch (_) {
-                networkInfo.value = null;
-            }
+                if (r.ok) {
+                    const data = await r.json();
+                    networkInfo.value = data;
+                    try { localStorage.setItem('caparoc_network_info', JSON.stringify(data)); } catch (_) {}
+                }
+            } catch (_) {}
         }
 
         async function toggleCh(ch) {

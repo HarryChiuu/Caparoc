@@ -4,7 +4,7 @@
 - [概述](#概述)
 - [問題分析](#問題分析)
 - [解決方案](#解決方案)
-- [核心代碼](#核心代碼)
+- [核心程式碼](#核心程式碼)
 - [關鍵發現](#關鍵發現)
 - [控制額定電流方法](#控制額定電流方法)
   - [方法 1: 手動控制 - 使用設備按鈕](#方法-1-手動控制---使用設備按鈕-)
@@ -129,7 +129,7 @@ write_response = driver.generic_message(
 
 ---
 
-## 核心代碼
+## 核心程式碼
 
 ### 1. 計算通道偏移量
 
@@ -646,7 +646,7 @@ instance = 0x66  # 或 self.config_instance
 
 ### 📝 程式碼審查檢查清單
 
-在提交代碼前，請確認：
+在提交程式碼前，請確認：
 
 - [ ] 使用 Read-Modify-Write 流程
 - [ ] Status Byte 設為 2 (No Change)
@@ -816,7 +816,7 @@ instance = 0x66  # 不是 0x01
 - ✅ 功能完整實作
 - ✅ 通道保護機制完善
 - ✅ 通過所有測試
-- ✅ 代碼已合併到功能分支
+- ✅ 程式碼已合併到功能分支
 - ✅ 文件完整記錄
 
 ### 🔮 未來改進
@@ -910,7 +910,7 @@ config_data = bytearray(244)  # 全是 0
 
 **決策**：功能太複雜，暫時放棄
 ```python
-# 刪除了 470 行代碼
+# 刪除了 470 行程式碼
 - initialize_all_channels()
 - _get_config_param_number()
 - _read_config_assembly()
@@ -973,7 +973,7 @@ print("ℹ️  這是正常行為，請使用 'on' 命令重新開啟需要的�
 
 **結果**：❌ 錯誤的理解
 - 以為關閉通道是設備的「設計行為」
-- 實際上是代碼的 bug
+- 實際上是程式碼的 bug
 - 用戶每次都要重新開啟，體驗很差
 
 ---
@@ -1021,7 +1021,7 @@ for m in range(1, 17):
 #### **為什麼第二階段（建構式方法）失敗？**
 
 ```python
-# ❌ 錯誤代碼（2025-11-10）
+# ❌ 錯誤程式碼（2025-11-10）
 config_data = bytearray(244)  # 初始化全是 0
 
 # 結構分析：
@@ -1043,7 +1043,7 @@ config_data = bytearray(244)  # 初始化全是 0
 #### **為什麼第四階段（Read-Modify-Write）仍然失敗？**
 
 ```python
-# 看似正確的代碼（2025-11-19）
+# 看似正確的程式碼（2025-11-19）
 response = driver.generic_message(service=0x0E, ...)
 config_data = bytearray(response.value)
 
@@ -1107,7 +1107,7 @@ for m in range(1, 17):
         if config_data[ch_status_offset] == 0:
             config_data[ch_status_offset] = 2
             
-# 這樣即使代碼有 bug，也不會關閉通道
+# 這樣即使程式碼有 bug，也不會關閉通道
 ```
 
 ---
@@ -1119,7 +1119,7 @@ for m in range(1, 17):
 | **方法** | 建構式 / Read-Modify-Write | Read-Modify-Write + Status Protection |
 | **Status 處理** | 忽略 / 保持原值 | 主動設為 2 (No Change) |
 | **保護範圍** | 只有目標通道 | 所有通道 |
-| **代碼量** | 470 行 → 刪除 → 300 行 | 200 行（精簡） |
+| **程式碼量** | 470 行 → 刪除 → 300 行 | 200 行（精簡） |
 | **測試結果** | 關閉所有通道 | 完美運作 ✅ |
 | **用戶體驗** | 每次都要重開 ❌ | 無感修改 ✅ |
 
@@ -1148,7 +1148,7 @@ for m in range(1, 17):
 
 **正確做法**：
 - 工業設備不應該這麼「智慧」
-- 如果行為不合理，一定是代碼有問題
+- 如果行為不合理，一定是程式碼有問題
 - 不要用「可能是設計如此」來逃避
 
 #### **教訓 3：從簡單開始**
@@ -1194,7 +1194,7 @@ for m in range(1, 17):
 struct.pack_into('<B', config_data, offset_status, 2)
 ```
 
-**一行代碼的差異**：
+**一行程式碼的差異**：
 ```python
 # 失敗：
 config_data[offset_status] = 0  # 或根本沒設定

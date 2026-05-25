@@ -709,7 +709,7 @@ def _show_monitor_status(self, status, changes):
 
 #### 4.6 自動化測試與 CI/CD 🆕
 
-**目標**: 提升代碼質量，自動化測試流程
+**目標**: 提升程式碼品質，自動化測試流程
 
 **功能需求**:
 - [ ] 單元測試:
@@ -722,7 +722,7 @@ def _show_monitor_status(self, status, changes):
 - [ ] CI/CD 流程:
   - GitHub Actions 配置
   - 自動化測試執行
-  - 代碼品質檢查 (pylint, black)
+  - 程式碼品質檢查 (pylint, black)
 - [ ] 文件自動化:
   - API 文件生成
   - 使用手冊更新
@@ -790,7 +790,7 @@ def _show_monitor_status(self, status, changes):
 - Phase 4: 35-46 小時
 - Phase 5: 待評估
 
-**代碼統計** (截至 2025-11-26):
+**程式碼統計** (截至 2025-11-26):
 - 主程式: ~2000 行
 - 文件: 15+ 份
 - 測試: 基礎覆蓋

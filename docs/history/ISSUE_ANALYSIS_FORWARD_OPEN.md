@@ -105,7 +105,7 @@
    - `self.implicit_mode_enabled` 保持 `False`
    - 未啟動 I/O Worker 執行緒
 
-2. **Explicit Messaging 代碼完全相同**
+2. **Explicit Messaging 程式碼完全相同**
    - ff2fcb4 的 `else` 分支 = a893615 的直接邏輯
    - 相同的 `generic_message(service=0x10, ...)` 調用
    - 相同的驗證流程
@@ -371,7 +371,7 @@ def _activate_device_assemblies(self, driver):
 
 ## 經驗教訓
 
-### 1. 不要輕易刪除「失敗的」代碼
+### 1. 不要輕易刪除「失敗的」程式碼
 
 即使某個函數調用總是失敗（如 Forward Open），也可能有副作用：
 - 觸發設備狀態變化
@@ -403,7 +403,7 @@ print(f"[DEBUG] ❌ Forward Open 失敗，使用 Explicit Messaging 模式")
 
 ---
 
-## 建議的代碼註解
+## 建議的程式碼註解
 
 ```python
 def _establish_implicit_messaging(self, driver):

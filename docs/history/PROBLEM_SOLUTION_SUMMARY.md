@@ -13,7 +13,7 @@
 
 ### 實驗過程
 
-通過逐步刪除代碼進行測試：
+通過逐步刪除程式碼進行測試：
 
 **實驗 1**：註解 `_io_worker()` 方法
 - ✅ **結果**：仍可控制
@@ -60,7 +60,7 @@ driver.generic_message(
 )
 ```
 
-### 不必要的代碼
+### 不必要的程式碼
 
 ❌ 以下都**不是必要的**：
 - `_io_worker()` 方法（從未啟動）
@@ -81,7 +81,7 @@ driver.generic_message(
 
 ### 為什麼之前誤認為是 Forward Open？
 
-1. 原始代碼調用 `_establish_implicit_messaging()`
+1. 原始程式碼調用 `_establish_implicit_messaging()`
 2. 該方法內部發送 Service 0x52 + `connected=True`
 3. 我們誤以為是 Service 0x52 起作用
 4. 實際上是 `connected=True` 起作用
@@ -120,7 +120,7 @@ self.channels_initialized = True
 self._establish_implicit_messaging(driver)  # 必須調用
 ```
 
-### 可以刪除的代碼
+### 可以刪除的程式碼
 
 ```python
 # ❌ 這些都可以刪除：

@@ -1294,7 +1294,7 @@ class CaparocController:
     def _set_channel_explicit(self, driver, module_index, channel_index, state, verbose=True, auto_set_nominal_current=True, nominal_current_amps=4):
         """使用 Explicit Messaging 模式控制通道 (原有方法)"""
         try:
-            # 這裡是原有的 set_channel 邏輯，略去詳細代碼以節省空間
+            # 這裡是原有的 set_channel 邏輯，略去詳細程式碼以節省空間
             # 步驟0: 建立 CIP 連接 (解決閃爍綠燈問題)
             if not self.cip_connection_established:
                 if verbose:

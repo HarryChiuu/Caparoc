@@ -334,7 +334,7 @@ class CaparocBackend:
 
     def get_network_info(self) -> dict:
         """
-        讀取設備網路資訊。需已連線。
+        讀取設備網路資訊。需已連線（connected=True）。
 
         回傳 dict：ip / subnet_mask / gateway / dns1 / dns2 / hostname / mac
         讀取失敗的欄位填 None，不影響其他欄位。
@@ -346,44 +346,49 @@ class CaparocBackend:
         if not self.is_connected or self.driver is None:
             return result
 
-        def _udint_to_ip(buf: bytes) -> str:
-            """CIP UDINT（小端序）→ IPv4 字串"""
-            v = struct.unpack_from('<I', buf)[0]
-            return f"{(v>>24)&0xFF}.{(v>>16)&0xFF}.{(v>>8)&0xFF}.{v&0xFF}"
+        def _raw_to_ip(buf: bytes, offset: int = 0) -> str:
+            """CIP IP 位址：直接讀 4 個原始位元組（大端序網路位元組順序）。
+            注意：不可用 struct.unpack_from('<I') 再 bit-shift，會把位元組倒序！"""
+            return f"{buf[offset]}.{buf[offset+1]}.{buf[offset+2]}.{buf[offset+3]}"
 
-        # TCP/IP Interface attr5: Interface Configuration（IP + Subnet + GW + DNS + Hostname）
-        try:
-            resp = self.driver.generic_message(
-                service=0x0E, class_code=0xF5, instance=1, attribute=5,
-                connected=True, unconnected_send=False,
-            )
-            if resp and not (hasattr(resp, 'error') and resp.error):
-                raw = bytes(resp.value)
-                if len(raw) >= 20:
-                    result["ip"]          = _udint_to_ip(raw[0:4])
-                    result["subnet_mask"] = _udint_to_ip(raw[4:8])
-                    result["gateway"]     = _udint_to_ip(raw[8:12])
-                    result["dns1"]        = _udint_to_ip(raw[12:16])
-                    result["dns2"]        = _udint_to_ip(raw[16:20])
-                if len(raw) >= 22:
-                    hn_len = struct.unpack_from('<H', raw, 20)[0]
-                    if hn_len > 0 and len(raw) >= 22 + hn_len:
-                        result["hostname"] = raw[22:22 + hn_len].decode('ascii', errors='replace')
-        except Exception:
-            pass
+        def _rd(cls, inst, attr):
+            try:
+                resp = self.driver.generic_message(
+                    service=0x0E, class_code=cls, instance=inst, attribute=attr,
+                    connected=True, unconnected_send=False,
+                )
+                if resp and not (hasattr(resp, 'error') and resp.error):
+                    return bytes(resp.value) if resp.value is not None else b''
+            except Exception:
+                pass
+            return None
+
+        # TCP/IP Interface attr5: Interface Configuration（IP + Subnet + GW + DNS1 + DNS2 + Domain Name）
+        raw = _rd(0xF5, 1, 5)
+        if raw is not None and len(raw) >= 20:
+            result["ip"]          = _raw_to_ip(raw, 0)
+            result["subnet_mask"] = _raw_to_ip(raw, 4)
+            result["gateway"]     = _raw_to_ip(raw, 8)
+            result["dns1"]        = _raw_to_ip(raw, 12)
+            result["dns2"]        = _raw_to_ip(raw, 16)
+            # Domain Name：CIP STRING 格式（2-byte LE UINT 長度 + chars）
+            if len(raw) >= 22:
+                hn_len = struct.unpack_from('<H', raw, 20)[0]
+                if 0 < hn_len <= 64 and len(raw) >= 22 + hn_len:
+                    result["hostname"] = raw[22:22 + hn_len].decode('ascii', errors='replace').strip('\x00')
+
+        # TCP/IP Interface attr6: Host Name（若 Domain Name 為空時的備援讀取）
+        if not result["hostname"]:
+            raw6 = _rd(0xF5, 1, 6)
+            if raw6 is not None and len(raw6) >= 2:
+                hn_len = struct.unpack_from('<H', raw6, 0)[0]
+                if 0 < hn_len <= 64 and len(raw6) >= 2 + hn_len:
+                    result["hostname"] = raw6[2:2 + hn_len].decode('ascii', errors='replace').strip('\x00')
 
         # Ethernet Link attr3: Physical Address（MAC 6 bytes）
-        try:
-            resp = self.driver.generic_message(
-                service=0x0E, class_code=0xF6, instance=1, attribute=3,
-                connected=True, unconnected_send=False,
-            )
-            if resp and not (hasattr(resp, 'error') and resp.error):
-                raw = bytes(resp.value)
-                if len(raw) >= 6:
-                    result["mac"] = ":".join(f"{b:02X}" for b in raw[:6])
-        except Exception:
-            pass
+        raw = _rd(0xF6, 1, 3)
+        if raw is not None and len(raw) >= 6:
+            result["mac"] = ":".join(f"{b:02X}" for b in raw[:6])
 
         return result
 

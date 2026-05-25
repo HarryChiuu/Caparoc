@@ -170,6 +170,8 @@ createApp({
             await fetch('/api/disconnect', { method: 'POST' });
         }
 
+        const networkInfoRefreshing = ref(false);
+
         async function fetchNetworkInfo() {
             try {
                 const r = await fetch('/api/device/network');
@@ -179,9 +181,21 @@ createApp({
                     if (data.ip != null || data.mac != null) {
                         networkInfo.value = data;
                         try { localStorage.setItem('caparoc_network_info', JSON.stringify(data)); } catch (_) {}
+                        return true;
                     }
                 }
             } catch (_) {}
+            return false;
+        }
+
+        async function refreshNetworkInfo() {
+            if (!state.connected || networkInfoRefreshing.value) return;
+            networkInfoRefreshing.value = true;
+            const prev = networkInfo.value;
+            networkInfo.value = null;          // 顯示「讀取中...」
+            const ok = await fetchNetworkInfo();
+            if (!ok) networkInfo.value = prev; // 失敗時恢復舊值
+            networkInfoRefreshing.value = false;
         }
 
         const deviceInfoRefreshing = ref(false);
@@ -538,6 +552,8 @@ createApp({
             if (prevPage === 'charts')     { _destroyCharts(); }
             // 進入系統狀態頁且已連線 → 自動重新讀取最新設定
             if (page === 'system-status' && state.connected) refreshDeviceInfo();
+            // 進入連線設定頁且已連線 → 自動重新讀取網路資訊
+            if (page === 'connection'    && state.connected) refreshNetworkInfo();
         });
 
         // 自動更新開關
@@ -578,8 +594,8 @@ createApp({
             fmt, barPct, cardClass, barClass,
             connecting,
             doConnect, doDisconnect, toggleCh,
-            networkInfo, deviceInfo, deviceInfoRefreshing,
-            refreshDeviceInfo,
+            networkInfo, deviceInfo, deviceInfoRefreshing, networkInfoRefreshing,
+            refreshDeviceInfo, refreshNetworkInfo,
             nominalInputs, nominalFeedback, batchNominal, batchStatus,
             setNominal, setAllNominal,
             logEntries, logTotal, logPage, logPageSize, logFilter,

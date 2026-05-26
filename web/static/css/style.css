@@ -142,6 +142,7 @@ body {
 .ch-card.on    { border-color: #4caf5077; }
 .ch-card.warn  { border-color: #ff980077; }
 .ch-card.fault { border-color: #f4433677; }
+.ch-card.stale { opacity: 0.72; filter: saturate(0.5); }
 
 .ch-top { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
 .ch-name { font-weight: 700; font-size: 1rem; flex: 1; }
@@ -227,6 +228,17 @@ body {
 .placeholder-title { font-size: 1rem; font-weight: 600; color: #7a8aaa; margin-bottom: 6px; }
 .placeholder-desc { font-size: 0.84rem; }
 
+/* 斷線資料凍結提示橫幅 */
+.stale-banner {
+    background: rgba(250,170,0,0.10);
+    border: 1px solid rgba(250,170,0,0.28);
+    border-radius: 6px;
+    color: #f0b429;
+    font-size: 0.82rem;
+    padding: 6px 12px;
+    margin-bottom: 12px;
+}
+
 /* ── 按鈕 ───────────────────────────────── */
 button, .btn {
     padding: 8px 18px; border-radius: 6px; border: none;
@@ -234,6 +246,15 @@ button, .btn {
     font-size: 0.88rem; cursor: pointer; transition: background .15s;
 }
 button:hover, .btn:hover { background: #1f4a90; }
+button:disabled, .btn:disabled, .toggle-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: rgba(255,255,255,0.03);
+}
 .btn-sm { padding: 5px 12px; font-size: 0.82rem; }
 .btn-danger { background: #8b2020; }
 .btn-danger:hover { background: #6e1818; }

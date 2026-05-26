@@ -51,8 +51,9 @@
                 <!-- 儀表板 -->
                 <template v-if="currentPage === 'dashboard'">
 
-                    <section class="panel" v-if="state.connected">
+                    <section class="panel" v-if="state.connected || wasEverConnected">
                         <h2>系統狀態</h2>
+                        <div v-if="!state.connected" class="stale-banner">⚠ 資料已停止更新，顯示斷線前最後資料</div>
                         <div class="sys-grid">
                             <div class="stat-box">
                                 <div class="stat-val">{{ fmt(state.voltage) }}<span class="unit">V</span></div>
@@ -77,16 +78,17 @@
                         </div>
                     </section>
 
-                    <section class="panel" v-if="state.connected && state.channels.length">
+                    <section class="panel" v-if="(state.connected || wasEverConnected) && state.channels.length">
                         <h2>通道控制</h2>
+                        <div v-if="!state.connected" class="stale-banner">⚠ 資料已停止更新，顯示斷線前最後資料</div>
                         <div class="ch-grid">
                             <div class="ch-card"
                                  v-for="ch in state.channels" :key="ch.id"
-                                 :class="cardClass(ch)">
+                                 :class="[cardClass(ch), !state.connected ? 'stale' : '']">
                                 <div class="ch-top">
                                     <span class="ch-name">CH{{ ch.id }}</span>
                                     <span class="ch-mod">M{{ ch.module }}</span>
-                                    <button class="toggle-btn" @click="toggleCh(ch)">
+                                    <button class="toggle-btn" @click="toggleCh(ch)" :disabled="!state.connected">
                                         {{ ch.on ? '關閉' : '開啟' }}
                                     </button>
                                 </div>
@@ -109,7 +111,7 @@
                         </div>
                     </section>
 
-                    <section class="panel center" v-if="!state.connected">
+                    <section class="panel center" v-if="!state.connected && !wasEverConnected">
                         <h2>尚未連線</h2>
                         <p class="hint-text">請前往「連線設定」頁面建立連線</p>
                         <button class="btn" style="margin-top:16px" @click="navigate('connection')">前往連線設定</button>
@@ -136,13 +138,15 @@
                             </div>
                         </div>
 
-                        <div v-if="!state.connected" class="placeholder">
+                        <div v-if="!state.connected && !wasEverConnected" class="placeholder">
                             <div class="placeholder-icon">📈</div>
                             <div class="placeholder-title">尚未連線</div>
                             <div class="placeholder-desc">請先建立設備連線後查看圖表</div>
                         </div>
 
-                        <template v-else>
+                        <div v-if="!state.connected && wasEverConnected" class="stale-banner">⚠ 資料已停止更新，顯示斷線前最後資料</div>
+
+                        <template v-if="state.connected || wasEverConnected">
                             <!-- 全域曲線 -->
                             <div class="chart-section">
                                 <h3 class="chart-subtitle">電壓 / 總電流</h3>
@@ -179,21 +183,23 @@
                     <section class="panel">
                         <h2>通道設定</h2>
 
-                        <!-- 未連線 -->
-                        <div v-if="!state.connected" class="placeholder">
+                        <!-- 未連線且從未連線過：顯示佔位符 -->
+                        <div v-if="!state.connected && !wasEverConnected" class="placeholder">
                             <div class="placeholder-icon">⚙️</div>
                             <div class="placeholder-title">尚未連線</div>
                             <div class="placeholder-desc">請先建立設備連線後再設定通道</div>
                         </div>
 
-                        <template v-else>
+                        <template v-if="state.connected || wasEverConnected">
+                            <div v-if="!state.connected" class="stale-banner">⚠ 資料已停止更新，顯示斷線前最後資料</div>
                             <!-- 批次套用 -->
                             <div class="batch-bar">
                                 <span style="font-size:0.82rem;color:#7a8aaa;white-space:nowrap">全部套用</span>
                                 <input type="number" v-model="batchNominal"
                                        min="1" max="20" step="1"
-                                       placeholder="A" class="nominal-input" />
-                                <button class="btn" @click="setAllNominal">套用至全部通道</button>
+                                       placeholder="A" class="nominal-input"
+                                       :disabled="!state.connected" />
+                                <button class="btn" @click="setAllNominal" :disabled="!state.connected">套用至全部通道</button>
                                 <span class="feedback-msg"
                                       :class="batchStatus.ok ? 'ok' : 'err'"
                                       v-if="batchStatus.msg">{{ batchStatus.msg }}</span>
@@ -220,10 +226,11 @@
                                                    v-model="nominalInputs[ch.id]"
                                                    min="1" max="20" step="1"
                                                    :placeholder="ch.nominal_amps"
-                                                   class="nominal-input" />
+                                                   class="nominal-input"
+                                                   :disabled="!state.connected" />
                                         </td>
                                         <td>
-                                            <button class="btn" @click="setNominal(ch.id)">設定</button>
+                                            <button class="btn" @click="setNominal(ch.id)" :disabled="!state.connected">設定</button>
                                             <span class="feedback-msg"
                                                   :class="nominalFeedback[ch.id]?.ok ? 'ok' : 'err'"
                                                   v-if="nominalFeedback[ch.id]?.msg">

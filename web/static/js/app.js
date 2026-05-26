@@ -59,6 +59,7 @@ createApp({
         let ws = null;
         let wsRetryTimer = null;
         let _wasConnected = false;  // 連線狀態變化偵測
+        const wasEverConnected = ref(false);  // 曾成功連線過（斷線後保留資料供查看）
 
         // 圖表監控 - 狀態 & 歷史緩衝（宣告於 applyStatus 之前）
         const chartWindow        = ref(30);
@@ -94,30 +95,41 @@ createApp({
         }
 
         function applyStatus(data) {
-            state.connected     = data.connected ?? false;
-            state.device_ip     = data.device_ip ?? '';
-            // 首次收到 WebSocket 資料時，用實際 IP 初始化輸入框
-            if (!ipInput.value && state.device_ip) { ipInput.value = state.device_ip; }
-            state.error         = state.connected ? '' : (data.error ?? '');
-            state.voltage       = data.voltage ?? 0;
-            state.total_current = data.total_current ?? 0;
-            state.module_count  = data.module_count ?? 0;
-            state.channels      = data.channels ?? [];
-            // 初始化新通道的可見性（預設全部顯示）
-            for (const ch of state.channels) {
-                if (chartChannelVisible[ch.id] === undefined) chartChannelVisible[ch.id] = true;
+            const isConnected = data.connected ?? false;
+
+            if (isConnected) {
+                // 已連線：完整更新所有狀態
+                wasEverConnected.value  = true;
+                state.device_ip         = data.device_ip ?? '';
+                if (!ipInput.value && state.device_ip) { ipInput.value = state.device_ip; }
+                state.error             = '';
+                state.voltage           = data.voltage ?? 0;
+                state.total_current     = data.total_current ?? 0;
+                state.module_count      = data.module_count ?? 0;
+                state.channels          = data.channels ?? [];
+                // 初始化新通道的可見性（預設全部顯示）
+                for (const ch of state.channels) {
+                    if (chartChannelVisible[ch.id] === undefined) chartChannelVisible[ch.id] = true;
+                }
+                state.undervoltage      = data.undervoltage ?? false;
+                state.overvoltage       = data.overvoltage ?? false;
+                state.system_error      = data.system_error ?? false;
+            } else {
+                // 斷線：只更新 error，其餘資料保留供查看（UI 凍結）
+                state.error = data.error ?? '';
             }
-            state.undervoltage  = data.undervoltage ?? false;
-            state.overvoltage   = data.overvoltage ?? false;
-            state.system_error  = data.system_error ?? false;
-            // 連線狀態變化偵測
+
+            state.connected = isConnected;
+
+            // 連線狀態變化偵測（斷→通時重新讀取設備資訊）
             if (!_wasConnected && state.connected) {
                 fetchNetworkInfo();
                 fetchDeviceInfo();
             }
             _wasConnected = state.connected;
-            // 圖表歷史累積（不論是否在圖表頁都持續記錄）
-            if (!chartPaused.value) {
+
+            // 圖表歷史累積（只在已連線且未暫停時）
+            if (state.connected && !chartPaused.value) {
                 const t = new Date();
                 const lbl = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
                 _chartHistory.timestamps.push(lbl);
@@ -580,10 +592,11 @@ createApp({
             fetchLogs();
         });
 
-        // 連線狀態變化時，若在圖表頁則重新初始化或銷毀圖表
+        // 連線狀態變化時，若在圖表頁且重新連線則重新初始化圖表
+        // 斷線時不銷毀圖表——保留最後畫面讓使用者查看歷史資料
         watch(() => state.connected, (connected) => {
             if (currentPage.value !== 'charts') return;
-            if (connected) { nextTick(_initCharts); } else { _destroyCharts(); }
+            if (connected) { nextTick(_initCharts); }
         });
 
         onMounted(connectWs);
@@ -595,7 +608,7 @@ createApp({
         });
 
         return {
-            state, ipInput,
+            state, ipInput, wasEverConnected,
             currentPage, sidebarCollapsed, navItems,
             navigate, toggleSidebar,
             fmt, barPct, cardClass, barClass,

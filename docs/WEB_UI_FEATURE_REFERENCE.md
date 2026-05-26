@@ -1,8 +1,8 @@
 # CAPAROC 控制器 — 功能與 API 參考
 
-> **用途**：Web UI 規劃參考，整理目前 CLI 既有功能、後端 API、資料結構與通訊細節。  
-> **版本**：v3.8（2026-05-14）  
-> **架構**：`CaparocBackend` (caparoc_backend.py) ← `CaparocController(CaparocBackend)` (caparoc_controller.py)
+> **用途**：Web UI 與 CLI 功能參考，整理後端 API、HTTP REST 端點、WebSocket 資料結構與 CIP 通訊細節。  
+> **版本**：v4.2（2026-05-25）  
+> **架構**：`CaparocBackend` (caparoc_backend.py) ← `CaparocController(CaparocBackend)` (caparoc_controller.py) + `web/app.py` (FastAPI)
 
 ---
 
@@ -306,6 +306,122 @@ set_nominal_current(1, 2, 4, verify=True)   # 模組1 通道2 設為 4A
 |-----------|------|
 | 0–5 | Header（保留） |
 | 6+ | 每通道 3 bytes：[Nominal Current] [Programming Lock] [Status: 0=Off/1=On/2=NoChange] |
+
+---
+
+## 4. Web UI 頁面一覽（Phase 4.2）
+
+| 頁面 | 路徑 | 對應後端 | 說明 |
+|------|------|----------|------|
+| 儀表板 | `#dashboard` | `_read_current_status()` / WebSocket | 通道卡片、開關按鈕、即時電流 |
+| 通道設定 | `#channel-config` | `set_nominal_current()` / `GET /api/status` | 額定電流表格（可編輯） |
+| 圖表監控 | `#chart` | `GET /api/history?minutes=N` | 雙 Y 軸、模組分圖、zoom、30 分鐘歷史 |
+| 系統日誌 | `#logs` | `GET /api/logs` | 等級篩選、顏色編碼、預載今日 .log |
+| 系統狀態 | `#device-status` | `GET /api/device/info` | Identity Object + Class 0x0F |
+| 連線設定 | `#connection` | `GET /api/device/network` / `POST /api/connect` | IP 表單 + 網路資訊面板 |
+
+---
+
+## 5. HTTP REST API（`web/app.py`）
+
+### 5.1 Phase 4.2 新增端點
+
+| 端點 | 方法 | 說明 | 對應後端方法 |
+|------|------|------|-------------|
+| `/api/device/network` | GET | 讀取設備網路資訊（IP / MAC / 閘道 / 子網路遮罩） | `get_network_info()` |
+| `/api/device/info` | GET | 讀取設備識別與全域設定（廠商 ID、CIP 版本、序號等） | `get_device_info()` |
+| `/api/history` | GET | 讀取最近 N 分鐘歷史資料，最多 30 分鐘 | `_history_buffer` |
+
+#### `GET /api/device/network` 回應範例
+
+```json
+{
+  "success": true,
+  "ip_address": "192.168.50.111",
+  "subnet_mask": "255.255.255.0",
+  "gateway": "192.168.50.1",
+  "mac_address": "CC:CC:EA:8B:5F:18"
+}
+```
+
+#### `GET /api/device/info` 回應範例
+
+```json
+{
+  "success": true,
+  "vendor_id": 278,
+  "device_type": 44,
+  "product_code": 33,
+  "revision_major": 1,
+  "revision_minor": 3,
+  "serial_number": "0xABCD1234",
+  "product_name": "CAPAROC PM EIP"
+}
+```
+
+#### `GET /api/history?minutes=5` 回應範例
+
+```json
+{
+  "success": true,
+  "minutes": 5,
+  "data": [
+    {
+      "timestamp": "2026-05-25T14:30:00",
+      "voltage": 24.1,
+      "total_current": 3.2,
+      "channels": [1.2, 0.8, 0.5, 0.7, ...]
+    },
+    ...
+  ]
+}
+```
+
+---
+
+## 6. WebSocket 資料結構（`/ws`）
+
+WebSocket 連線建立後，server 每秒推送狀態 JSON。
+
+### 6.1 已連線時（`connected: true`）
+
+```json
+{
+  "connected": true,
+  "voltage": 24.15,
+  "total_current": 3.2,
+  "module_count": 2,
+  "global_status": {
+    "undervoltage": false,
+    "overvoltage": false,
+    "system_error": false,
+    "warning_80pct": false,
+    "total_current_shutdown": false
+  },
+  "channels": [
+    {
+      "channel": 1,
+      "module": 1,
+      "on": true,
+      "current": 1.2,
+      "nominal_current": 4,
+      "warning_80pct": false,
+      "overload": false,
+      "short_circuit": false
+    }
+  ]
+}
+```
+
+### 6.2 斷線時（`connected: false`）
+
+```json
+{
+  "connected": false
+}
+```
+
+**前端處理**：收到 `connected: false` 時顯示斷線橫幅，停止推送；呼叫 `POST /api/connect` 可重新連線。
 
 > ⚠️ 寫入時 Status 欄位務必設為 `2`（No Change），避免誤關其他通道
 

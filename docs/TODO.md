@@ -1,6 +1,6 @@
 # CAPAROC 控制器 - 待實作功能清單
 
-更新日期: 2026-05-14
+更新日期: 2026-05-25
 
 ## ✅ 已完成功能
 
@@ -154,49 +154,6 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-#### 4.1 通道狀態資訊擴增
-
-**目標**: 提供更詳細的通道狀態資訊
-
-**功能需求**:
-- [ ] 擴充 `show_status()` 顯示更多資訊:
-  - 額定電流設定值 (Nominal current, Byte 1)
-  - 電流使用率 (Flowing / Nominal × 100%)
-  - 通道累計運行時間
-  - 最後開啟/關閉時間
-- [ ] 新增 `show_channel_detail(ch)` 指令:
-  - 詳細顯示單一通道所有資訊
-  - 包含歷史統計 (如果有記錄)
-- [ ] 狀態位元完整解析:
-  - bit 0: On/Off
-  - bit 1: 80% Warning
-  - bit 2: Overload
-  - bit 3: Short Circuit
-  - bit 4: Hardware Fault (需確認)
-  - bit 5: Total Current Shutdown (需確認)
-
-**顯示範例**:
-```
-> s 1
-
-📊 CH1 詳細狀態:
-   ────────────────────────────────────
-   狀態:         🟢 開啟
-   實際電流:     2.50 A
-   額定電流:     4.00 A
-   使用率:       62.5% ✅
-   運行時間:     2小時 35分鐘
-   最後開啟:     14:32:15
-   ────────────────────────────────────
-   警告/錯誤:
-     ⚠️  接近 80% 警告閾值 (3.2A)
-   ────────────────────────────────────
-```
-
-**預估工時**: 2-3 小時
-
----
-
 #### 3. ~~初始化 IP 設定~~ ✅ **已完成 (v3.7)**
 
 **目標**: 支援多設備或動態 IP
@@ -325,59 +282,12 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-### Phase 4.1: 通道狀態資訊擴增（CLI 增強）
-
-> ℹ️ 此任務改善 **CLI 顯示**（`show_status()` / `show_channel_detail()`）。  
-> `_read_current_status()` 已回傳 Web UI 所需所有欄位（nominal Byte 1、actual Byte 2、status bits Byte 0），**Web UI 不依賴此任務**。  
-> **可與 Phase 4.2 Web UI 並行開發，非前置條件。**
-
-**目標**: 提供更詳細的通道狀態資訊
-
-**功能需求**:
-- [ ] 擴充 `show_status()` 顯示更多資訊:
-  - 額定電流設定值 (Nominal current, Byte 1)
-  - 電流使用率 (Flowing / Nominal × 100%)
-  - 通道累計運行時間
-  - 最後開啟/關閉時間
-- [ ] 新增 `show_channel_detail(ch)` 指令:
-  - 詳細顯示單一通道所有資訊
-  - 包含歷史統計 (如果有記錄)
-- [ ] 狀態位元完整解析:
-  - bit 0: On/Off
-  - bit 1: 80% Warning
-  - bit 2: Overload
-  - bit 3: Short Circuit
-  - bit 4: Hardware Fault (需確認)
-  - bit 5: Total Current Shutdown (需確認)
-
-**顯示範例**:
-```
-> s 1
-
-📊 CH1 詳細狀態:
-   ────────────────────────────────────
-   狀態:         🟢 開啟
-   實際電流:     2.50 A
-   額定電流:     4.00 A
-   使用率:       62.5% ✅
-   運行時間:     2小時 35分鐘
-   最後開啟:     14:32:15
-   ────────────────────────────────────
-   警告/錯誤:
-     ⚠️  接近 80% 警告閾值 (3.2A)
-   ────────────────────────────────────
-```
-
-**預估工時**: 2-3 小時
-
----
-
 #### 4.2 Web UI 頁面設計
 
 > 前置條件：Phase 4.0 骨架完成 ✅  
 > 可與 Phase 4.1（CLI 增強）**並行開發**，依賴 API Contract 定義，頁面設計不需等待 Python 函式全部完成
 
-**完成狀態：4.2.1 ✅ → 4.2.2 ✅ → 4.2.3 ✅ → 4.2.4 ✅ → 4.2.6 ✅ ｜ 待開發：4.2.5、4.2.7**
+**完成狀態：4.2.1–4.2.9 全部 ✅ 已完成（4.2.5 設定值外部化 已移至 4.3.1）**
 
 ---
 
@@ -469,7 +379,7 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-**Phase 4.2 進度**：4.2.1–4.2.4 ✅、4.2.4-bug ✅、4.2.6 ✅ 已完成 ｜ 4.2.5、4.2.7 待開發
+**Phase 4.2 進度**：4.2.1–4.2.9 全部 ✅ 已完成
 
 ---
 
@@ -499,35 +409,6 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-##### 4.2.5 設定值外部化（config 管理）
-
-> **目的**：將散落在程式碼中的硬編碼數字集中到 `config/web_config.json`，方便部署時調整  
-> **依賴**：4.2.1 ✅，無其他依賴  
-> **預估工時**：1 小時
-
-**目前硬編碼、可外部化的項目**：
-
-| 設定項 | 目前位置 | 目前值 | 建議 key |
-|--------|---------|--------|---------|
-| Web 伺服器 port | `web/app.py` `__main__` | `8000` | `web_port` |
-| WebSocket 推送間隔 | `web/app.py` ws_status | `1` 秒 | `ws_push_interval` |
-| 額定電流有效範圍 | `src/caparoc_backend.py` L505 | `1–20` A | `nominal_current_min/max` |
-| 顯示小數位數（Web） | `web/static/js/app.js` fmt() | `1` 位 | `display_decimal_places` |
-| 監控預設輪詢間隔（CLI） | CLI argument default | `2` 秒 | `monitor_interval_s` |
-
-**備註**：
-- `fmt()` 的 `.toFixed(1)` **只影響 Web UI**；CLI 的 `:.1f` 在 `caparoc_backend.py` 獨立定義，兩者不共用  
-- 建議新增 `config/web_config.json`，由 `web/app.py` 載入；CLI 設定仍放 `config/device_config.json`  
-- `nominal_current_range` 前後端都需要同一來源，可考慮讓 API `GET /api/config/limits` 提供給前端
-
-**工作項目**：
-- [ ] 建立 `config/web_config.json`（web_port, ws_push_interval, display_decimal_places）
-- [ ] `web/app.py` 啟動時讀取 web_config.json
-- [ ] `app.js` 從 `GET /api/config/limits` 取得 nominal_current_range，動態設定 input min/max
-- [ ] `caparoc_backend.py` 從 `config/device_config.json` 或常數檔讀取 nominal range
-
----
-
 ##### 4.2.6 圖表監控頁增強（通道圖拆分 + 歷史查詢）✅ **已完成（2026-05-21, a4750d8 + 3174cba）**
 
 > **實作方式**：依模組各建一張折線圖（每模組一個 Chart.js 實例），含 checkbox 控制通道顯示，  
@@ -545,67 +426,18 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-##### 4.2.7 設備網路資訊讀取（TCP/IP Interface + MAC 位址）
+##### 4.2.7 設備網路資訊讀取（TCP/IP Interface + MAC 位址）✅ **已完成（2026-05-21）**
 
 > **目的**：透過 CIP 協議讀取 CAPAROC 設備的網路資訊，顯示於 Web UI 連線設定頁  
-> **依賴**：4.2.1 ✅（connection 頁面已存在）  
-> **協議**：EtherNet/IP CIP Generic Message（`generic_message`，service `0x0E` Get_Attribute_Single）  
-> **預估工時**：1.5 小時
+> **實際工時**：1.5 小時
 
-**CIP 物件定義**：
-
-| CIP Object | Class | Instance | Attribute | 資料說明 |
-|-----------|-------|----------|-----------|---------|
-| TCP/IP Interface | `0xF5` | `1` | `3` | Interface Configuration（IP、Subnet Mask、Gateway） |
-| TCP/IP Interface | `0xF5` | `1` | `5` | Host Name（string） |
-| Ethernet Link | `0xF6` | `1` | `3` | Physical Address（MAC，6 bytes） |
-
-> 備註：CAPAROC 為 Phoenix Contact 標準 EtherNet/IP 裝置，以上 CIP Object 需實機驗證韌體是否全數支援
-
-**後端（`src/caparoc_backend.py`）**：
-- [ ] 新增 `get_network_info()` 方法：
-  - TCP/IP Interface（`0xF5`, Inst `1`, Attr `3`）→ IP、Subnet Mask、Gateway
-  - TCP/IP Interface（`0xF5`, Inst `1`, Attr `5`）→ Host Name（optional）
-  - Ethernet Link（`0xF6`, Inst `1`, Attr `3`）→ MAC 位址（6 bytes → `XX:XX:XX:XX:XX:XX`）
-- [ ] 回傳 dict：`{"ip": ..., "subnet_mask": ..., "gateway": ..., "mac": ..., "hostname": ...}`；讀取失敗欄位填 `None`
-- [ ] 各屬性獨立 `try/except`，單一失敗不影響其他欄位
-
-**Web API（`web/app.py`）**：
-- [ ] 新增 `GET /api/device/network` endpoint → 呼叫 `backend.get_network_info()`，回傳 JSON
-- [ ] 未連線時回傳 HTTP 503
-
-**前端（`app.js` + `index.html`）**：
-- [ ] `connection` 頁面加入「設備網路資訊」區塊（`v-if="state.connected"`）
-- [ ] 顯示欄位：IP 位址、子網路遮罩、預設閘道、MAC 位址、主機名稱
-- [ ] 連線成功後（`applyStatus` 收到 `connected: true` 時）自動呼叫 `/api/device/network` 一次
-- [ ] 讀取失敗的欄位顯示「—」（不阻斷頁面顯示）
-
----
-
-##### 4.2.9 系統狀態頁（設備識別 + 全域設定）
-
-> **目的**：新增「系統狀態」導覽頁，透過 EIP 協議讀取設備識別資訊與全域設定參數，一次性呈現設備身份與配置  
-> **依賴**：4.2.1 ✅（sidebar 架構已存在）  
-> **CIP 來源**：
->   - Identity Object `0x01:1` — Vendor ID / Device Type / Product Code / Revision / Serial Number / Product Name  
->   - Class `0x0F` inst 1–4 — param_lock / ui_lock / switch_on_delay_ms / operating_mode  
-> **預估工時**：2 小時
-
-**後端（`src/caparoc_backend.py`）**：
-- [ ] 新增 `get_device_info()` 方法：讀 Identity Object attr 1/2/3/4/6/7，Class 0x0F inst 1-4 attr 1
-- [ ] 各屬性獨立 `try/except`；connected=True（Identity fallback to unconnected）
-- [ ] 回傳 dict：`{"identity": {...}, "system_config": {...}}`
-
-**Web API（`web/app.py`）**：
-- [ ] 新增 `GET /api/device/info` endpoint → 呼叫 `backend.get_device_info()`
-- [ ] 未連線時回 HTTP 503
-
-**前端（`app.js` + `index.html` + `style.css`）**：
-- [ ] `navItems` 加入 `{ page: 'system-status', icon: '🖧', label: '系統狀態' }`
-- [ ] `deviceInfo` ref：localStorage 初始化（`caparoc_device_info`）
-- [ ] `applyStatus` 首次連線時自動呼叫 `fetchDeviceInfo()`
-- [ ] 系統狀態頁兩個面板：「設備識別」/ 「全域設定」
-- [ ] 未連線時顯示快取資料並標記「（上次連線資訊）」
+- [x] `caparoc_backend.py`：新增 `get_network_info()`（CIP 0xF5 + 0xF6）
+  - IP、子網路遮罩、預設閘道（Attr 3 LE UDINT → `struct.unpack('<I')` + bit-shift）
+  - MAC 位址（Ethernet Link 0xF6，6 bytes → `XX:XX:XX:XX:XX:XX`）
+  - 各屬性獨立 `try/except`，單一失敗不影響其他欄位；全部 `connected=True` 持 `_cip_lock`
+- [x] `web/app.py`：新增 `GET /api/device/network` endpoint；未連線時回 HTTP 503
+- [x] `app.js`：連線設定頁新增「設備網路資訊」面板；連線成功後自動查詢一次，含 ↻ 手動重新整理按鈕
+- [x] Bug fix：IP 轉換必須先 `struct.unpack('<I')` 再 bit-shift，直接順讀 LE bytes 會顯示倒序
 
 ---
 
@@ -633,7 +465,137 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-#### 4.3 數據記錄與分析功能 🆕
+##### 4.2.9 系統狀態頁（設備識別 + 全域設定）✅ **已完成（2026-05-22）**
+
+> **目的**：新增「系統狀態」導覽頁，透過 EIP 協議讀取設備識別資訊與全域設定參數，一次性呈現設備身份與配置  
+> **實際工時**：2 小時
+
+- [x] `caparoc_backend.py`：新增 `get_device_info()` — Identity Object (0x01:1, attr 1/2/3/4/6/7) + Class 0x0F inst 1-4 attr 1；各屬性獨立 `try/except`；全部 `connected=True` 持 `_cip_lock`
+- [x] `web/app.py`：新增 `GET /api/device/info` endpoint；未連線時回 HTTP 503
+- [x] `app.js`：`deviceInfo` ref（localStorage 快取 `caparoc_device_info`）；首次連線自動呼叫 `fetchDeviceInfo()`；含 ↻ 手動重新整理按鈕
+- [x] `index.html`：新增 `system-status` 頁（「設備識別」面板 + 「全域設定」面板）；未連線時顯示快取並標記「（上次連線資訊）」
+
+---
+
+#### 4.3 Web UI 介面優化、美化
+
+> **目標**：提升 Web UI 的視覺一致性與使用體驗，完善部署彈性
+
+---
+
+##### 4.3.1 設定值外部化（config 管理）
+
+> **目的**：將散落在程式碼中的硬編碼數字集中到 `config/web_config.json`，方便部署時調整  
+> **預估工時**：1 小時
+
+**目前硬編碼、可外部化的項目**：
+
+| 設定項 | 目前位置 | 目前值 | 建議 key |
+|--------|---------|--------|---------|
+| Web 伺服器 port | `web/app.py` `__main__` | `8000` | `web_port` |
+| WebSocket 推送間隔 | `web/app.py` ws_status | `1` 秒 | `ws_push_interval` |
+| 額定電流有效範圍 | `src/caparoc_backend.py` | `1–20` A | `nominal_current_min/max` |
+| 顯示小數位數（Web） | `web/static/js/app.js` fmt() | `1` 位 | `display_decimal_places` |
+| 監控預設輪詢間隔（CLI） | CLI argument default | `2` 秒 | `monitor_interval_s` |
+
+**備註**：`fmt()` 的 `.toFixed(1)` 只影響 Web UI；CLI 的 `:.1f` 在 `caparoc_backend.py` 獨立定義，兩者不共用。`nominal_current_range` 前後端共用，可透過 `GET /api/config/limits` 提供給前端。
+
+**工作項目**：
+- [ ] 建立 `config/web_config.json`（web_port, ws_push_interval, display_decimal_places）
+- [ ] `web/app.py` 啟動時讀取 web_config.json
+- [ ] `app.js` 從 `GET /api/config/limits` 取得 nominal_current_range，動態設定 input min/max
+- [ ] `caparoc_backend.py` 從設定檔讀取 nominal range
+
+**預估工時**：1 小時
+
+---
+
+##### 4.3.2 視覺一致性與元件統一化
+
+> **目的**：統一按鈕、表格、卡片、提示訊息等 UI 元件的外觀語言
+
+**工作項目**：
+- [ ] 統一按鈕樣式（primary / secondary / danger 三種語義色彩）
+- [ ] 狀態指示色彩系統（正常/警告/錯誤/離線 四種語義）
+- [ ] 通道卡片尺寸與間距一致化
+- [ ] 頁面載入骨架屏（loading skeleton）取代空白閃爍
+
+**預估工時**：2-3 小時
+
+---
+
+##### 4.3.3 行動裝置基本支援
+
+> **目的**：讓 Web UI 在平板/手機瀏覽器可操作（能顯示與操作即可，不要求完美）
+
+**工作項目**：
+- [ ] Sidebar 在窄螢幕自動收合（☰ 按鈕機制驗證）
+- [ ] 通道卡片在小螢幕改為單欄佈局
+- [ ] 按鈕點擊區域符合觸控規範（最小 44px）
+
+**預估工時**：1-2 小時
+
+---
+
+#### 4.4 CLI 介面功能完善
+
+> **目標**：補齊後端已有但 CLI 尚未實作的功能，使 CLI 與 Web UI 功能對等  
+> **後端現況**：`get_device_info()`、`get_network_info()` 已在 `caparoc_backend.py` 實作，CLI 尚未新增對應指令。
+
+---
+
+##### 4.4.1 通道詳細狀態顯示
+
+> **對應後端**：擴充 `show_status()` / 新增 `show_channel_detail(ch)` 方法  
+> **預估工時**：2-3 小時
+
+**工作項目**：
+- [ ] 擴充 `show_status()` 顯示電流使用率（Flowing / Nominal × 100%）
+- [ ] 新增 CLI 指令 `s <ch>`：呼叫 `show_channel_detail(ch)` 顯示單一通道詳細資訊
+  - 狀態、實際電流、額定電流、使用率
+  - 狀態位元完整解析（bit 0-5：On/Off、80%警告、過載、短路、硬體故障、總電流關斷）
+
+**顯示範例**：
+```
+🎮 > s 1
+
+📊 CH1 詳細狀態:
+   ────────────────────────────────────
+   狀態:         🟢 開啟
+   實際電流:     2.50 A
+   額定電流:     4.00 A
+   使用率:       62.5% ✅
+   ────────────────────────────────────
+   警告/錯誤:    ⚠️  接近 80% 警告閾值 (3.2A)
+   ────────────────────────────────────
+```
+
+---
+
+##### 4.4.2 設備識別資訊指令
+
+> **對應後端**：`get_device_info()`（Identity Object + Class 0x0F）  
+> **預估工時**：0.5 小時（後端已完成，只需加 CLI 指令）
+
+**工作項目**：
+- [ ] 新增 CLI 指令 `device info`：呼叫 `get_device_info()`
+  - 顯示廠商、型號、產品代碼、修訂版本、序號
+  - 顯示全域設定：param_lock / ui_lock / 啟動延遲 / 操作模式
+
+---
+
+##### 4.4.3 網路資訊指令
+
+> **對應後端**：`get_network_info()`（CIP 0xF5/0xF6）  
+> **預估工時**：0.5 小時（後端已完成，只需加 CLI 指令）
+
+**工作項目**：
+- [ ] 新增 CLI 指令 `network info`：呼叫 `get_network_info()`
+  - 顯示 IP、子網路遮罩、預設閘道、MAC 位址、主機名稱
+
+---
+
+#### 4.5 數據記錄與分析功能 🆕
 
 **目標**: 記錄設備運行數據，提供歷史分析
 
@@ -661,7 +623,7 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-#### 4.4 告警與通知系統 🆕
+#### 4.6 告警與通知系統 🆕
 
 **目標**: 主動通知異常狀態，提升系統可靠性
 
@@ -685,7 +647,7 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-#### 4.5 多設備管理 🆕
+#### 4.7 多設備管理 🆕
 
 **目標**: 同時管理多台 CAPAROC 設備
 
@@ -707,7 +669,7 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-#### 4.6 自動化測試與 CI/CD 🆕
+#### 4.8 自動化測試與 CI/CD 🆕
 
 **目標**: 提升程式碼品質，自動化測試流程
 
@@ -756,21 +718,42 @@ def _show_monitor_status(self, status, changes):
 ## 📊 開發里程碑
 
 **Phase 3 已完成** ✅ (2025-10-27 - 2025-11-26)
-- CLI 完整功能實現
-- 多模組支援
-- 即時監控
-- 穩定可靠運行
+- CLI 完整功能實現（v3.1–v3.7）：額定電流設定、通道開關控制、狀態查詢、即時監控
+- 多模組支援（自動偵測 1-16 模組，最多 64 通道）
+- 心跳機制、自動重連、完整錯誤處理
+- **Phase 3 總工時**：~20 小時
 
-**Phase 4 規劃** 🎯
-- 優先級 1 (高): Web 骨架建立 4.0 (1-2h)
-- 優先級 2 (高): Web UI 頁面設計 4.2 (6-8h) — 依賴 4.0 API Contract
-- 優先級 3 (中): 通道狀態擴增 4.1 — CLI 增強，可與 4.2 並行 (2-3h)
-- 優先級 4 (中): 數據記錄與分析 4.3 (6-8h)
-- 優先級 5 (中): 告警通知系統 4.4 (4-5h)
-- 優先級 6 (低): 多設備管理 4.5 (5-6h)
-- 優先級 7 (低): 自動化測試 4.6 (8-10h)
+**Phase 3.5–3.6 已完成** ✅ (2026-04-02 - 2026-05-14)
+- 前後端分離架構重構（`CaparocBackend` + `CaparocController` 繼承，controller 縮減 -63%）
+- Log 系統建立（`logging_manager.py` + `config/logging_config.json`）
+- 連線 IP 管理（`device_config.json` 持久化、`setting` 選單四選項重設計）
+- 告警事件寫入 log（短路/過載/80%警告/電壓異常）
+- **Phase 3.5–3.6 累計工時**：~10 小時
 
-**Phase 4 預估總工時**: 25-36 小時
+**Phase 4.0–4.2 已完成** ✅ (2026-05-15 - 2026-05-25)
+- Web 服務骨架：FastAPI + Vue 3 CDN + WebSocket 每秒推送
+- 6 個 Web UI 頁面：儀表板 / 通道設定 / 圖表監控 / 系統日誌 / 系統狀態 / 連線設定
+- 圖表：Chart.js 4.4.6，每模組獨立折線圖，chartjs-plugin-zoom 拖曳/滾輪縮放，後端 30 分鐘歷史 buffer
+- 設備識別（CIP Identity Object）+ 網路資訊（CIP 0xF5/0xF6）
+- Bug fixes：CIP 並發斷線（`_cip_lock`）、IP 倒序顯示（LE UDINT）、拔線後重連失敗
+- **Phase 4.0–4.2 累計工時**：~15 小時
+
+---
+
+**Phase 4 進行中** 🚀
+
+| 優先級 | 任務 | 預估工時 |
+|--------|------|---------|
+| 高 | 4.3.1 設定值外部化（config 管理） | 1h |
+| 高 | 4.4.1 CLI 通道詳細狀態顯示 | 2-3h |
+| 中 | 4.3.2 UI 視覺一致性與元件統一 | 2-3h |
+| 中 | 4.4.2/4.4.3 CLI 設備/網路資訊指令 | 1h |
+| 中 | 4.5 數據記錄與分析 | 6-8h |
+| 中 | 4.6 告警與通知系統 | 4-5h |
+| 低 | 4.7 多設備管理 | 5-6h |
+| 低 | 4.8 自動化測試與 CI/CD | 8-10h |
+
+**Phase 4 預估剩餘工時**：29-41 小時
 
 **Phase 5 未來願景** 💭
 - 企業級遠端管理
@@ -781,19 +764,20 @@ def _show_monitor_status(self, status, changes):
 
 ## 📈 專案統計
 
-**已投入工時**:
-- Phase 1-2: ~12 小時
-- Phase 3: ~20 小時
-- **總計**: ~32 小時
+**已投入工時**：
+- Phase 1-2：~12 小時
+- Phase 3：~20 小時
+- Phase 3.5-3.6：~10 小時
+- Phase 4.0-4.2：~15 小時
+- **總計**：~57 小時
 
-**預估剩餘工時**:
-- Phase 4: 35-46 小時
-- Phase 5: 待評估
-
-**程式碼統計** (截至 2025-11-26):
-- 主程式: ~2000 行
-- 文件: 15+ 份
-- 測試: 基礎覆蓋
+**程式碼統計**（截至 2026-05-25）：
+- `src/caparoc_backend.py`：~750 行
+- `src/caparoc_controller.py`：~874 行
+- `web/app.py`：~550 行
+- `web/static/js/app.js`：~900 行
+- `web/templates/index.html`：~600 行
+- 文件：20+ 份
 
 ---
 

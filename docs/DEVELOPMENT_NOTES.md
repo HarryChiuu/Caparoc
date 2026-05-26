@@ -4,8 +4,8 @@
 > **面向讀者**: 開發者、技術維護人員
 > **補充文件**: TODO.md (功能規劃)、CHANGELOG.md (版本歷史)
 
-**當前版本**: v3.7  
-**最後更新**: 2025-11-26  
+**當前版本**: v4.2  
+**最後更新**: 2026-05-25  
 **主要開發者**: Harry Chiu
 
 
@@ -309,7 +309,7 @@ Caparoc_breaker_control/
 
 ---
 
-## 🏗️ 現行架構（2026-04-02 重構，2026-04-27 更新）
+## 🏗️ 現行架構（2026-05-25 更新）
 
 > 重構過程與動機詳見 `CHANGELOG.md` Phase 3.5 條目。
 
@@ -317,10 +317,16 @@ Caparoc_breaker_control/
 
 ```
 src/
-├── caparoc_backend.py     ← CaparocBackend（裝置邏輯，~1250 行，27 個方法）
-├── caparoc_controller.py  ← CaparocController(CaparocBackend)（CLI 包裝層）
-├── caparoc_web.py         ← 未來：Dash Web 服務（長駐，瀏覽器控制）
+├── caparoc_backend.py     ← CaparocBackend（裝置邏輯，~750 行）
+├── caparoc_controller.py  ← CaparocController(CaparocBackend)（CLI 包裝層，~874 行）
 └── logging_manager.py     ← 日誌管理
+
+web/
+├── app.py                 ← FastAPI 服務（~550 行）
+├── templates/index.html   ← Vue 3 CDN 頁面（~600 行）
+└── static/
+    ├── js/app.js          ← Vue 3 應用邏輯（~900 行）
+    └── css/style.css      ← 樣式
 ```
 
 **繼承關係**：`CaparocController → CaparocBackend → object`
@@ -329,80 +335,34 @@ src/
 
 | 類別 | 職責 | 可被使用 |
 |------|------|----------|
-| `CaparocBackend` | 裝置通訊、狀態讀取、通道控制、監控 | CLI + 未來 GUI |
+| `CaparocBackend` | 裝置通訊、狀態讀取、通道控制、監控 | CLI + Web UI |
 | `CaparocController` | CLI 命令迴圈、IP 設定互動、幫助文字 | 僅 CLI |
+| `web/app.py` | FastAPI 路由、WebSocket、內容樣板 | 僅 Web UI |
 
 CLI 專屬方法：`_show_help_message()`、`_configure_device_ip()`、`_validate_ip()`、`run()`
 
-### 現行問題：controller.py 仍有冗餘方法（待清除）
-
-`caparoc_controller.py` 目前仍保留所有後端方法的完整複本（約 1500 行 shadow 方法），為過渡期安全備份，尚未執行清除。
-
-```
-caparoc_controller.py 現況（2026-04-27）
-  ├── __init__                ← 重複初始化（會覆寫父類）
-  ├── get_channel_offset      ← shadow（與 CaparocBackend 完全相同）
-  ├── get_total_channels      ← shadow
-  ├── ... (約 20 個 shadow 方法)
-  ├── _show_help_message      ← CLI 專屬 ✅
-  ├── _configure_device_ip   ← CLI 專屬 ✅
-  ├── _validate_ip            ← CLI 專屬 ✅
-  └── run()                   ← CLI 專屬 ✅
-總行數：~2100 行，其中 ~1500 行是冗餘複本
-```
-
-**Phase 3.6.2 清除目標**：刪除所有 shadow 方法，目標縮減至 ~250 行。  
-**清除前必做**：確認 controller 中的 `set_nominal_current`、`set_channel`、`show_status` 版本與 backend 一致（已確認）。
-
-### 目標架構（Phase 3.6 完成後）
-
-```python
-# caparoc_web.py（未來）
-from caparoc_backend import CaparocBackend
-import dash
-
-backend = CaparocBackend("192.168.2.111")
-# 直接使用 backend，不透過 CaparocController
-```
-
-### GUI 架構決策
-
-| 決策項目 | 選擇 | 理由 |
-|----------|------|------|
-| GUI 類型 | Browser-based | 手機/任何裝置皆可控制 |
-| 框架 | Dash (Plotly) | 純 Python、內建即時更新、無需 HTML/JS |
-| 連線模式 | 服務啟動自動連線 | CAPAROC 一直在線，無需手動連線 |
-| 服務入口 | `python caparoc_web.py` | 啟動後瀏覽器開 `localhost:8050` |
-
-### GUI 前尚未完成的工作（見 TODO Phase 3.6）
-
-1. **`connect()` / `disconnect()` 實作**（最重要）— 連線生命週期目前綁定在 CLI `with CIPDriver(...) as driver:` 內，Web 服務無法長駐
-2. **controller.py 冗餘方法清除** — 約 1500 行重複邏輯（Phase 3.6.2）
-3. **設備 IP 硬寫（PROFINET DCP）** — 暫緩（需 Npcap 驅動，影響可攜性）；連線 IP 管理已完成（Phase 3.6.3 部分完成）
-4. **Dash 安裝與骨架驗證** — `pip install dash` + 最小可用頁面（Phase 3.6.4）
+> Phase 3.6.2（2026-05-14）：`caparoc_controller.py` 已將全部 shadow 方法刪除，從 2387 行減少至 874 行（-63%）。
 
 ---
 
 ## 🔮 未來改進方向
 
-### 優先級 1: GUI 前置工作（Phase 3.6，立即執行）
+### 優先級 1: Web UI 完善（Phase 4.3）
 
-- [ ] `CaparocBackend.connect()` / `disconnect()` 實作
-- [ ] `caparoc_controller.py` 冗餘方法清除
-- [ ] Dash 安裝與基本骨架驗證
+- [ ] 設定值外部化（`config.yaml`）
+- [ ] 視覺一致性與元件統一化
+- [ ] 行動裝置基本支援
 
-### 優先級 2: Browser GUI 開發（Dash）
+### 優先級 2: CLI 功能補齊（Phase 4.4）
 
-- [ ] 通道控制面板（開關按鈕 + 即時電流顯示）
-- [ ] 系統狀態儀表板（電壓、總電流、全域狀態）
-- [ ] 即時監控整合（`dcc.Interval` 定時更新）
-- [ ] Log 面板顯示
+- [ ] `device info` 指令（`get_device_info()`）
+- [ ] `network info` 指令（`get_network_info()`）
+- [ ] `show channel <n>` 詳細資訊（`show_channel_detail()`）
 
-### 優先級 3: 通道資訊擴展
+### 優先級 3: 多設備管理（Phase 4.5）
 
-- [ ] 顯示通道歷史電流曲線
-- [ ] 記錄通道開關歷史
-- [ ] 通道使用統計
+- [ ] 支援多個 CAPAROC 設備同時連線
+- [ ] Web UI 設備切換介面
 
 ---
 
@@ -604,10 +564,10 @@ pip install scapy
 
 ---
 
-**文件版本**: 2.1  
+**文件版本**: 2.2  
 **建立日期**: 2025-10-29  
-**最後更新**: 2026-04-27  
-**適用程式版本**: v3.7（Phase 3.5 架構）
+**最後更新**: 2026-05-25  
+**適用程式版本**: v4.2（Phase 4.2 架構）
 
 ---
 
@@ -841,4 +801,98 @@ POST /api/logs/clear
 - buffer 大小：`deque(maxlen=500)`（400 預載 + 100 即時）
 - 最新在前（server 端 `.reverse()`）
 - 自訂等級 `SYSTEM = 25`（介於 INFO=20 與 WARNING=30 之間），用於服務生命週期事件
+
+---
+
+## 🔐 Phase 4.x 技術備忘（2026-05-25）
+
+### 1. CIPDriver 非 thread-safe — `_cip_lock` 設計
+
+**問題**：pycomm3 `CIPDriver.generic_message()` 非 thread-safe。
+FastAPI 使用 `asyncio.to_thread()` 時，WebSocket 推送和 HTTP API 請求可能同時呼叫
+`generic_message()`，導致 TCP 串流損壞、連線斷開（symptoms：`StaleError` / 靜默掛住）。
+
+**修正**（commit b779752）：`self._cip_lock = threading.Lock()`
+
+```python
+# get_network_info()、get_device_info()：每個 _rd() 呼叫都持鎖
+def _rd(self, class_id, instance, attr):
+    with self._cip_lock:
+        return self.driver.generic_message(...)
+
+# _read_current_status()：允許逾時讓出，不阻塞 WebSocket 推送
+def _read_current_status(self):
+    if not self._cip_lock.acquire(timeout=2.0):
+        return self._last_known_status   # 逾時直接回傳舊值
+    try:
+        ...
+    finally:
+        self._cip_lock.release()
+```
+
+**規則**：任何呼叫 `generic_message()` 的方法都必須持鎖，無例外。
+
+---
+
+### 2. CIP IP 位址轉換（Little-Endian UDINT）
+
+**問題**：CAPAROC CIP Class 0xF5 以 **Little-Endian UDINT** 儲存 IP 位址。
+
+**正確做法**：先以 `struct.unpack` 讀出整數，再 bit-shift 拆成 4 個 octet：
+
+```python
+v = struct.unpack_from('<I', buf, offset)[0]
+return f"{(v>>24)&0xFF}.{(v>>16)&0xFF}.{(v>>8)&0xFF}.{v&0xFF}"
+```
+
+**錯誤做法**（commit 1f5523e 的錯誤，20e396f 還原）：
+
+```python
+# 直接順讀 LE bytes → 顯示倒序 "111.50.168.192" 而非 "192.168.50.111"
+return f"{buf[offset]}.{buf[offset+1]}.{buf[offset+2]}.{buf[offset+3]}"
+```
+
+**教訓**：LE UDINT 的 bytes 排列是 `[111, 50, 168, 192]`，讀出整數後
+$v = 111 + 50 \times 256 + 168 \times 65536 + 192 \times 16777216 = 3232248943$，
+再 bit-shift 才能得到正確的 `192.168.50.111`。
+
+---
+
+### 3. WebSocket 斷線設計 — 例外必須在 `_read_current_status()` 捕獲
+
+**問題根因**：若 `_read_current_status()` 的通訊例外傳播至 WebSocket handler，
+handler 的 `while` 迴圈被中斷 → `_ws_client_count` 歸零 → 伺服器 shutdown，
+但 `is_connected` 永遠為 `True`（`disconnect()` 從未被呼叫），使用者無法重新連線。
+
+**修正**（commit d726a88）：在 `_read_current_status()` 內部捕獲所有例外：
+
+```python
+except Exception as e:
+    # 通訊例外（網路斷線等）必須在此捕獲，不可傳播至 WebSocket handler
+    if self._last_read_ok:
+        self.logger.warning(f"讀取失敗：{e}")
+        self._last_read_ok = False
+    return None   # finally 仍會執行，確保鎖被釋放
+```
+
+WebSocket handler 收到 `None` 時，自動呼叫 `backend.disconnect()`，讓前端顯示斷線並允許重連。
+
+---
+
+### 4. Chart.js + chartjs-plugin-zoom 整合
+
+**套件版本**（均透過 CDN 載入，無 npm）：
+
+| 套件 | 版本 | CDN |
+|------|------|-----|
+| Chart.js | 4.4.6 | jsdelivr |
+| chartjs-plugin-zoom | 1.2.1 | jsdelivr |
+| Hammer.js | 2.0.8 | cdnjs（zoom 的 touch 相依） |
+
+**注意事項**：
+- `chartjs-plugin-zoom` 必須在 `Chart.js` **之後**、`Chart.register()` **之前**載入
+- Hammer.js 必須先於 chartjs-plugin-zoom 載入（否則觸控縮放失效）
+- zoom 重置按鈕：`chartInstance.resetZoom()`
+- 雙 Y 軸設定：`scales: { y: { position: 'left' }, y1: { position: 'right', grid: { drawOnChartArea: false } } }`
+- 歷史資料來源：`GET /api/history?minutes=N`（最多 30 分鐘，後端 `_history_buffer`）
 

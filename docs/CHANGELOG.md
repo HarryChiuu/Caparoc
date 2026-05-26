@@ -2,6 +2,77 @@
 
 ---
 
+## [2026-05-25] Bug fixes — CIP 並發斷線、IP 倒序、拔線重連失敗（d726a88, 20e396f, b779752）
+
+### 🐛 Bug 修正
+
+**CIP 並發讀取導致頁面切換斷線（b779752）**
+- **根因**：`generic_message()` 非 thread-safe；頁面切換時 `refreshNetworkInfo()` 與 WebSocket 推送同時呼叫，TCP 串流損壞
+- **修正**：`caparoc_backend.py` 新增 `self._cip_lock = threading.Lock()`；`get_network_info()`、`get_device_info()`、`_read_current_status()` 全部序列化，共用同一把鎖
+- **前端防護**：`app.js` 加入 `_cipReadInFlight` 全域旗標，阻止 `refreshNetworkInfo()` / `refreshDeviceInfo()` 並發觸發
+
+**IP 位址顯示倒序（20e396f）**
+- **根因**：CAPAROC CIP 0xF5 以 Little-Endian UDINT 儲存 IP；commit `1f5523e` 誤改為直接順讀 bytes，導致「111.50.168.192」
+- **修正**：還原為 `struct.unpack_from('<I', buf, offset)[0]` → bit-shift 逐 octet 取出，正確還原點分十進位
+- **教訓**：LE UDINT 絕不能直接順讀 bytes，必須先整數解碼再 bit-shift
+
+**拔網路線後無法重連 + 圖表通道消失（d726a88）**
+- **根因**：`_read_current_status()` 的 `try/finally` 讓通訊例外傳播至 WebSocket handler → handler while 迴圈中斷 → `_ws_client_count` 歸零 → 伺服器 shutdown 但 `is_connected` 永遠為 True，`connect()` 成為 no-op
+- **修正**：加入 `except Exception` 捕獲通訊例外並 `return None`；`finally` 確保鎖釋放；WebSocket handler 收到 `None` 時自動呼叫 `backend.disconnect()`
+- **連帶修正**：圖表通道消失問題由相同根因造成（從未收到 `{connected: false}`），一併解決
+
+---
+
+## [2026-05-22] Phase 4.2.8–4.2.9 頂部關閉按鈕 + 系統狀態頁
+
+### 🔧 頂部列關閉按鈕（4.2.8）
+- `topbar-right` 容器整合連線狀態列與「✕」關閉按鈕，以 `|` 分隔線視覺區隔
+- `app.js`：新增 `doCloseTab()`（`window.close()`）
+- 圖表監控電壓 Y 軸與 tooltip 改為顯示兩位小數（`toFixed(2)`）
+
+### 🖧 系統狀態頁（4.2.9）
+- 新增第 6 個導覽頁面「系統狀態」（`system-status`）
+- **後端** `get_device_info()`：讀取 Identity Object (0x01:1, attr 1/2/3/4/6/7) + Class 0x0F inst 1-4 attr 1；各屬性獨立 `try/except`；全部 `connected=True` 持 `_cip_lock`
+- **Web API** `GET /api/device/info`；未連線時回 HTTP 503
+- **前端**：`deviceInfo` ref 使用 localStorage 快取（`caparoc_device_info`）；首次連線自動查詢；未連線時顯示快取並標記「（上次連線資訊）」
+- 頁面兩個面板：「設備識別」（廠商/型號/產品代碼/修訂版本/序號/產品名稱）、「全域設定」（param_lock/ui_lock/啟動延遲/操作模式）
+
+---
+
+## [2026-05-21] Phase 4.2.6–4.2.7 圖表監控增強 + 設備網路資訊讀取
+
+### 📈 圖表監控頁增強（4.2.6, a4750d8 + 3174cba）
+- 後端新增 `_history_buffer = deque(maxlen=1800)`（30 分鐘）；`GET /api/history?minutes=N` endpoint
+- 前端 `_initCharts()` 先 fetch `/api/history` 預填歷史資料，再銜接即時 WebSocket 串流
+- 改為每模組一張 Chart.js 實例（`_moduleCharts` dict）；`v-for="mod in activeModules"` 動態生成
+- 加入 chartjs-plugin-zoom + Hammer.js：滑鼠拖曳/滾輪縮放查看歷史；「▶ 即時」按鈕跳回即時模式
+- Bug fix：`jumpToLive()` 中 `resetZoom()` 同步觸發 `onZoomComplete` 導致 `chartHistoryMode` 誤為 true，修正執行順序
+
+### 🌐 設備網路資訊讀取（4.2.7）
+- 後端新增 `get_network_info()`：TCP/IP Interface (CIP 0xF5, Inst 1, Attr 3) + Ethernet Link (0xF6, Attr 3)
+  - IP、子網路遮罩、預設閘道（LE UDINT 格式）；MAC（6 bytes → `XX:XX:XX:XX:XX:XX`）
+  - 各屬性獨立 `try/except`；全部 `connected=True` 持 `_cip_lock`
+- Web API `GET /api/device/network`；未連線時回 HTTP 503
+- 前端連線設定頁新增「設備網路資訊」面板，連線成功後自動查詢，含 ↻ 手動重新整理
+
+---
+
+## [2026-05-18] Phase 4.2.1–4.2.2 Web UI 導覽列骨架 + 通道設定頁
+
+### 🏗️ 左側導覽列骨架（4.2.1）
+- 重構 `index.html` / `app.js`：加入左側 sidebar（☰ 按鈕可收合）
+- 5 個頁面（Vue `currentPage` ref 條件渲染）：儀表板 / 圖表監控 / 通道設定 / 系統日誌 / 連線設定
+- 頂部固定列保留：連線狀態指示燈、設備 IP、連線/斷線按鈕
+- `style.css` 新增 sidebar / layout / placeholder 樣式
+
+### ⚡ 通道設定頁（4.2.2）
+- `channel-settings` 頁：通道表格（編號、模組、目前額定電流、輸入欄位 1–20 A、設定按鈕）
+- 「全部套用」按鈕：批次設定所有通道為相同額定電流
+- 表格資料從 WebSocket 狀態自動填入目前值；設定成功 3 秒後自動清除提示訊息
+- Bug fixes：API 回傳值檢查（`set_nominal_current()` false → HTTP 500）、float 輸入 `int(round(...))` 修正型別錯誤
+
+---
+
 ## [2026-05-20] Phase 4.2.3–4.2.4 Web UI 系統日誌頁與多項 Bug 修正
 
 ### 🔧 系統日誌頁功能（4.2.3）

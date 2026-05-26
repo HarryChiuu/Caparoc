@@ -5,14 +5,14 @@
 ## 📚 快速導航
 
 ### 🎯 使用者文件
-- **[CLI_USER_GUIDE.md](CLI_USER_GUIDE.md)** - 命令列使用指南
+- **[USER_GUIDE.md](USER_GUIDE.md)** - 使用者操作指南（Web UI + CLI）
 - **[DIAGNOSTIC_TOOLS_GUIDE.md](DIAGNOSTIC_TOOLS_GUIDE.md)** - 診斷工具使用指南
 
 ### 💻 開發文件
-- **[PROGRAM_FLOW.md](PROGRAM_FLOW.md)** - 完整程式流程（v4.0，最新）
-- **[INIT_COMMAND_FLOW.md](INIT_COMMAND_FLOW.md)** - 額定電流設定流程
-- **[NOMINAL_CURRENT_IMPLEMENTATION.md](NOMINAL_CURRENT_IMPLEMENTATION.md)** - 實作細節
-- **[DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md)** - 開發筆記
+- **[PROGRAM_FLOW.md](PROGRAM_FLOW.md)** - 完整程式流程
+- **[WEB_UI_FEATURE_REFERENCE.md](WEB_UI_FEATURE_REFERENCE.md)** - Web UI 頁面、HTTP REST API 與 WebSocket 參考
+- **[NOMINAL_CURRENT_IMPLEMENTATION.md](NOMINAL_CURRENT_IMPLEMENTATION.md)** - 額定電流設定實作細節
+- **[DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md)** - 開發技術備忘錄
 
 ### 🔧 維護文件
 - **[CHANGELOG.md](CHANGELOG.md)** - 版本更新歷史
@@ -51,12 +51,12 @@
 ## 🔄 文件關係圖
 
 ```
-使用者 → CLI_USER_GUIDE.md
+使用者 → USER_GUIDE.md（Web UI 主要操作方式）
   ↓
 遇到問題 → DIAGNOSTIC_TOOLS_GUIDE.md
 
 開發人員 → PROGRAM_FLOW.md → 程式碼實作
-           (完整流程)
+           WEB_UI_FEATURE_REFERENCE.md → HTTP API / WebSocket
 
 維護人員 → CHANGELOG.md + TODO.md
 
@@ -73,7 +73,8 @@
 | 文件 | 更新時機 |
 |------|----------|
 | **PROGRAM_FLOW.md** | 程式流程邏輯變更時 |
-| **CLI_USER_GUIDE.md** | 命令或操作變更時 |
+| **USER_GUIDE.md** | 命令、頁面或操作方式變更時 |
+| **WEB_UI_FEATURE_REFERENCE.md** | 新增 API 端點或頁面時 |
 | **DIAGNOSTIC_TOOLS_GUIDE.md** | 診斷工具功能變更時 |
 | **CHANGELOG.md** | 每次版本發布時 |
 | **TODO.md** | 完成/新增功能時 |
@@ -89,17 +90,19 @@
 
 ## 🆕 最近更新
 
+**2026-05-25**
+- ✅ CLI_USER_GUIDE.md → USER_GUIDE.md（重寫，加入 Web UI 操作章節）
+- ✅ 新增 WEB_UI_FEATURE_REFERENCE.md（Web UI 頁面一覽、HTTP REST API、WebSocket 結構）
+- ✅ DEVELOPMENT_NOTES.md 架構節更新 + Phase 4.x 技術備忘
+- ✅ TODO.md Phase 4.x 重組、工時統計更新
+- ✅ CHANGELOG.md 補充 2026-05-18 至 2026-05-25 缺漏條目
+
 **2025-11-25**
 - ✅ 創建 vendor/ 資料夾存放原廠文件
 - ✅ 更新 PROGRAM_FLOW.md 至 v4.0
 - ✅ 整理過時文件到 history/
-- ✅ 簡化文件索引結構
-
-**2025-11-13**
-- ✅ 新增 DIAGNOSTIC_TOOLS_GUIDE.md
-- ✅ 更新 CLI_USER_GUIDE.md
 
 ---
 
-**Last Updated**: 2025年11月25日  
+**Last Updated**: 2026年5月25日  
 **Maintained by**: Harry Chiu

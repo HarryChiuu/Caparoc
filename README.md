@@ -1,10 +1,10 @@
 # CAPAROC 電子斷路器控制系統
 
-> **版本**: v3.7  
-> **更新日期**: 2025-11-26  
+> **版本**: v4.2  
+> **更新日期**: 2026-05-25  
 > **維護者**: Harry Chiu
 
-CAPAROC 電子斷路器遠端控制程式，基於 EtherNet/IP 協議，支援多模組、多通道電流監控與控制。
+CAPAROC 電子斷路器遠端控制程式，基於 EtherNet/IP 協議，支援多模組、多通道電流監控與控制。提供 **Web UI**（瀏覽器操作）與 **CLI** 兩種操作介面。
 
 ---
 
@@ -26,14 +26,26 @@ pip install -r requirements.txt
 # 進入專案目錄
 cd c:\Users\harry\Project\Caparoc5
 
-# 啟動控制器
-python src/caparoc_controller.py
+# 建議：Web UI（瀏覽器操作）
+python web/app.py
+# 開啟瀏覽器 → http://localhost:8000
 
-# 或指定 IP 位址
-python src/caparoc_controller.py --ip 192.168.1.100
+# 或：CLI
+python src/caparoc_controller.py
 ```
 
-### 3. 基本操作
+### 3. Web UI 基本操作
+
+| 頁面 | 功能 |
+|------|------|
+| 儀表板 | 通道卡片、開關按鈕、即時電流 |
+| 通道設定 | 額定電流設定 |
+| 圖表監控 | 30 分鐘歷史曲線、zoom |
+| 系統日誌 | 即時日誌、等級篩選 |
+| 系統狀態 | 設備識別與全域設定 |
+| 連線設定 | IP 表單、網路資訊 |
+
+### 4. CLI 基本操作
 
 ```bash
 init 1 4             # 設定 CH1 額定電流為 4A
@@ -45,25 +57,25 @@ h                    # 顯示幫助
 q                    # 退出程式
 ```
 
-**📖 完整使用說明**: [CLI 使用指南](docs/CLI_USER_GUIDE.md)
+**📖 完整使用說明**: [使用者指南](docs/USER_GUIDE.md)
 
 ---
 
 ## 📚 文件導覽
 
 ### 用戶文件
-- **[CLI 使用指南](docs/CLI_USER_GUIDE.md)** - 完整命令說明與使用範例，包含所有可用命令的詳細說明和實際操作場景
-- **[程式流程說明](docs/PROGRAM_FLOW.md)** - 程式運作流程圖解，從啟動到命令執行的完整流程架構
+- **[使用者指南](docs/USER_GUIDE.md)** - Web UI 與 CLI 完整操作說明
+- **[診斷工具指南](docs/DIAGNOSTIC_TOOLS_GUIDE.md)** - 連線診斷與問題排查
 
 ### 開發文件
-- **[TODO.md](docs/TODO.md)** - 功能規劃與待實作項目，追蹤已完成功能和未來開發計畫
-- **[CHANGELOG.md](docs/CHANGELOG.md)** - 版本更新歷史，記錄每個版本的功能變更和修正
-- **[開發技術備忘錄](docs/DEVELOPMENT_NOTES.md)** - 技術決策與經驗教訓，記錄開發過程中的重要發現和解決方案
-- **[診斷工具指南](docs/DIAGNOSTIC_TOOLS_GUIDE.md)** - 問題診斷與排查，提供診斷工具使用方法和故障排除步驟
+- **[TODO.md](docs/TODO.md)** - 功能規劃與待實作項目
+- **[CHANGELOG.md](docs/CHANGELOG.md)** - 版本更新歷史
+- **[WEB UI / API 參考](docs/WEB_UI_FEATURE_REFERENCE.md)** - Web UI 頁面、HTTP REST API、WebSocket 資料結構
+- **[開發技術備忘錄](docs/DEVELOPMENT_NOTES.md)** - CIP lock 設計、IP LE-UDINT、WebSocket 斷線等技術細節
+- **[程式流程說明](docs/PROGRAM_FLOW.md)** - 程式運作流程架構
 
 ### 技術文件
-- **[額定電流實作指南](docs/NOMINAL_CURRENT_IMPLEMENTATION.md)** - Config Assembly 操作細節，深入解析額定電流設定的完整實作過程
-- **[初始化命令流程](docs/INIT_COMMAND_FLOW.md)** - init 命令實作流程，說明額定電流設定的執行步驟和驗證機制
+- **[額定電流實作指南](docs/NOMINAL_CURRENT_IMPLEMENTATION.md)** - Config Assembly 操作細節
 
 ---
 
@@ -81,15 +93,19 @@ q                    # 退出程式
 | **IP 配置** | 啟動時可變更設備 IP | 互動式設定 |
 | **自動重連** | 連線中斷時自動重試 | `reconnect` |
 
-### Phase 4 規劃中 🚧
+### Phase 4.0–4.2 已完成 ✅ (v4.0 - v4.2)
 
-詳見 [TODO.md](docs/TODO.md)：
-- 通道狀態資訊擴增
-- GUI 圖形介面開發
-- 數據記錄與分析
-- 告警通知系統
-- 多設備管理
-- 自動化測試與 CI/CD
+| 功能 | 說明 |
+|------|------|
+| **Web UI 基礎架構** | FastAPI + Vue 3 CDN，6 個功能頁面 |
+| **通道設定頁** | 額定電流表格，直接在瀏覽器操作 |
+| **圖表監控頁** | 雙 Y 軸、模組分圖、zoom、30 分鐘歷史 |
+| **系統日誌頁** | 等級篩選、顏色編碼、預載今日記錄 |
+| **系統狀態頁** | Identity Object + Class 0x0F |
+| **連線設定頁** | IP 表單 + 網路資訊面板（IP / MAC / 閘道） |
+| **多執行緒安全** | `_cip_lock` 序列化所有 generic_message 呼叫 |
+
+詳見 [TODO.md](docs/TODO.md) 及 [CHANGELOG.md](docs/CHANGELOG.md)
 
 ---
 
@@ -181,38 +197,45 @@ python tests/check_connection.py
 ```
 Caparoc5/
 ├── src/
-│   └── caparoc_controller.py     # 主控制程式 (v3.7)
+│   ├── caparoc_backend.py        # 裝置邏輯層（CIP 通訊，~750 行）
+│   ├── caparoc_controller.py     # CLI 包裝層（繼承 backend，~874 行）
+│   └── logging_manager.py        # 日誌管理
+├── web/
+│   ├── app.py                    # FastAPI 服務（~550 行）
+│   ├── templates/index.html      # Vue 3 CDN 頁面
+│   └── static/                   # JS / CSS
 ├── tests/
 │   ├── diagnostic_tools.py       # 診斷工具集
 │   └── check_connection.py       # 連線檢查工具
 ├── docs/                         # 完整文件
-│   ├── CLI_USER_GUIDE.md         # 使用者指南 ⭐
+│   ├── USER_GUIDE.md             # 使用者指南 ⭐
+│   ├── WEB_UI_FEATURE_REFERENCE.md  # API / WebSocket 參考
 │   ├── TODO.md                   # 功能規劃
 │   ├── CHANGELOG.md              # 版本歷史
 │   ├── DEVELOPMENT_NOTES.md      # 技術備忘錄
 │   ├── PROGRAM_FLOW.md           # 程式流程
 │   ├── DIAGNOSTIC_TOOLS_GUIDE.md # 診斷指南
-│   ├── NOMINAL_CURRENT_IMPLEMENTATION.md  # 額定電流設定實作
-│   ├── INIT_COMMAND_FLOW.md      # init 命令流程
+│   ├── NOMINAL_CURRENT_IMPLEMENTATION.md
 │   ├── history/                  # 歷史文件
 │   └── vendor/                   # 原廠文件
-├── archive/                      # 封存檔案 - 舊版本程式碼
-├── output/                       # 輸出文件
+├── archive/                      # 封存檔案
+├── config/                       # 設定檔（device_ip 等）
+├── logs/                         # 執行日誌
 ├── .gitmessage                   # Git commit 模板
 ├── requirements.txt              # Python 套件需求
-└── environment.yml               # 使用 Conda環境配置
+└── environment.yml               # Conda 環境配置
 ```
 
 ---
 
 ## 🔄 版本歷史
 
-- **v3.7** (2025-11-26) - 額定電流設定優化、文件重組
-- **v3.6** (2025-10-28) - 即時監控功能 (靜默/顯示模式)
-- **v3.5** (2025-10-28) - 多模組架構支援 (1-16 模組)
-- **v3.4** (2025-10-28) - 全域系統狀態檢查
-- **v3.3** (2025-10-27) - 狀態顯示增強
-- **v3.2** (2025-10-27) - 互動式額定電流設定
+- **v4.2** (2026-05-25) - 系統狀態頁、連線設定頁、頂部關閉按鈕、Bug fixes（CIP 鎖、IP 做變、重連）
+- **v4.1** (2026-05-21) - 圖表監控頁（Chart.js + zoom）、設備網路資訊 API
+- **v4.0** (2026-05-18) - Web UI 基礎架構（FastAPI + Vue 3）、導覽列、通道設定頁、系統日誌頁
+- **v3.8** (2026-05-14) - controller.py 延负 shadow 方法清除
+- **v3.7** (2025-11-26) - 額定電流設定測化、文件重組
+- **v3.5–3.6** (2025-10-28) - 多模組、即時監控、內部重構
 
 詳見 [CHANGELOG.md](docs/CHANGELOG.md)
 
@@ -226,7 +249,7 @@ Caparoc5/
 - **支援設備**: CAPAROC PM EIP(EtherNet/IP)
 - **支援模組**: 1-16 個 (每模組 4 通道)
 - **總通道數**: 最多 64 個
-- **電流範圍**: 0-25.5A (讀取), 1-10A (設定)
+- **電流範圍**: 0-25.5A (讀取), 1-20A (設定)
 - **電壓範圍**: 9.0-30.5V
 
 ---
@@ -239,10 +262,10 @@ Caparoc5/
 ## 🆘 取得協助
 
 ### 文件
-- **使用問題** → [CLI_USER_GUIDE.md](docs/CLI_USER_GUIDE.md) - 命令使用方法和操作範例
+- **使用問題** → [USER_GUIDE.md](docs/USER_GUIDE.md) - Web UI 與 CLI 操作方式
 - **連接問題** → [DIAGNOSTIC_TOOLS_GUIDE.md](docs/DIAGNOSTIC_TOOLS_GUIDE.md) - 連線診斷和問題排查
+- **API 查詢** → [WEB_UI_FEATURE_REFERENCE.md](docs/WEB_UI_FEATURE_REFERENCE.md) - HTTP REST 端點與 WebSocket 格式
 - **開發問題** → [DEVELOPMENT_NOTES.md](docs/DEVELOPMENT_NOTES.md) - 技術細節和實作說明
-- **功能說明** → [PROGRAM_FLOW.md](docs/PROGRAM_FLOW.md) - 程式架構和執行流程
 - **額定電流** → [NOMINAL_CURRENT_IMPLEMENTATION.md](docs/NOMINAL_CURRENT_IMPLEMENTATION.md) - 額定電流設定完整指南
 
 ### GitHub
@@ -252,4 +275,4 @@ Caparoc5/
 ---
 
 **專案維護**: Harry Chiu  
-**最後更新**: 2025年11月26日
+**最後更新**: 2026年5月25日

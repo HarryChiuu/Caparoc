@@ -97,7 +97,7 @@
 
 ## 📚 延伸資料
 
-- [程式流程文件](../PROGRAM_FLOW.md) - 基於手冊實作的完整流程
+- [程式流程文件](../CLI_PROGRAM_FLOW.md) - 基於手冊實作的完整流程
 - [診斷工具指南](../DIAGNOSTIC_TOOLS_GUIDE.md) - 問題排查
 - [開發筆記](../DEVELOPMENT_NOTES.md) - 實作過程中的發現
 

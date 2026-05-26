@@ -57,19 +57,19 @@
 - **PROGRAM_FLOWCHART.md**
   - 狀態: ⚠️ 過時
   - 說明: 舊版程式流程圖（早期版本）
-  - 替代方案: 參考 `PROGRAM_FLOW.md`（最新版 v4.0）
+  - 替代方案: 參考 `CLI_PROGRAM_FLOW.md`（最新版 v5.0）
   - 保留原因: 記錄架構演進
 
 - **MAIN_PROGRAM_FLOW.md**
   - 狀態: ⚠️ 過時（v1.0, 2025-11-13）
   - 說明: 主程式流程詳解（較舊版本）
-  - 替代方案: 參考 `PROGRAM_FLOW.md`（最新版 v4.0）
+  - 替代方案: 參考 `CLI_PROGRAM_FLOW.md`（最新版 v5.0）
   - 保留原因: 記錄功能演進過程
 
 - **PROGRAM_FLOW.md**（舊版）
   - 狀態: ⚠️ 過時（v3.5, 2025-10-28）
   - 說明: 程式執行流程樹狀圖（v3.5 版本）
-  - 替代方案: 參考 `PROGRAM_FLOW.md`（最新版 v4.0, 已替換）
+  - 替代方案: 參考 `CLI_PROGRAM_FLOW.md`（最新版 v5.0，已替換）
   - 保留原因: 記錄早期流程設計
 
 ## 📚 當前有效文件
@@ -85,7 +85,7 @@
 - `INIT_COMMAND_FLOW.md` - 額定電流設定流程（最新）
 - `NOMINAL_CURRENT_IMPLEMENTATION.md` - 額定電流實作細節
 - `MAIN_PROGRAM_FLOW.md` - 主程式流程
-- `PROGRAM_FLOW.md` - 程式流程說明
+- `CLI_PROGRAM_FLOW.md` - 程式流程說明（最新）
 
 ### 工具與診斷
 - `DIAGNOSTIC_TOOLS_GUIDE.md` - 診斷工具指南

@@ -9,7 +9,7 @@
 - **[DIAGNOSTIC_TOOLS_GUIDE.md](DIAGNOSTIC_TOOLS_GUIDE.md)** - 診斷工具使用指南
 
 ### 💻 開發文件
-- **[PROGRAM_FLOW.md](PROGRAM_FLOW.md)** - 完整程式流程
+- **[CLI_PROGRAM_FLOW.md](CLI_PROGRAM_FLOW.md)** - CLI 完整程式流程（caparoc_controller + backend）
 - **[WEB_UI_FEATURE_REFERENCE.md](WEB_UI_FEATURE_REFERENCE.md)** - Web UI 頁面、HTTP REST API 與 WebSocket 參考
 - **[NOMINAL_CURRENT_IMPLEMENTATION.md](NOMINAL_CURRENT_IMPLEMENTATION.md)** - 額定電流設定實作細節
 - **[DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md)** - 開發技術備忘錄
@@ -55,7 +55,7 @@
   ↓
 遇到問題 → DIAGNOSTIC_TOOLS_GUIDE.md
 
-開發人員 → PROGRAM_FLOW.md → 程式碼實作
+開發人員 → CLI_PROGRAM_FLOW.md → 程式碼實作
            WEB_UI_FEATURE_REFERENCE.md → HTTP API / WebSocket
 
 維護人員 → CHANGELOG.md + TODO.md
@@ -72,7 +72,7 @@
 
 | 文件 | 更新時機 |
 |------|----------|
-| **PROGRAM_FLOW.md** | 程式流程邏輯變更時 |
+| **CLI_PROGRAM_FLOW.md** | 程式流程邏輯變更時 |
 | **USER_GUIDE.md** | 命令、頁面或操作方式變更時 |
 | **WEB_UI_FEATURE_REFERENCE.md** | 新增 API 端點或頁面時 |
 | **DIAGNOSTIC_TOOLS_GUIDE.md** | 診斷工具功能變更時 |

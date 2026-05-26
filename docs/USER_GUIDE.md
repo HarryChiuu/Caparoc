@@ -1012,7 +1012,7 @@ logs/caparoc_YYYY-MM-DD.log
 - **TODO.md** - 功能規劃與待實作項目
 - **CHANGELOG.md** - 版本更新歷史
 - **DEVELOPMENT_NOTES.md** - 技術細節與開發經驗
-- **PROGRAM_FLOW.md** - 程式流程說明
+- **CLI_PROGRAM_FLOW.md** - 程式流程說明
 
 ---
 

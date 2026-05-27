@@ -5,12 +5,16 @@ CAPAROC Web UI 服務 (Phase 4.0)
 直接執行（自動開啟瀏覽器）：
     python web/app.py
 
+Demo 模式（不需要實際設備）：
+    python web/app.py --demo
+
 或用 uvicorn（從專案根目錄）：
     uvicorn web.app:app --reload --port 8000
 """
 
 import sys
 import os
+import math
 import signal
 import asyncio
 import threading
@@ -20,6 +24,10 @@ from collections import deque
 from contextlib import asynccontextmanager
 from datetime import date as _date, datetime as _datetime
 from pathlib import Path
+
+# ==================== Demo 模式旗標 ====================
+_DEMO_MODE: bool = "--demo" in sys.argv
+_demo_tick: int = 0  # 每秒遞增，用於電流波形模擬
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.responses import HTMLResponse, FileResponse
@@ -131,6 +139,11 @@ backend = CaparocBackend(_default_ip)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """服務啟動時嘗試連線；停止時安全斷線。"""
+    if _DEMO_MODE:
+        _WEB_LOGGER.warning("*** DEMO 模式：使用模擬資料，不連線實際設備 ***",
+                             extra={'log_module': 'WEB'})
+        yield
+        return
     _WEB_LOGGER.log(_SYSTEM_LEVEL, f"Web 服務啟動，嘗試連線至 {backend.device_ip}...",
                      extra={'log_module': 'WEB'})
     # 啟動時連線失敗不阻斷服務，可透過 POST /api/connect 手動連線
@@ -229,6 +242,8 @@ async def index():
 @app.get("/api/status")
 def get_status():
     """取得設備完整狀態快照。"""
+    if _DEMO_MODE:
+        return _generate_demo_payload()
     if not backend.is_connected:
         return {"connected": False, "device_ip": backend.device_ip}
     raw = backend._read_current_status()
@@ -238,6 +253,8 @@ def get_status():
 @app.post("/api/connect")
 async def api_connect(ip: str = Query(default=None)):
     """建立連線。可選傳入新 IP（?ip=192.168.x.x）。"""
+    if _DEMO_MODE:
+        return {"success": True, "ip": "192.168.2.111 [DEMO]"}
     if ip:
         backend.device_ip = ip
     success = await asyncio.to_thread(backend.connect)
@@ -260,6 +277,9 @@ async def api_disconnect():
 @app.get("/api/device/network")
 async def api_device_network():
     """讀取設備網路資訊（TCP/IP Interface + MAC）。"""
+    if _DEMO_MODE:
+        return {"ip": "192.168.2.111", "subnet": "255.255.255.0", "gateway": "192.168.2.1",
+                "mac": "00:A0:45:DE:MO:01", "hostname": "CAPAROC-DEMO", "dhcp": False}
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="設備未連線")
     info = await asyncio.to_thread(backend.get_network_info)
@@ -269,6 +289,9 @@ async def api_device_network():
 @app.get("/api/device/info")
 async def api_device_info():
     """讀取設備識別資訊與全域設定參數（Identity Object + Class 0x0F 全域設定）。"""
+    if _DEMO_MODE:
+        return {"vendor": "Phoenix Contact", "product_name": "CAPAROC-PM-EIP [DEMO]",
+                "serial": "DEMO-0000", "revision": "1.0", "firmware": "V1.00"}
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="設備未連線")
     info = await asyncio.to_thread(backend.get_device_info)
@@ -291,6 +314,8 @@ async def api_shutdown():
 @app.post("/api/channel/{channel_id}/on")
 def channel_on(channel_id: int):
     """開啟通道（1-based 全域通道編號）。"""
+    if _DEMO_MODE:
+        return {"success": True, "channel": channel_id, "state": "on"}
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="未連線")
     module, ch = backend.get_module_and_channel(channel_id)
@@ -301,6 +326,8 @@ def channel_on(channel_id: int):
 @app.post("/api/channel/{channel_id}/off")
 def channel_off(channel_id: int):
     """關閉通道（1-based 全域通道編號）。"""
+    if _DEMO_MODE:
+        return {"success": True, "channel": channel_id, "state": "off"}
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="未連線")
     module, ch = backend.get_module_and_channel(channel_id)
@@ -311,11 +338,13 @@ def channel_off(channel_id: int):
 @app.post("/api/channel/{channel_id}/nominal")
 def set_nominal(channel_id: int, current_amps: float = Query(...)):
     """設定通道額定電流（1-based 全域通道編號，1-20 A 整數）。"""
-    if not backend.is_connected:
-        raise HTTPException(status_code=503, detail="未連線")
     amps_int = int(round(current_amps))
     if amps_int < 1 or amps_int > 20:
         raise HTTPException(status_code=422, detail="額定電流範圍 1–20 A")
+    if _DEMO_MODE:
+        return {"success": True, "channel": channel_id, "nominal_amps": amps_int}
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="未連線")
     module, ch = backend.get_module_and_channel(channel_id)
     ok = backend.set_nominal_current(module, ch, amps_int)
     if not ok:
@@ -378,6 +407,43 @@ def get_history(minutes: int = Query(default=10, ge=1, le=30)):
             "total_current": total_current, "channels": channels}
 
 
+# ==================== Demo 資料生成 ====================
+def _generate_demo_payload() -> dict:
+    """生成模擬設備狀態（電流以正弦波小幅波動）。"""
+    global _demo_tick
+    _demo_tick += 1
+    t = _demo_tick
+
+    def wave(base: float, amp: float, period: float, offset: float = 0.0) -> float:
+        return round(base + amp * math.sin(2 * math.pi * (t + offset) / period), 2)
+
+    channels = [
+        {"id": 1, "module": 1, "channel": 1, "on": True,  "current_amps": wave(1.5, 0.30, 20,  0), "nominal_amps": 4.0, "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
+        {"id": 2, "module": 1, "channel": 2, "on": True,  "current_amps": wave(3.1, 0.50, 15,  5), "nominal_amps": 4.0, "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
+        {"id": 3, "module": 1, "channel": 3, "on": False, "current_amps": 0.0,                       "nominal_amps": 4.0, "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
+        {"id": 4, "module": 1, "channel": 4, "on": True,  "current_amps": wave(3.4, 0.20, 25, 10), "nominal_amps": 4.0, "warn_80": True,  "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
+        {"id": 5, "module": 2, "channel": 1, "on": True,  "current_amps": wave(0.8, 0.10, 30,  2), "nominal_amps": 2.0, "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
+        {"id": 6, "module": 2, "channel": 2, "on": True,  "current_amps": wave(2.4, 0.40, 18,  8), "nominal_amps": 4.0, "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
+        {"id": 7, "module": 2, "channel": 3, "on": False, "current_amps": 0.0,                       "nominal_amps": 4.0, "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
+        {"id": 8, "module": 2, "channel": 4, "on": True,  "current_amps": wave(1.2, 0.15, 22, 15), "nominal_amps": 4.0, "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
+    ]
+    total_current = round(sum(ch["current_amps"] for ch in channels), 2)
+    return {
+        "connected":      True,
+        "device_ip":      "192.168.2.111 [DEMO]",
+        "module_count":   2,
+        "voltage":        wave(24.1, 0.08, 40),
+        "total_current":  total_current,
+        "undervoltage":   False,
+        "overvoltage":    False,
+        "system_error":   False,
+        "warn_80_global": False,
+        "total_shutdown": False,
+        "channels":       channels,
+        "timestamp":      _datetime.now().isoformat(),
+    }
+
+
 # ==================== WebSocket ====================
 # 追蹤前端連線數；最後一個斷線後倒數自動關閉伺服器
 _ws_client_count = 0
@@ -411,7 +477,9 @@ async def ws_status(websocket: WebSocket):
 
     try:
         while True:
-            if backend.is_connected:
+            if _DEMO_MODE:
+                payload = _generate_demo_payload()
+            elif backend.is_connected:
                 raw = await asyncio.to_thread(backend._read_current_status)
                 if raw is None:
                     # 設備失聯：清理連線旗標，讓前端可以正常重連
@@ -451,5 +519,6 @@ if __name__ == "__main__":
     # 等伺服器就緒後再開瀏覽器（延遲 1.5 秒）
     threading.Timer(1.5, lambda: webbrowser.open(URL)).start()
 
-    print(f"[CAPAROC] 伺服器啟動中... 開啟 {URL}")
+    mode_label = " [DEMO]" if _DEMO_MODE else ""
+    print(f"[CAPAROC{mode_label}] 伺服器啟動中... 開啟 {URL}")
     uvicorn.run(app, host="0.0.0.0", port=PORT)

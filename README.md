@@ -72,7 +72,7 @@ q                    # 退出程式
 - **[CHANGELOG.md](docs/CHANGELOG.md)** - 版本更新歷史
 - **[WEB UI / API 參考](docs/WEB_UI_FEATURE_REFERENCE.md)** - Web UI 頁面、HTTP REST API、WebSocket 資料結構
 - **[開發技術備忘錄](docs/DEVELOPMENT_NOTES.md)** - CIP lock 設計、IP LE-UDINT、WebSocket 斷線等技術細節
-- **[程式流程說明](docs/PROGRAM_FLOW.md)** - 程式運作流程架構
+- **[程式流程說明](docs/CLI_PROGRAM_FLOW.md)** - 程式運作流程架構
 
 ### 技術文件
 - **[額定電流實作指南](docs/NOMINAL_CURRENT_IMPLEMENTATION.md)** - Config Assembly 操作細節

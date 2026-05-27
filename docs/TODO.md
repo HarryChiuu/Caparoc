@@ -483,28 +483,47 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-##### 4.3.1 設定值外部化（config 管理）
+##### 4.3.1 設定值外部化（config 合併）
 
-> **目的**：將散落在程式碼中的硬編碼數字集中到 `config/web_config.json`，方便部署時調整  
+> **目的**：將散落的多個 config 檔案合併為單一 `config/config.json`，集中管理所有可調參數  
 > **預估工時**：1 小時
 
-**目前硬編碼、可外部化的項目**：
+**目前配置檔案現況**：
+- `config/device_config.json` — 僅存 `default_ip`
+- `config/logging_config.json` — Log 等級、檔案大小、備份數
 
-| 設定項 | 目前位置 | 目前值 | 建議 key |
-|--------|---------|--------|---------|
-| Web 伺服器 port | `web/app.py` `__main__` | `8000` | `web_port` |
-| WebSocket 推送間隔 | `web/app.py` ws_status | `1` 秒 | `ws_push_interval` |
-| 額定電流有效範圍 | `src/caparoc_backend.py` | `1–20` A | `nominal_current_min/max` |
-| 顯示小數位數（Web） | `web/static/js/app.js` fmt() | `1` 位 | `display_decimal_places` |
-| 監控預設輪詢間隔（CLI） | CLI argument default | `2` 秒 | `monitor_interval_s` |
+**合併後 `config/config.json` 結構**：
 
-**備註**：`fmt()` 的 `.toFixed(1)` 只影響 Web UI；CLI 的 `:.1f` 在 `caparoc_backend.py` 獨立定義，兩者不共用。`nominal_current_range` 前後端共用，可透過 `GET /api/config/limits` 提供給前端。
+```json
+{
+  "device": {
+    "default_ip": "192.168.50.111"
+  },
+  "web": {
+    "port": 8000,
+    "ws_push_interval": 1.0,
+    "ws_idle_shutdown": 10
+  },
+  "logging": {
+    "level": "INFO",
+    "max_bytes": 5242880,
+    "backup_count": 3
+  },
+  "nominal_current": {
+    "min": 1,
+    "max": 20
+  }
+}
+```
 
 **工作項目**：
-- [ ] 建立 `config/web_config.json`（web_port, ws_push_interval, display_decimal_places）
-- [ ] `web/app.py` 啟動時讀取 web_config.json
+- [ ] 建立 `config/config.json`，合併 device + logging + web 設定
+- [ ] 刪除舊的 `device_config.json`、`logging_config.json`
+- [ ] `web/app.py` 改為讀取 `config/config.json`
+- [ ] `src/logging_manager.py` 改為讀取 `config/config.json` 的 `logging` 區塊
+- [ ] `src/caparoc_backend.py` 從 config 讀取 nominal range
 - [ ] `app.js` 從 `GET /api/config/limits` 取得 nominal_current_range，動態設定 input min/max
-- [ ] `caparoc_backend.py` 從設定檔讀取 nominal range
+- [ ] 建立 `config/config.example.json`（含註解說明，供首次部署參考）
 
 **預估工時**：1 小時
 
@@ -693,21 +712,141 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-### Phase 5: 企業級功能 (未來規劃) 💡
+### Phase 5: 打包與部署 📦
 
-#### 5.1 遠端訪問與控制
+> **目標**：將程式打包為可直接執行的形式（Windows .exe / Linux Docker），方便無 Python 環境的使用者部署  
+> **前置條件**：Phase 4.3.1 config 合併完成
+
+---
+
+#### 5.1 路徑抽象化（打包前置）
+
+> **目的**：統一所有路徑解析邏輯，使程式在開發環境與 PyInstaller frozen 環境都能正確找到 config / logs / web 資源  
+> **預估工時**：1–1.5 小時
+
+**問題**：目前各模組用 `Path(__file__).parent` 定位目錄，打包後 `__file__` 指向暫存解壓路徑（`sys._MEIPASS`），  
+config 和 logs 必須在 exe 旁邊（使用者可編輯），不能被打包進去。
+
+**工作項目**：
+- [ ] 建立 `src/paths.py`：統一定義 `ROOT_DIR` / `CONFIG_DIR` / `LOG_DIR` / `WEB_DIR`
+  - 開發模式：`Path(__file__).resolve().parent.parent`
+  - Frozen 模式：`Path(sys.executable).parent`（exe 同層）
+  - 內嵌資源：`Path(sys._MEIPASS)` / `"web"`（templates + static）
+- [ ] `web/app.py`：`_WEB_DIR`、`_ROOT_DIR` 改為引用 `paths.py`
+- [ ] `src/logging_manager.py`：log 目錄改為引用 `paths.py`
+- [ ] `src/caparoc_backend.py` / `caparoc_controller.py`：config 路徑改為引用 `paths.py`
+
+---
+
+#### 5.2 CDN 資源離線化
+
+> **目的**：讓 Web UI 在無網路環境（工廠內網）也能正常載入  
+> **預估工時**：0.5 小時
+
+**目前 CDN 依賴**：
+- Vue 3（`unpkg.com/vue@3`）
+- Chart.js 4.4.6（`cdn.jsdelivr.net/npm/chart.js`）
+- chartjs-plugin-zoom（`cdn.jsdelivr.net`）
+- Hammer.js（`cdn.jsdelivr.net`）
+
+**工作項目**：
+- [ ] 下載上述 JS 檔案到 `web/static/vendor/`
+- [ ] `index.html` 的 `<script src>` 改為 `/static/vendor/xxx.min.js`
+- [ ] 驗證離線環境正常運作
+
+---
+
+#### 5.3 PyInstaller 打包（Windows .exe）
+
+> **目的**：產出單一 `caparoc.exe`，雙擊即啟動 Web UI + 自動開瀏覽器  
+> **預估工時**：2–3 小時
+
+**工作項目**：
+- [ ] 建立 `build/caparoc.spec`（PyInstaller spec file）
+- [ ] 主入口：`web/app.py`
+- [ ] `--add-data`：收入 `web/templates`、`web/static`（含 vendor/）
+- [ ] `--hidden-import`：`uvicorn.logging`、`uvicorn.lifespan.on`、`uvicorn.protocols.http.auto`、`websockets`、`pycomm3`
+- [ ] 排除不需打包的目錄：`tests/`、`docs/`、`archive/`、`logs/`
+- [ ] 測試：打包後 exe 可正常啟動、連線設備、操作所有頁面
+- [ ] 可選：第二入口 `caparoc_cli.exe`（打包 `caparoc_controller.py`）
+
+**產出目錄結構**：
+```
+dist/
+  caparoc.exe          ← 主程式（Web UI）
+  config/
+    config.json        ← 使用者可編輯設定
+  logs/                ← 執行時產生
+```
+
+---
+
+#### 5.4 首次執行初始化
+
+> **目的**：exe 首次執行時自動建立必要的外部目錄與檔案  
+> **預估工時**：0.5 小時
+
+**工作項目**：
+- [ ] exe 旁無 `config/` → 自動從內嵌 `config.example.json` 複製為 `config/config.json`
+- [ ] exe 旁無 `logs/` → 自動建立目錄
+- [ ] 啟動時 console 印出路徑資訊（方便使用者找到 config 位置）
+
+---
+
+#### 5.5 Linux 部署方案
+
+> **目的**：提供 Linux 環境的部署選項（工廠 server / 嵌入式設備）  
+> **預估工時**：1–2 小時
+
+**方案：Docker**（推薦）
+- [ ] 建立 `Dockerfile`（`python:3.12-slim` + pip install + COPY src/web/config）
+- [ ] 建立 `docker-compose.yml`（port mapping、volume mount config/ 和 logs/）
+- [ ] 文件：`docs/DEPLOYMENT.md` 部署說明
+
+**用法**：
+```bash
+docker compose up -d
+# 瀏覽器開啟 http://<server-ip>:8000
+```
+
+**備選方案**：
+- PyInstaller 在 Linux 上打包（需 Linux CI 環境）
+- systemd service（直接 pip install + `systemctl start caparoc`）
+
+---
+
+#### 5.6 版本號管理
+
+> **目的**：單一來源版本號，打包時自動嵌入，UI 可顯示  
+> **預估工時**：0.5 小時
+
+**工作項目**：
+- [ ] 建立 `src/version.py`：`__version__ = "4.x.x"`
+- [ ] 打包時嵌入 git commit hash（短 hash）
+- [ ] Web UI 系統狀態頁顯示版本號
+- [ ] `--version` 命令列參數支援
+
+---
+
+**Phase 5 預估總工時**：6–8 小時
+
+---
+
+### Phase 6: 企業級功能 (未來規劃) 💡
+
+#### 6.1 遠端訪問與控制
 - [ ] Web API 介面 (RESTful)
 - [ ] WebSocket 即時通訊
 - [ ] 遠端監控網頁
 - [ ] 身份驗證與權限管理
 
-#### 5.2 高可用性設計
+#### 6.2 高可用性設計
 - [ ] 斷線自動重連優化
 - [ ] 狀態持久化
 - [ ] 故障轉移機制
 - [ ] 負載均衡支援
 
-#### 5.3 大數據與 AI 分析
+#### 6.3 大數據與 AI 分析
 - [ ] 時序數據庫整合 (InfluxDB)
 - [ ] 異常模式識別 (機器學習)
 - [ ] 預測性維護建議
@@ -744,7 +883,7 @@ def _show_monitor_status(self, status, changes):
 
 | 優先級 | 任務 | 預估工時 |
 |--------|------|---------|
-| 高 | 4.3.1 設定值外部化（config 管理） | 1h |
+| 高 | 4.3.1 設定值外部化（config 合併） | 1h |
 | 高 | 4.4.1 CLI 通道詳細狀態顯示 | 2-3h |
 | 中 | 4.3.2 UI 視覺一致性與元件統一 | 2-3h |
 | 中 | 4.4.2/4.4.3 CLI 設備/網路資訊指令 | 1h |
@@ -755,7 +894,24 @@ def _show_monitor_status(self, status, changes):
 
 **Phase 4 預估剩餘工時**：29-41 小時
 
-**Phase 5 未來願景** 💭
+---
+
+**Phase 5 打包與部署** 📦
+
+| 優先級 | 任務 | 預估工時 |
+|--------|------|---------|
+| 高 | 5.1 路徑抽象化（打包前置） | 1-1.5h |
+| 高 | 5.2 CDN 資源離線化 | 0.5h |
+| 高 | 5.3 PyInstaller 打包（Windows .exe） | 2-3h |
+| 中 | 5.4 首次執行初始化 | 0.5h |
+| 中 | 5.5 Linux 部署方案（Docker） | 1-2h |
+| 低 | 5.6 版本號管理 | 0.5h |
+
+**Phase 5 預估工時**：6-8 小時
+
+---
+
+**Phase 6 未來願景** 💭
 - 企業級遠端管理
 - 高可用性部署
 - AI 智能分析

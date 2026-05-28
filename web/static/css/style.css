@@ -126,6 +126,18 @@ body {
 .stat-label { font-size: 0.75rem; color: #7a8aaa; margin-top: 4px; }
 .warn-text { color: #ffb300; }
 
+/* ── 模組分組 ─────────────────────────────── */
+.mod-group { margin-bottom: 20px; }
+.mod-group:last-child { margin-bottom: 0; }
+.mod-header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #2a2f45;
+}
+.mod-title { font-size: 0.85rem; font-weight: 600; color: #aab4cc; }
+.mod-ch-count { font-size: 0.75rem; color: #5a6680; }
+
 /* ── 通道卡片 ───────────────────────────── */
 .ch-grid {
     display: grid;

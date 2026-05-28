@@ -81,32 +81,39 @@
                     <section class="panel" v-if="(state.connected || wasEverConnected) && state.channels.length">
                         <h2>通道控制</h2>
                         <div v-if="!state.connected" class="stale-banner">⚠ 資料已停止更新，顯示斷線前最後資料</div>
-                        <div class="ch-grid">
-                            <div class="ch-card"
-                                 v-for="ch in state.channels" :key="ch.id"
-                                 :class="[cardClass(ch), !state.connected ? 'stale' : '']">
-                                <div class="ch-top">
-                                    <span class="ch-name">CH{{ ch.id }}</span>
-                                    <span class="ch-mod">M{{ ch.module }}</span>
-                                    <button class="toggle-btn" @click="toggleCh(ch)" :disabled="!state.connected">
-                                        {{ ch.on ? '關閉' : '開啟' }}
-                                    </button>
-                                </div>
-                                <div class="ch-current">{{ fmt(ch.current_amps) }} <span class="unit">A</span></div>
-                                <div class="bar-wrap">
-                                    <div class="bar-fill" :style="{ width: barPct(ch) + '%' }"
-                                         :class="barClass(ch)"></div>
-                                </div>
-                                <div class="ch-meta">
-                                    額定 {{ ch.nominal_amps }} A
-                                    <span class="pct">{{ barPct(ch).toFixed(0) }}%</span>
-                                </div>
-                                <div class="ch-flags">
-                                    <span class="flag warn" v-if="ch.warn_80">80%</span>
-                                    <span class="flag fault" v-if="ch.overload">過載</span>
-                                    <span class="flag fault" v-if="ch.short_circuit">短路</span>
-                                    <span class="flag fault" v-if="ch.hardware_fault">硬體故障</span>
-                                    <span class="flag fault" v-if="ch.total_shutdown">總關斷</span>
+                        <div class="mod-group" v-for="mod in activeModules" :key="mod">
+                            <div class="mod-header">
+                                <span class="mod-title">模組 {{ mod }}</span>
+                                <span class="mod-ch-count">{{ channelsByModule[mod].length }} 通道</span>
+                            </div>
+                            <div class="ch-grid">
+                                <div class="ch-card"
+                                     v-for="ch in channelsByModule[mod]" :key="ch.id"
+                                     :class="[cardClass(ch), !state.connected ? 'stale' : '']">
+                                    <div class="ch-top">
+                                        <span class="ch-name">CH{{ ch.channel }}</span>
+                                        <button class="toggle-btn"
+                                                :class="ch.on ? 'is-on' : 'is-off'"
+                                                @click="toggleCh(ch)" :disabled="!state.connected">
+                                            {{ ch.on ? '關閉' : '開啟' }}
+                                        </button>
+                                    </div>
+                                    <div class="ch-current">{{ fmt(ch.current_amps) }} <span class="unit">A</span></div>
+                                    <div class="bar-wrap">
+                                        <div class="bar-fill" :style="{ width: barPct(ch) + '%' }"
+                                             :class="barClass(ch)"></div>
+                                    </div>
+                                    <div class="ch-meta">
+                                        額定 {{ ch.nominal_amps }} A
+                                        <span class="pct">{{ barPct(ch).toFixed(0) }}%</span>
+                                    </div>
+                                    <div class="ch-flags">
+                                        <span class="flag warn" v-if="ch.warn_80">80%</span>
+                                        <span class="flag fault" v-if="ch.overload">過載</span>
+                                        <span class="flag fault" v-if="ch.short_circuit">短路</span>
+                                        <span class="flag fault" v-if="ch.hardware_fault">硬體故障</span>
+                                        <span class="flag fault" v-if="ch.total_shutdown">總關斷</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>

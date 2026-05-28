@@ -10,6 +10,14 @@ body {
     flex-direction: column;
 }
 
+#app {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
 /* ── 頂部列 ─────────────────────────────── */
 .topbar {
     display: flex;

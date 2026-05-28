@@ -1,5 +1,16 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── 捲動條主題 ──────────────────────────── */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #3a4060 #1c2030;
+}
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: #1c2030; border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: #3a4060; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #4e5880; }
+::-webkit-scrollbar-corner { background: #1c2030; }
+
 body {
     font-family: 'Segoe UI', Arial, sans-serif;
     background: #12151c;

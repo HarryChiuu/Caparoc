@@ -82,14 +82,14 @@ createApp({
         }
 
         function cardClass(ch) {
-            if (ch.overload || ch.short_circuit || ch.hardware_fault) return 'fault';
+            if (ch.overload || ch.short_circuit || ch.hardware_fault || ch.total_shutdown) return 'fault';
             if (ch.warn_80) return 'warn';
             if (ch.on) return 'on';
             return 'off';
         }
 
         function barClass(ch) {
-            if (ch.overload || ch.short_circuit) return 'bar-fault';
+            if (ch.overload || ch.short_circuit || ch.total_shutdown) return 'bar-fault';
             if (ch.warn_80) return 'bar-warn';
             return 'bar-ok';
         }

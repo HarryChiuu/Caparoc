@@ -765,12 +765,14 @@ class CaparocController(CaparocBackend):
                         
                         elif cmd.startswith('on '):
                             self._update_activity()
-                            ch = int(cmd.split()[1])
-                            self.set_channel(ch, True)
+                            global_ch = int(cmd.split()[1])
+                            _mod, _ch = self.get_module_and_channel(global_ch)
+                            self.set_channel(_mod, _ch, True)
                         elif cmd.startswith('off '):
                             self._update_activity()
-                            ch = int(cmd.split()[1])
-                            self.set_channel(ch, False)
+                            global_ch = int(cmd.split()[1])
+                            _mod, _ch = self.get_module_and_channel(global_ch)
+                            self.set_channel(_mod, _ch, False)
                         elif cmd == 'setting':
                             result = self._handle_setting_connip(driver)
                             if result == 'reconnect':

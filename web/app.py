@@ -319,7 +319,7 @@ def channel_on(channel_id: int):
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="未連線")
     module, ch = backend.get_module_and_channel(channel_id)
-    backend.set_channel(ch, True)
+    backend.set_channel(module, ch, True)
     return {"success": True, "channel": channel_id, "state": "on"}
 
 
@@ -331,7 +331,7 @@ def channel_off(channel_id: int):
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="未連線")
     module, ch = backend.get_module_and_channel(channel_id)
-    backend.set_channel(ch, False)
+    backend.set_channel(module, ch, False)
     return {"success": True, "channel": channel_id, "state": "off"}
 
 

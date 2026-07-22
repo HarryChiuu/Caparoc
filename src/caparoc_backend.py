@@ -891,12 +891,13 @@ class CaparocBackend:
 
     # ==================== 通道開關控制 ====================
 
-    def set_channel(self, channel, state):
+    def set_channel(self, module, channel, state):
         """
         控制通道開關（基於手冊 7.1.2 節）
 
         Args:
-            channel: 1-4
+            module: 1-16（模組編號，對應 Output byte 1..16）
+            channel: 1-4（模組內通道編號）
             state: True=開啟, False=關閉
         """
         if not self.driver:
@@ -904,7 +905,7 @@ class CaparocBackend:
             return False
 
         with self.io_data_lock:
-            byte_offset = 1
+            byte_offset = module   # Module 1 -> byte 1, Module 2 -> byte 2, ...
             bit_position = channel - 1
             current_value = self.current_output_data[byte_offset]
 
@@ -915,8 +916,8 @@ class CaparocBackend:
 
             self.current_output_data[byte_offset] = new_value
 
-            print(f"[控制] CH{channel} -> {'開啟' if state else '關閉'}")
-            print(f"       byte[1]: 0x{current_value:02X} -> 0x{new_value:02X}")
+            print(f"[控制] M{module}-CH{channel} -> {'開啟' if state else '關閉'}")
+            print(f"       byte[{byte_offset}]: 0x{current_value:02X} -> 0x{new_value:02X}")
             self.logger.info(
                 f"CH{channel} {'開啟' if state else '關閉'}",
                 extra={'log_module': 'CTRL', 'channel': channel}

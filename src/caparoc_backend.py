@@ -727,13 +727,16 @@ class CaparocBackend:
             struct.pack_into('<B', config_data, offset_current, current_amps)
             struct.pack_into('<B', config_data, offset_status, 2)  # No Change
 
-            # 進階保護：確保所有通道的 Status 都是 2 (No Change)
+            # 進階保護：確保所有實體通道的 Status 都是 2 (No Change)
+            # ⚠️ 只保護 nominal > 0 的真實通道；空槽（nominal = 0）保持原樣，
+            #    否則對 2 通道模組寫入時會因更動空槽 status 而被裝置拒絕。
             for m in range(1, 17):
                 for ch in range(1, 5):
                     ch_offset = self.get_config_channel_offset(m, ch)
                     ch_status_offset = ch_offset + 2
                     if ch_status_offset < len(config_data):
-                        if config_data[ch_status_offset] == 0:
+                        ch_nominal = config_data[ch_offset]  # Config Byte 0 = Nominal
+                        if ch_nominal > 0 and config_data[ch_status_offset] == 0:
                             struct.pack_into('<B', config_data, ch_status_offset, 2)
 
             write_response = self.driver.generic_message(

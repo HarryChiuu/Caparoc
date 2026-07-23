@@ -531,7 +531,7 @@ def _show_monitor_status(self, status, changes):
 
 ##### 4.3.2 通道設定頁按模組分區顯示 ✅ **已完成（2026-07-23）**
 
-> **目的**：与儀表板「通道控制」區塊一致，將目前單一大表格改為依模組分區，方便混合模組（2/4 通道）的額定電流設定
+> **目的**：與儀表板「通道控制」區塊一致，將目前單一大表格改為依模組分區，方便混合模組（2/4 通道）的額定電流設定
 
 **完成內容**：
 - [x] `app.js`：新增 `batchNominalByMod`、`batchStatusByMod`、`setModuleNominal(mod)`
@@ -583,7 +583,7 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-##### 4.3.3 視覚一致性與元件統一化
+##### 4.3.3 視覺一致性與元件統一化
 
 > **目的**：統一按鈕、表格、卡片、提示訊息等 UI 元件的外觀語言
 
@@ -667,7 +667,41 @@ def _show_monitor_status(self, status, changes):
   - 顯示 IP、子網路遮罩、預設閘道、MAC 位址、主機名稱
 
 ---
+#### 4.3.6 通道自訂標籤（設備名稱）🆕
 
+> **目的**：讓使用者為每個通道輸入自訂名稱（例如「主機電源」、「照明迴路」），存檔於本機，下次連線同一台裝置自動載入。  
+> **識別方式**：用 PM EIP 的 Serial Number 作為 key，確保標籤綁定到正確的物理裝置。  
+> **預估工時**：2-3 對時
+
+**實作步驟**：
+
+**Step 1 — `config/channel_labels.json`**
+- [ ] 建立標籤儲存檔，結構：`{ "devices": { "<serial>": { "device_label": "", "channels": { "1": "", "2": "" } } } }`
+- [ ] 建立 `channel_labels.json.example`（空模板）
+
+**Step 2 — `web/app.py`**
+- [ ] 啟動時讀取 `channel_labels.json`
+- [ ] `GET /api/labels`：回傳目前連線裝置的標籤（依 Serial Number 查表）
+- [ ] `POST /api/labels/{channel_id}`：寫入對應標籤並存檔
+- [ ] `_format_status()`：每個 channel 加入 `"label": str` 欄位
+- [ ] 連線成功後依 S/N 自動載入標籤
+
+**Step 3 — `app.js`**
+- [ ] `channelLabels = reactive({})` 儲存 `{ch_id: label}`
+- [ ] `fetchLabels()` 對應 `/api/labels`，連線後呼叫
+- [ ] `saveLabel(chId, text)` 對應 `POST /api/labels/{chId}`
+- [ ] `return {}` 加入 `channelLabels`、`saveLabel`
+
+**Step 4 — `index.html`**
+- [ ] 儀表板通道卡片：CH 編號下方加可變輸入框（點擊即可編輯，`@blur` 再儲存）
+- [ ] 通道設定頁：新增「設備名稱」欄（inline 可編輯）
+
+**Step 5 — `style.css`**
+- [ ] 新增 `.ch-label` 樣式（卡片內小字標籤輸入框）
+
+**預估工時**：2-3 對時
+
+---
 #### 4.5 數據記錄與分析功能 🆕
 
 **目標**: 記錄設備運行數據，提供歷史分析
@@ -939,6 +973,8 @@ docker compose up -d
 |--------|------|---------|
 | 高 | 4.3.1 設定值外部化（config 合併） | 1h |
 | 高 | **4.3.5 nominal_readonly 主動探測（2 通道模組反灰）** | **2-3h** |
+| 高 | **4.3.6 通道自訂標籤（設備名稱）** | **2-3h** |
+| 高 | **4.3.6 通道自訂標籤（設備名稱）** | **2-3h** |
 | 高 | 4.4.1 CLI 通道詳細狀態顯示 | 2-3h |
 | 中 | 4.3.3 UI 視覺一致性與元件統一 | 2-3h |
 | 中 | 4.4.2/4.4.3 CLI 設備/網路資訊指令 | 1h |

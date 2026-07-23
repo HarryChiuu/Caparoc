@@ -412,8 +412,7 @@
                                 <td>序號</td>
                                 <td class="net-mac">
                                     {{ deviceInfo.identity?.serial_number != null
-                                    ? '0x' + deviceInfo.identity.serial_number.toString(16).toUpperCase().padStart(8,
-                                    '0')
+                                    ? deviceInfo.identity.serial_number.toString()
                                     : '—' }}
                                 </td>
                             </tr>

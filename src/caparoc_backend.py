@@ -45,7 +45,10 @@ class CaparocBackend:
 
         # 模組與通道配置（動態檢測）
         self.module_count = 0  # 初始化時檢測,支援 1-16 個模組
-        self.channels_per_module = 4  # 每個模組 4 通道
+        self.channels_per_module = 4  # 每個模組最大掃描通道數（含空槽）
+        # 動態對應表：由 _read_current_status 每次更新
+        # { global_ch_id: (module, channel) }，正確反映實際通道佈局
+        self._ch_id_map: dict[int, tuple[int, int]] = {}
 
         # I/O 狀態
         self.implicit_mode_enabled = False
@@ -120,14 +123,21 @@ class CaparocBackend:
 
     def get_module_and_channel(self, global_channel):
         """
-        將全域通道編號轉換為模組和通道
+        將全域通道編號轉換為模組和通道。
+
+        優先使用 _ch_id_map（由 _read_current_status 每次讀取硬體後更新），
+        正確反映 2/4 通道混合安裝的實際佈局。
+        連線前尚無資料時 fallback 至等差公式。
 
         Args:
-            global_channel: 全域通道編號 (1-64)
+            global_channel: 全域通道編號 (1-based)
 
         Returns:
             tuple: (module, channel)
         """
+        if global_channel in self._ch_id_map:
+            return self._ch_id_map[global_channel]
+        # Fallback：連線前或地圖尚未建立時使用等差公式
         module = ((global_channel - 1) // self.channels_per_module) + 1
         channel = ((global_channel - 1) % self.channels_per_module) + 1
         return (module, channel)
@@ -1246,6 +1256,7 @@ class CaparocBackend:
                     global_ch += 1
                     status_byte  = data[offset]
                     flowing_byte = data[offset + 2]
+                    self._ch_id_map[global_ch] = (module, ch)  # 更新對應表
 
                     channels[global_ch] = {
                         'module':          module,

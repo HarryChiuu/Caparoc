@@ -212,6 +212,12 @@ body {
     background: #161928; border-radius: 8px;
     padding: 10px 14px; margin-bottom: 14px;
 }
+.mod-batch-bar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    background: #12151c; border-radius: 6px;
+    padding: 7px 12px; margin-bottom: 10px;
+    border: 1px solid #2a2f45;
+}
 .nominal-input {
     width: 78px; padding: 6px 10px;
     border: 1px solid #2a2f45; border-radius: 6px;

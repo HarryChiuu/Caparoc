@@ -296,6 +296,30 @@ createApp({
             setTimeout(() => { batchStatus.msg = ''; }, 4000);
         }
 
+        // Per-module 批次設定
+        const batchNominalByMod = reactive({});
+        const batchStatusByMod  = reactive({});
+
+        async function setModuleNominal(mod) {
+            const val = Math.round(parseFloat(batchNominalByMod[mod]));
+            if (isNaN(val) || val < 1 || val > 20) {
+                batchStatusByMod[mod] = { ok: false, msg: '請輸入 1–20 A' };
+                return;
+            }
+            const channels = channelsByModule.value[mod] || [];
+            let ok = 0, fail = 0;
+            for (const ch of channels) {
+                const r = await fetch(`/api/channel/${ch.id}/nominal?current_amps=${val}`, { method: 'POST' });
+                r.ok ? ok++ : fail++;
+            }
+            batchStatusByMod[mod] = {
+                ok:  fail === 0,
+                msg: fail === 0 ? `✓ ${ok} 個通道完成` : `${ok} 成功，${fail} 失敗`,
+            };
+            batchNominalByMod[mod] = '';
+            setTimeout(() => { batchStatusByMod[mod] = { ok: false, msg: '' }; }, 3000);
+        }
+
 
         // -- 系統日誌 --
         const logEntries   = ref([]);
@@ -618,6 +642,7 @@ createApp({
             refreshDeviceInfo, refreshNetworkInfo,
             nominalInputs, nominalFeedback, batchNominal, batchStatus,
             setNominal, setAllNominal,
+            batchNominalByMod, batchStatusByMod, setModuleNominal,
             logEntries, logTotal, logPage, logPageSize, logFilter,
             logAutoScroll, logTotalPages,
             fetchLogs, clearLogs, setPageSize,

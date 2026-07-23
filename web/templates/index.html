@@ -200,7 +200,8 @@
 
                         <template v-if="state.connected || wasEverConnected">
                             <div v-if="!state.connected" class="stale-banner">⚠ 資料已停止更新，顯示斷線前最後資料</div>
-                            <!-- 批次套用 -->
+
+                            <!-- 全域批次列 -->
                             <div class="batch-bar">
                                 <span style="font-size:0.82rem;color:#7a8aaa;white-space:nowrap">全部套用</span>
                                 <input type="number" v-model="batchNominal"
@@ -213,41 +214,60 @@
                                       v-if="batchStatus.msg">{{ batchStatus.msg }}</span>
                             </div>
 
-                            <!-- 通道表格 -->
-                            <table class="ch-table">
-                                <thead>
-                                    <tr>
-                                        <th>通道</th>
-                                        <th>模組</th>
-                                        <th>目前額定電流</th>
-                                        <th>新值 (A)</th>
-                                        <th>操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr v-for="ch in state.channels" :key="ch.id">
-                                        <td class="td-ch">CH{{ ch.id }}</td>
-                                        <td class="td-mod">M{{ ch.module }}</td>
-                                        <td class="td-nominal">{{ ch.nominal_amps }} A</td>
-                                        <td>
-                                            <input type="number"
-                                                   v-model="nominalInputs[ch.id]"
-                                                   min="1" max="20" step="1"
-                                                   :placeholder="ch.nominal_amps"
-                                                   class="nominal-input"
-                                                   :disabled="!state.connected" />
-                                        </td>
-                                        <td>
-                                            <button class="btn" @click="setNominal(ch.id)" :disabled="!state.connected">設定</button>
-                                            <span class="feedback-msg"
-                                                  :class="nominalFeedback[ch.id]?.ok ? 'ok' : 'err'"
-                                                  v-if="nominalFeedback[ch.id]?.msg">
-                                                {{ nominalFeedback[ch.id].msg }}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
+                            <!-- 各模組區塊 -->
+                            <div class="mod-group" v-for="mod in activeModules" :key="mod">
+                                <div class="mod-header">
+                                    <span class="mod-title">模組 {{ mod }}</span>
+                                    <span class="mod-ch-count">{{ channelsByModule[mod].length }} 通道</span>
+                                </div>
+
+                                <!-- 模組批次列 -->
+                                <div class="mod-batch-bar">
+                                    <span style="font-size:0.82rem;color:#7a8aaa;white-space:nowrap">本模組套用</span>
+                                    <input type="number" v-model="batchNominalByMod[mod]"
+                                           min="1" max="20" step="1"
+                                           placeholder="A" class="nominal-input"
+                                           :disabled="!state.connected" />
+                                    <button class="btn btn-sm" @click="setModuleNominal(mod)" :disabled="!state.connected">套用</button>
+                                    <span class="feedback-msg"
+                                          :class="batchStatusByMod[mod]?.ok ? 'ok' : 'err'"
+                                          v-if="batchStatusByMod[mod]?.msg">{{ batchStatusByMod[mod].msg }}</span>
+                                </div>
+
+                                <!-- 通道表格 -->
+                                <table class="ch-table">
+                                    <thead>
+                                        <tr>
+                                            <th>通道</th>
+                                            <th>目前額定電流</th>
+                                            <th>新值 (A)</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="ch in channelsByModule[mod]" :key="ch.id">
+                                            <td class="td-ch">CH{{ ch.channel }}</td>
+                                            <td class="td-nominal">{{ ch.nominal_amps }} A</td>
+                                            <td>
+                                                <input type="number"
+                                                       v-model="nominalInputs[ch.id]"
+                                                       min="1" max="20" step="1"
+                                                       :placeholder="ch.nominal_amps"
+                                                       class="nominal-input"
+                                                       :disabled="!state.connected" />
+                                            </td>
+                                            <td>
+                                                <button class="btn btn-sm" @click="setNominal(ch.id)" :disabled="!state.connected">設定</button>
+                                                <span class="feedback-msg"
+                                                      :class="nominalFeedback[ch.id]?.ok ? 'ok' : 'err'"
+                                                      v-if="nominalFeedback[ch.id]?.msg">
+                                                    {{ nominalFeedback[ch.id].msg }}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
                         </template>
 
                     </section>

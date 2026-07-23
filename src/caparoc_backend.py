@@ -772,6 +772,8 @@ class CaparocBackend:
             )
             if not writable:
                 self._nominal_readonly_modules.add(mod)
+
+    def set_nominal_current(self, module, channel, current_amps, verify=True):
         """
         設定通道的額定電流（使用 Config Assembly）
 

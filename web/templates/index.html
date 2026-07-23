@@ -218,7 +218,10 @@
                                 <div class="mod-header">
                                     <span class="mod-title">模組 {{ mod }}</span>
                                     <span class="mod-ch-count">{{ channelsByModule[mod].length }} 通道</span>
-                                    <span class="mod-readonly-badge" v-if="isModNominalReadOnly(mod)">⚙️ 額定電流需手動設定（旋鈕）</span>
+                                    <button class="mod-readonly-badge" v-if="isModNominalReadOnly(mod)"
+                                        @click="showNominalHelp = true">
+                                        ⚙️ 額定電流需手動設定（旋鈕）&nbsp;ℹ️
+                                    </button>
                                 </div>
 
                                 <!-- 模組批次列 -->
@@ -268,6 +271,31 @@
                         </template>
 
                     </section>
+
+                    <!-- 手動設定說明 Modal -->
+                    <div class="modal-overlay" v-if="showNominalHelp" @click.self="showNominalHelp = false">
+                        <div class="modal-box">
+                            <div class="modal-header">
+                                <span>⚙️ 手動設定額定電流（旋鈕操作）</span>
+                                <button class="modal-close" @click="showNominalHelp = false">✕</button>
+                            </div>
+                            <div class="modal-body">
+                                <p class="modal-note">
+                                    此模組的額定電流由實體旋鈕決定，Web UI 無法透過 EtherNet/IP 遠端修改。
+                                </p>
+                                <ol class="modal-steps">
+                                    <li>將旋鈕轉到目標安培數（例如 3A）</li>
+                                    <li>通道 LED 開始閃激綠色（「待確認」狀態）</li>
+                                    <li><strong>長按 LED 按鈕 &gt; 2 秒</strong></li>
+                                    <li>LED 停止閃激 → 新安培已儲存到裝置</li>
+                                    <li>Web UI 約 1 秒後自動顯示更新後的額定電流</li>
+                                </ol>
+                                <p class="modal-warn">
+                                    ⚠ 僅轉旋鈕不會儲存，必須長按按鈕才能生效。
+                                </p>
+                            </div>
+                        </div>
+                    </div>
                 </template>
 
                 <!-- 系統日誌 -->

@@ -306,6 +306,9 @@ createApp({
             return channelsByModule.value[mod]?.[0]?.nominal_readonly ?? false;
         }
 
+        // 手動設定說明視窗開關
+        const showNominalHelp = ref(false);
+
         async function setModuleNominal(mod) {
             const val = Math.round(parseFloat(batchNominalByMod[mod]));
             if (isNaN(val) || val < 1 || val > 20) {
@@ -667,6 +670,7 @@ createApp({
             nominalInputs, nominalFeedback, batchNominal, batchStatus,
             setNominal, setAllNominal,
             batchNominalByMod, batchStatusByMod, setModuleNominal, isModNominalReadOnly,
+            showNominalHelp,
             logEntries, logTotal, logPage, logPageSize, logFilter,
             logAutoScroll, logTotalPages,
             fetchLogs, clearLogs, setPageSize,

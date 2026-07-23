@@ -453,38 +453,8 @@ def debug_set_nominal_direct(
 
 
 @app.get("/api/debug/scan-param-object")
-def debug_scan_param_object(start: int = Query(default=1), end: int = Query(default=80)):
-    """診斷：掃描 Parameter Object (Class 0x0F) instances，找出 nominal current 的位置。"""
-    if not backend.is_connected:
-        raise HTTPException(status_code=503, detail="未連線")
-    results = []
-    for inst in range(start, end + 1):
-        try:
-            resp = backend.driver.generic_message(
-                service=0x0E, class_code=0x0F, instance=inst,
-                attribute=1, connected=True, unconnected_send=False
-            )
-            if resp and not (hasattr(resp, 'error') and resp.error) and hasattr(resp, 'value'):
-                val = resp.value
-                if val is not None and len(val) > 0:
-                    results.append({
-                        "instance": inst,
-                        "bytes": list(val[:4]),
-                        "byte0": val[0] if len(val) > 0 else None,
-                    })
-                else:
-                    results.append({"instance": inst, "bytes": [], "byte0": None})
-            else:
-                err = getattr(resp, 'error', 'no_resp') if resp else 'no_resp'
-                results.append({"instance": inst, "error": str(err)})
-        except Exception as e:
-            results.append({"instance": inst, "error": str(e)[:60]})
-    return results
-
-
-@app.get("/api/debug/scan-param-object")
 def debug_scan_param_object():
-    """診斷：掃描 Class 0x0F (Parameter Object) 所有可讀的 instance，找 per-channel nominal 參數。"""
+    """診斷：掃描 Class 0x0F (Parameter Object) 所有可讀的 instance。"""
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="未連線")
     results = []
@@ -498,8 +468,7 @@ def debug_scan_param_object():
                 results.append({
                     "instance": inst,
                     "bytes": list(r.value[:8]),
-                    "val_uint8":  r.value[0] if len(r.value) >= 1 else None,
-                    "val_uint16": int.from_bytes(r.value[:2], 'little') if len(r.value) >= 2 else None,
+                    "val_uint8": r.value[0] if len(r.value) >= 1 else None,
                 })
         except Exception:
             pass
@@ -512,11 +481,10 @@ def debug_try_param_object_write(
     channel: int = Query(...),
     amps: int = Query(...),
 ):
-    """診斷：透過 Class 0x0F Parameter Object 直接寫入 nominal current，繞過 Config Assembly。"""
+    """診斷：透過 Class 0x0F Parameter Object 直接寫入 nominal current。"""
     import time as _time
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="未連線")
-    # instance = 5 + ((module-1)*4 + (channel-1))*3 + 1
     nominal_inst = 5 + ((module - 1) * 4 + (channel - 1)) * 3 + 1
     wr = backend.driver.generic_message(
         service=0x10, class_code=0x0F, instance=nominal_inst,
@@ -537,6 +505,74 @@ def debug_try_param_object_write(
         "write_error": wr_err,
         "inp_nominal_after": nom_after,
         "success": nom_after == amps,
+    }
+
+
+@app.post("/api/debug/try-cfg-status1")
+def debug_try_cfg_status1(
+    module: int = Query(...),
+    channel: int = Query(...),
+    amps: int = Query(...),
+):
+    """診斷：Config Assembly 寫入，status=1（RC mode 測試）。"""
+    import time as _time
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="未連線")
+    cfg_resp = backend.driver.generic_message(
+        service=0x0E, class_code=0x04,
+        instance=backend.config_instance, attribute=3, connected=True
+    )
+    cfg = bytearray(cfg_resp.value)
+    off = backend.get_config_channel_offset(module, channel)
+    cfg[off]     = amps
+    cfg[off + 2] = 1      # status=1: Turn On + apply nominal
+    wr = backend.driver.generic_message(
+        service=0x10, class_code=0x04,
+        instance=backend.config_instance, attribute=3,
+        request_data=bytes(cfg), connected=True
+    )
+    wr_err = getattr(wr, 'error', None)
+    _time.sleep(1.5)
+    inp = backend.driver.generic_message(
+        service=0x0E, class_code=0x04,
+        instance=backend.input_instance, attribute=3, connected=False
+    )
+    inp_off = backend.get_channel_offset(module, channel)
+    nom_after = inp.value[inp_off + 1] if inp and inp.value and len(inp.value) > inp_off + 2 else None
+    return {
+        "method": "Config status=1",
+        "write_error": wr_err, "inp_nominal_after": nom_after, "success": nom_after == amps
+    }
+
+
+@app.post("/api/debug/try-param-attr3")
+def debug_try_param_attr3(
+    module: int = Query(...),
+    channel: int = Query(...),
+    amps: int = Query(...),
+):
+    """診斷：Parameter Object attribute=3 寫入。"""
+    import time as _time
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="未連線")
+    nominal_inst = 5 + ((module - 1) * 4 + (channel - 1)) * 3 + 1
+    wr = backend.driver.generic_message(
+        service=0x10, class_code=0x0F, instance=nominal_inst,
+        attribute=3, request_data=bytes([amps]),
+        connected=True, unconnected_send=False
+    )
+    wr_err = getattr(wr, 'error', None)
+    _time.sleep(1.5)
+    inp = backend.driver.generic_message(
+        service=0x0E, class_code=0x04,
+        instance=backend.input_instance, attribute=3, connected=False
+    )
+    inp_off = backend.get_channel_offset(module, channel)
+    nom_after = inp.value[inp_off + 1] if inp and inp.value and len(inp.value) > inp_off + 2 else None
+    return {
+        "method": "Parameter Object attr=3",
+        "nominal_instance": nominal_inst,
+        "write_error": wr_err, "inp_nominal_after": nom_after, "success": nom_after == amps
     }
 
 

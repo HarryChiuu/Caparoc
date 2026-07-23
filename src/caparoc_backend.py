@@ -648,6 +648,15 @@ class CaparocBackend:
 
     # ==================== 額定電流設定 ====================
 
+    def _get_nominal_param_instance(self, module: int, channel: int) -> int:
+        """
+        計算 Class 0x0F (Parameter Object) 中對應通道額定電流的 instance 編號。
+
+        掃描結果確認公式：instance = 5 + ((module-1)*4 + (channel-1))*3 + 1
+        每個通道佔 3 個 instance：[Lock, Nominal, Status]
+        """
+        return 5 + ((module - 1) * 4 + (channel - 1)) * 3 + 1
+
     def set_nominal_current(self, module, channel, current_amps, verify=True):
         """
         設定通道的額定電流（使用 Config Assembly）
@@ -702,55 +711,50 @@ class CaparocBackend:
             if current_value is not None:
                 print(f"⚠️  變更警告: {ch_label} 目前為 {current_value}A，修改設定為 {current_amps}A")
 
-            response = self.driver.generic_message(
-                service=0x0E,
-                class_code=0x04,
-                instance=self.config_instance,
-                attribute=3,
-                connected=True
-            )
-
-            if not response or (hasattr(response, 'error') and response.error):
-                error_msg = response.error if hasattr(response, 'error') else '未知錯誤'
-                print(f"   ❌ 讀取失敗: {error_msg}")
-                return False
-
-            config_data = bytearray(response.value)
-
-            if offset_status >= len(config_data):
-                print(f"   ❌ Offset 超出範圍")
-                return False
-
-            old_current = config_data[offset_current]
-            old_status = config_data[offset_status]
-
-            struct.pack_into('<B', config_data, offset_current, current_amps)
-            struct.pack_into('<B', config_data, offset_status, 2)  # No Change
-
-            # 進階保護：確保所有實體通道的 Status 都是 2 (No Change)
-            # ⚠️ 只保護 nominal > 0 的真實通道；空槽（nominal = 0）保持原樣，
-            #    否則對 2 通道模組寫入時會因更動空槽 status 而被裝置拒絕。
-            for m in range(1, 17):
-                for ch in range(1, 5):
-                    ch_offset = self.get_config_channel_offset(m, ch)
-                    ch_status_offset = ch_offset + 2
-                    if ch_status_offset < len(config_data):
-                        ch_nominal = config_data[ch_offset]  # Config Byte 0 = Nominal
-                        if ch_nominal > 0 and config_data[ch_status_offset] == 0:
-                            struct.pack_into('<B', config_data, ch_status_offset, 2)
-
+            # ── 主要方法：Class 0x0F Parameter Object（適用所有模組，含 2 通道）──
+            nominal_inst = self._get_nominal_param_instance(module, channel)
+            print(f"   [0x0F] instance={nominal_inst}，寫入 {current_amps}A")
             write_response = self.driver.generic_message(
                 service=0x10,
-                class_code=0x04,
-                instance=self.config_instance,
-                attribute=3,
-                request_data=bytes(config_data),
-                connected=True
+                class_code=0x0F,
+                instance=nominal_inst,
+                attribute=1,
+                request_data=bytes([current_amps]),
+                connected=True,
+                unconnected_send=False,
             )
+            wr_err = getattr(write_response, 'error', None)
+            print(f"   [0x0F] write_error={wr_err!r}")
 
-            if hasattr(write_response, 'error') and write_response.error:
-                print(f"   ❌ 寫入失敗: {write_response.error}")
-                return False
+            if wr_err:
+                # 備用方法：Config Assembly（舊邏輯，對部分模組仍有效）
+                print(f"   [0x0F] 失敗，回退至 Config Assembly...")
+                cfg_resp = self.driver.generic_message(
+                    service=0x0E, class_code=0x04,
+                    instance=self.config_instance, attribute=3, connected=True
+                )
+                if not cfg_resp or (hasattr(cfg_resp, 'error') and cfg_resp.error):
+                    print(f"   ❌ Config Assembly 讀取失敗")
+                    return False
+                config_data = bytearray(cfg_resp.value)
+                if offset_status >= len(config_data):
+                    print(f"   ❌ Offset 超出範圍")
+                    return False
+                config_data[offset_current] = current_amps
+                config_data[offset_status]  = 2
+                for m in range(1, 17):
+                    for ch in range(1, 5):
+                        co = self.get_config_channel_offset(m, ch)
+                        if co + 2 < len(config_data) and config_data[co] > 0 and config_data[co + 2] == 0:
+                            config_data[co + 2] = 2
+                wr2 = self.driver.generic_message(
+                    service=0x10, class_code=0x04,
+                    instance=self.config_instance, attribute=3,
+                    request_data=bytes(config_data), connected=True
+                )
+                if hasattr(wr2, 'error') and wr2.error:
+                    print(f"   ❌ Config Assembly 寫入失敗: {wr2.error}")
+                    return False
 
             if verify:
                 print(f"\n[驗證] 等待設備應用配置...")

@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
+
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CAPAROC 控制台</title>
     <link rel="stylesheet" href="/static/css/style.css?v=4.2.10d" />
 </head>
+
 <body>
     <div id="app">
 
@@ -21,11 +23,13 @@
                     <span class="conn-label">
                         {{ state.connected ? '已連線 · ' + state.device_ip : '未連線' }}
                     </span>
-                    <button class="btn-sm" v-if="!state.connected" @click="doConnect" :disabled="connecting">{{ connecting ? '連線中...' : '連線' }}</button>
+                    <button class="btn-sm" v-if="!state.connected" @click="doConnect" :disabled="connecting">{{
+                        connecting ? '連線中...' : '連線' }}</button>
                     <button class="btn-sm btn-danger" v-else @click="doDisconnect">斷線</button>
                 </div>
                 <div class="topbar-sep"></div>
-                <button class="btn-close-tab" @click="doCloseTab" :disabled="isShuttingDown" :title="isShuttingDown ? '關閉中...' : '關閉伺服器'">{{ isShuttingDown ? '⏹' : '✕' }}</button>
+                <button class="btn-close-tab" @click="doCloseTab" :disabled="isShuttingDown"
+                    :title="isShuttingDown ? '關閉中...' : '關閉伺服器'">{{ isShuttingDown ? '⏹' : '✕' }}</button>
             </div>
         </header>
 
@@ -35,10 +39,8 @@
             <!-- 左側導覽列 -->
             <nav class="sidebar" :class="{ collapsed: sidebarCollapsed }">
                 <ul class="nav-list">
-                    <li v-for="item in navItems" :key="item.page"
-                        class="nav-item"
-                        :class="{ active: currentPage === item.page }"
-                        @click="navigate(item.page)">
+                    <li v-for="item in navItems" :key="item.page" class="nav-item"
+                        :class="{ active: currentPage === item.page }" @click="navigate(item.page)">
                         <span class="nav-icon">{{ item.icon }}</span>
                         <span class="nav-label">{{ item.label }}</span>
                     </li>
@@ -87,21 +89,19 @@
                                 <span class="mod-ch-count">{{ channelsByModule[mod].length }} 通道</span>
                             </div>
                             <div class="ch-grid">
-                                <div class="ch-card"
-                                     v-for="ch in channelsByModule[mod]" :key="ch.id"
-                                     :class="[cardClass(ch), !state.connected ? 'stale' : '']">
+                                <div class="ch-card" v-for="ch in channelsByModule[mod]" :key="ch.id"
+                                    :class="[cardClass(ch), !state.connected ? 'stale' : '']">
                                     <div class="ch-top">
                                         <span class="ch-name">CH{{ ch.channel }}</span>
-                                        <button class="toggle-btn"
-                                                :class="ch.on ? 'is-on' : 'is-off'"
-                                                @click="toggleCh(ch)" :disabled="!state.connected">
+                                        <button class="toggle-btn" :class="ch.on ? 'is-on' : 'is-off'"
+                                            @click="toggleCh(ch)" :disabled="!state.connected">
                                             {{ ch.on ? '關閉' : '開啟' }}
                                         </button>
                                     </div>
                                     <div class="ch-current">{{ fmt(ch.current_amps) }} <span class="unit">A</span></div>
                                     <div class="bar-wrap">
                                         <div class="bar-fill" :style="{ width: barPct(ch) + '%' }"
-                                             :class="barClass(ch)"></div>
+                                            :class="barClass(ch)"></div>
                                     </div>
                                     <div class="ch-meta">
                                         額定 {{ ch.nominal_amps }} A
@@ -134,12 +134,17 @@
                             <h2>圖表監控</h2>
                             <div class="chart-toolbar">
                                 <div class="chart-win-btns">
-                                    <button :class="['btn','btn-sm', chartWindow===30?'':'btn-ghost']"   @click="setChartWindow(30)">30s</button>
-                                    <button :class="['btn','btn-sm', chartWindow===60?'':'btn-ghost']"   @click="setChartWindow(60)">1分</button>
-                                    <button :class="['btn','btn-sm', chartWindow===600?'':'btn-ghost']"  @click="setChartWindow(600)">10分</button>
-                                    <button :class="['btn','btn-sm', chartWindow===1800?'':'btn-ghost']" @click="setChartWindow(1800)">30分</button>
+                                    <button :class="['btn','btn-sm', chartWindow===30?'':'btn-ghost']"
+                                        @click="setChartWindow(30)">30s</button>
+                                    <button :class="['btn','btn-sm', chartWindow===60?'':'btn-ghost']"
+                                        @click="setChartWindow(60)">1分</button>
+                                    <button :class="['btn','btn-sm', chartWindow===600?'':'btn-ghost']"
+                                        @click="setChartWindow(600)">10分</button>
+                                    <button :class="['btn','btn-sm', chartWindow===1800?'':'btn-ghost']"
+                                        @click="setChartWindow(1800)">30分</button>
                                 </div>
-                                <button v-if="chartHistoryMode" class="btn btn-sm" @click="jumpToLive" title="回到最新資料">▶ 即時</button>
+                                <button v-if="chartHistoryMode" class="btn btn-sm" @click="jumpToLive" title="回到最新資料">▶
+                                    即時</button>
                                 <button :class="['btn','btn-sm', chartPaused?'btn-ghost':'']" @click="toggleChartPause">
                                     {{ chartPaused ? '▶ 恢復' : '⏸ 暫停' }}
                                 </button>
@@ -164,16 +169,13 @@
                             </div>
 
                             <!-- 各模組通道電流（每模組一張圖） -->
-                            <div v-for="mod in activeModules" :key="mod"
-                                 class="chart-section" style="margin-top:20px">
+                            <div v-for="mod in activeModules" :key="mod" class="chart-section" style="margin-top:20px">
                                 <div class="chart-section-header">
                                     <h3 class="chart-subtitle">M{{ mod }} 通道電流</h3>
                                     <div class="chart-ch-checks">
-                                        <label v-for="ch in channelsByModule[mod]" :key="ch.id"
-                                               class="ch-check-label">
-                                            <input type="checkbox"
-                                                   :checked="chartChannelVisible[ch.id] !== false"
-                                                   @change="toggleChannelVisible(ch.id)" />
+                                        <label v-for="ch in channelsByModule[mod]" :key="ch.id" class="ch-check-label">
+                                            <input type="checkbox" :checked="chartChannelVisible[ch.id] !== false"
+                                                @change="toggleChannelVisible(ch.id)" />
                                             <span>CH{{ ch.channel }}</span>
                                         </label>
                                     </div>
@@ -204,14 +206,11 @@
                             <!-- 全域批次列 -->
                             <div class="batch-bar">
                                 <span style="font-size:0.82rem;color:#7a8aaa;white-space:nowrap">全部套用</span>
-                                <input type="number" v-model="batchNominal"
-                                       min="1" max="20" step="1"
-                                       placeholder="A" class="nominal-input"
-                                       :disabled="!state.connected" />
+                                <input type="number" v-model="batchNominal" min="1" max="20" step="1" placeholder="A"
+                                    class="nominal-input" :disabled="!state.connected" />
                                 <button class="btn" @click="setAllNominal" :disabled="!state.connected">套用至全部通道</button>
-                                <span class="feedback-msg"
-                                      :class="batchStatus.ok ? 'ok' : 'err'"
-                                      v-if="batchStatus.msg">{{ batchStatus.msg }}</span>
+                                <span class="feedback-msg" :class="batchStatus.ok ? 'ok' : 'err'"
+                                    v-if="batchStatus.msg">{{ batchStatus.msg }}</span>
                             </div>
 
                             <!-- 各模組區塊 -->
@@ -224,14 +223,12 @@
                                 <!-- 模組批次列 -->
                                 <div class="mod-batch-bar">
                                     <span style="font-size:0.82rem;color:#7a8aaa;white-space:nowrap">本模組套用</span>
-                                    <input type="number" v-model="batchNominalByMod[mod]"
-                                           min="1" max="20" step="1"
-                                           placeholder="A" class="nominal-input"
-                                           :disabled="!state.connected" />
-                                    <button class="btn btn-sm" @click="setModuleNominal(mod)" :disabled="!state.connected">套用</button>
-                                    <span class="feedback-msg"
-                                          :class="batchStatusByMod[mod]?.ok ? 'ok' : 'err'"
-                                          v-if="batchStatusByMod[mod]?.msg">{{ batchStatusByMod[mod].msg }}</span>
+                                    <input type="number" v-model="batchNominalByMod[mod]" min="1" max="20" step="1"
+                                        placeholder="A" class="nominal-input" :disabled="!state.connected" />
+                                    <button class="btn btn-sm" @click="setModuleNominal(mod)"
+                                        :disabled="!state.connected">套用</button>
+                                    <span class="feedback-msg" :class="batchStatusByMod[mod]?.ok ? 'ok' : 'err'"
+                                        v-if="batchStatusByMod[mod]?.msg">{{ batchStatusByMod[mod].msg }}</span>
                                 </div>
 
                                 <!-- 通道表格 -->
@@ -249,18 +246,16 @@
                                             <td class="td-ch">CH{{ ch.channel }}</td>
                                             <td class="td-nominal">{{ ch.nominal_amps }} A</td>
                                             <td>
-                                                <input type="number"
-                                                       v-model="nominalInputs[ch.id]"
-                                                       min="1" max="20" step="1"
-                                                       :placeholder="ch.nominal_amps"
-                                                       class="nominal-input"
-                                                       :disabled="!state.connected" />
+                                                <input type="number" v-model="nominalInputs[ch.id]" min="1" max="20"
+                                                    step="1" :placeholder="ch.nominal_amps" class="nominal-input"
+                                                    :disabled="!state.connected" />
                                             </td>
                                             <td>
-                                                <button class="btn btn-sm" @click="setNominal(ch.id)" :disabled="!state.connected">設定</button>
+                                                <button class="btn btn-sm" @click="setNominal(ch.id)"
+                                                    :disabled="!state.connected">設定</button>
                                                 <span class="feedback-msg"
-                                                      :class="nominalFeedback[ch.id]?.ok ? 'ok' : 'err'"
-                                                      v-if="nominalFeedback[ch.id]?.msg">
+                                                    :class="nominalFeedback[ch.id]?.ok ? 'ok' : 'err'"
+                                                    v-if="nominalFeedback[ch.id]?.msg">
                                                     {{ nominalFeedback[ch.id].msg }}
                                                 </span>
                                             </td>
@@ -287,13 +282,12 @@
                                 </select>
                                 <div class="log-pagesize">
                                     <button :class="['btn', 'btn-sm', logPageSize === 10 ? '' : 'btn-ghost']"
-                                            @click="setPageSize(10)">10</button>
+                                        @click="setPageSize(10)">10</button>
                                     <button :class="['btn', 'btn-sm', logPageSize === 20 ? '' : 'btn-ghost']"
-                                            @click="setPageSize(20)">20</button>
+                                        @click="setPageSize(20)">20</button>
                                 </div>
                                 <button :class="['btn', 'btn-sm', logAutoScroll ? '' : 'btn-ghost']"
-                                        @click="toggleLogAuto"
-                                        :title="logAutoScroll ? '點擊暫停自動更新' : '點擊開啟自動更新'">
+                                    @click="toggleLogAuto" :title="logAutoScroll ? '點擊暫停自動更新' : '點擊開啟自動更新'">
                                     {{ logAutoScroll ? '⏸ 暫停' : '▶ 自動更新' }}
                                 </button>
                                 <button class="btn btn-sm btn-ghost" @click="fetchLogs" title="立即重新整理">重整</button>
@@ -336,12 +330,11 @@
                         <div class="log-pagination">
                             <span class="log-total">共 {{ logTotal }} 筆</span>
                             <div class="log-pager" v-if="logTotalPages > 1">
-                                <button class="btn btn-sm btn-ghost"
-                                        @click="logPrevPage" :disabled="logPage === 0">‹</button>
+                                <button class="btn btn-sm btn-ghost" @click="logPrevPage"
+                                    :disabled="logPage === 0">‹</button>
                                 <span class="log-page-info">{{ logPage + 1 }} / {{ logTotalPages }}</span>
-                                <button class="btn btn-sm btn-ghost"
-                                        @click="logNextPage"
-                                        :disabled="logPage >= logTotalPages - 1">›</button>
+                                <button class="btn btn-sm btn-ghost" @click="logNextPage"
+                                    :disabled="logPage >= logTotalPages - 1">›</button>
                             </div>
                         </div>
                     </section>
@@ -354,7 +347,8 @@
                         <h2>
                             設備識別
                             <span v-if="!state.connected" class="net-info-stale">（上次連線資訊）</span>
-                            <button v-if="state.connected" class="btn-refresh" @click="refreshDeviceInfo" :disabled="deviceInfoRefreshing" title="重新從設備讀取">↻</button>
+                            <button v-if="state.connected" class="btn-refresh" @click="refreshDeviceInfo"
+                                :disabled="deviceInfoRefreshing" title="重新從設備讀取">↻</button>
                         </h2>
                         <div v-if="!deviceInfo && state.connected" class="hint-text">讀取中...</div>
                         <table v-else-if="deviceInfo" class="net-info-table">
@@ -366,28 +360,31 @@
                                 <td>廠商 ID</td>
                                 <td>
                                     {{ deviceInfo.identity?.vendor_id != null
-                                        ? deviceInfo.identity.vendor_id + ' (Phoenix Contact)'
-                                        : '—' }}
+                                    ? deviceInfo.identity.vendor_id + ' (Phoenix Contact)'
+                                    : '—' }}
                                 </td>
                             </tr>
                             <tr>
                                 <td>產品代碼</td>
-                                <td>{{ deviceInfo.identity?.product_code != null ? deviceInfo.identity.product_code : '—' }}</td>
+                                <td>{{ deviceInfo.identity?.product_code != null ? deviceInfo.identity.product_code :
+                                    '—' }}</td>
                             </tr>
                             <tr>
                                 <td>韌體版本</td>
                                 <td>
-                                    {{ (deviceInfo.identity?.revision_major != null && deviceInfo.identity?.revision_minor != null)
-                                        ? deviceInfo.identity.revision_major + '.' + deviceInfo.identity.revision_minor
-                                        : '—' }}
+                                    {{ (deviceInfo.identity?.revision_major != null &&
+                                    deviceInfo.identity?.revision_minor != null)
+                                    ? deviceInfo.identity.revision_major + '.' + deviceInfo.identity.revision_minor
+                                    : '—' }}
                                 </td>
                             </tr>
                             <tr>
                                 <td>序號</td>
                                 <td class="net-mac">
                                     {{ deviceInfo.identity?.serial_number != null
-                                        ? '0x' + deviceInfo.identity.serial_number.toString(16).toUpperCase().padStart(8, '0')
-                                        : '—' }}
+                                    ? '0x' + deviceInfo.identity.serial_number.toString(16).toUpperCase().padStart(8,
+                                    '0')
+                                    : '—' }}
                                 </td>
                             </tr>
                         </table>
@@ -403,15 +400,18 @@
                         <h2>
                             全域設定
                             <span v-if="!state.connected" class="net-info-stale">（上次連線資訊）</span>
-                            <button v-if="state.connected" class="btn-refresh" @click="refreshDeviceInfo" :disabled="deviceInfoRefreshing" title="重新從設備讀取">↻</button>
+                            <button v-if="state.connected" class="btn-refresh" @click="refreshDeviceInfo"
+                                :disabled="deviceInfoRefreshing" title="重新從設備讀取">↻</button>
                         </h2>
                         <div v-if="!deviceInfo && state.connected" class="hint-text">讀取中...</div>
                         <table v-else-if="deviceInfo" class="net-info-table">
                             <tr>
                                 <td>運作模式</td>
                                 <td>
-                                    <span v-if="deviceInfo.system_config?.operating_mode === 0" class="sysconf-ok">Independent（獨立控制）</span>
-                                    <span v-else-if="deviceInfo.system_config?.operating_mode === 1" class="sysconf-warn">Wait for fieldbus（等待匯流排）</span>
+                                    <span v-if="deviceInfo.system_config?.operating_mode === 0"
+                                        class="sysconf-ok">Independent（獨立控制）</span>
+                                    <span v-else-if="deviceInfo.system_config?.operating_mode === 1"
+                                        class="sysconf-warn">Wait for fieldbus（等待匯流排）</span>
                                     <span v-else>—</span>
                                 </td>
                             </tr>
@@ -419,15 +419,17 @@
                                 <td>通道循序啟動延遲</td>
                                 <td>
                                     {{ deviceInfo.system_config?.switch_on_delay_ms != null
-                                        ? deviceInfo.system_config.switch_on_delay_ms + ' ms'
-                                        : '—' }}
+                                    ? deviceInfo.system_config.switch_on_delay_ms + ' ms'
+                                    : '—' }}
                                 </td>
                             </tr>
                             <tr>
                                 <td>電流參數鎖定</td>
                                 <td>
-                                    <span v-if="deviceInfo.system_config?.param_lock === 0" class="sysconf-ok">未鎖定</span>
-                                    <span v-else-if="deviceInfo.system_config?.param_lock === 1" class="sysconf-warn">已鎖定</span>
+                                    <span v-if="deviceInfo.system_config?.param_lock === 0"
+                                        class="sysconf-ok">未鎖定</span>
+                                    <span v-else-if="deviceInfo.system_config?.param_lock === 1"
+                                        class="sysconf-warn">已鎖定</span>
                                     <span v-else>—</span>
                                 </td>
                             </tr>
@@ -435,7 +437,8 @@
                                 <td>按鈕介面鎖定</td>
                                 <td>
                                     <span v-if="deviceInfo.system_config?.ui_lock === 0" class="sysconf-ok">未鎖定</span>
-                                    <span v-else-if="deviceInfo.system_config?.ui_lock === 1" class="sysconf-warn">已鎖定</span>
+                                    <span v-else-if="deviceInfo.system_config?.ui_lock === 1"
+                                        class="sysconf-warn">已鎖定</span>
                                     <span v-else>—</span>
                                 </td>
                             </tr>
@@ -456,7 +459,8 @@
                             <label class="field-label">設備 IP 位址</label>
                             <div class="conn-form">
                                 <input v-model="ipInput" placeholder="192.168.50.111" @keyup.enter="doConnect" />
-                                <button class="btn" v-if="!state.connected" @click="doConnect" :disabled="connecting">{{ connecting ? '連線中...' : '連線' }}</button>
+                                <button class="btn" v-if="!state.connected" @click="doConnect" :disabled="connecting">{{
+                                    connecting ? '連線中...' : '連線' }}</button>
                                 <button class="btn btn-danger" v-else @click="doDisconnect">斷線</button>
                             </div>
                             <p class="err-msg" v-if="state.error">{{ state.error }}</p>
@@ -470,15 +474,32 @@
                         <h2>
                             設備網路資訊
                             <span v-if="!state.connected" class="net-info-stale">（上次連線資訊）</span>
-                            <button v-if="state.connected" class="btn-refresh" @click="refreshNetworkInfo" :disabled="networkInfoRefreshing" title="重新從設備讀取">↻</button>
+                            <button v-if="state.connected" class="btn-refresh" @click="refreshNetworkInfo"
+                                :disabled="networkInfoRefreshing" title="重新從設備讀取">↻</button>
                         </h2>
                         <div v-if="!networkInfo && state.connected" class="hint-text">讀取中...</div>
                         <table v-else-if="networkInfo" class="net-info-table">
-                            <tr><td>主機名稱</td><td>{{ networkInfo.hostname || '—' }}</td></tr>
-                            <tr><td>IP 位址</td><td>{{ networkInfo.ip || '—' }}</td></tr>
-                            <tr><td>子網路遮罩</td><td>{{ networkInfo.subnet_mask || '—' }}</td></tr>
-                            <tr><td>預設閘道</td><td>{{ (networkInfo.gateway && networkInfo.gateway !== '0.0.0.0') ? networkInfo.gateway : '—' }}</td></tr>
-                            <tr><td>MAC 位址</td><td class="net-mac">{{ networkInfo.mac || '—' }}</td></tr>
+                            <tr>
+                                <td>主機名稱</td>
+                                <td>{{ networkInfo.hostname || '—' }}</td>
+                            </tr>
+                            <tr>
+                                <td>IP 位址</td>
+                                <td>{{ networkInfo.ip || '—' }}</td>
+                            </tr>
+                            <tr>
+                                <td>子網路遮罩</td>
+                                <td>{{ networkInfo.subnet_mask || '—' }}</td>
+                            </tr>
+                            <tr>
+                                <td>預設閘道</td>
+                                <td>{{ (networkInfo.gateway && networkInfo.gateway !== '0.0.0.0') ? networkInfo.gateway
+                                    : '—' }}</td>
+                            </tr>
+                            <tr>
+                                <td>MAC 位址</td>
+                                <td class="net-mac">{{ networkInfo.mac || '—' }}</td>
+                            </tr>
                         </table>
                     </section>
                 </template>
@@ -495,4 +516,5 @@
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="/static/js/app.js?v=4.2.10d"></script>
 </body>
+
 </html>

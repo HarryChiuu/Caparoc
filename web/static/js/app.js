@@ -8,12 +8,12 @@ createApp({
         const sidebarCollapsed = ref(false);
 
         const navItems = [
-            { page: 'dashboard',        icon: '📊', label: '儀表板' },
-            { page: 'charts',           icon: '📈', label: '圖表監控' },
-            { page: 'channel-settings', icon: '⚙️',  label: '通道設定' },
-            { page: 'logs',             icon: '📋', label: '系統日誌' },
-            { page: 'system-status',    icon: '🖧',  label: '系統狀態' },
-            { page: 'connection',       icon: '🔧', label: '連線設定' },
+            { page: 'dashboard', icon: '📊', label: '儀表板' },
+            { page: 'charts', icon: '📈', label: '圖表監控' },
+            { page: 'channel-settings', icon: '⚙️', label: '通道設定' },
+            { page: 'logs', icon: '📋', label: '系統日誌' },
+            { page: 'system-status', icon: '🖧', label: '系統狀態' },
+            { page: 'connection', icon: '🔧', label: '連線設定' },
         ];
 
         function navigate(page) {
@@ -62,14 +62,14 @@ createApp({
         const wasEverConnected = ref(false);  // 曾成功連線過（斷線後保留資料供查看）
 
         // 圖表監控 - 狀態 & 歷史緩衝（宣告於 applyStatus 之前）
-        const chartWindow        = ref(30);
-        const chartPaused        = ref(false);
-        const chartHistoryMode   = ref(false);
+        const chartWindow = ref(30);
+        const chartPaused = ref(false);
+        const chartHistoryMode = ref(false);
         const chartChannelVisible = reactive({});
         const _chartHistory = { timestamps: [], voltage: [], totalCurrent: [], channels: {} };
         const CHART_MAX_PTS = 1800;
-        const CHART_COLORS  = ['#3b82f6','#10b981','#f97316','#8b5cf6','#ef4444','#06b6d4','#84cc16','#ec4899'];
-        let   _globalChart  = null;
+        const CHART_COLORS = ['#3b82f6', '#10b981', '#f97316', '#8b5cf6', '#ef4444', '#06b6d4', '#84cc16', '#ec4899'];
+        let _globalChart = null;
         const _moduleCharts = {};
 
         function fmt(v) {
@@ -99,21 +99,21 @@ createApp({
 
             if (isConnected) {
                 // 已連線：完整更新所有狀態
-                wasEverConnected.value  = true;
-                state.device_ip         = data.device_ip ?? '';
+                wasEverConnected.value = true;
+                state.device_ip = data.device_ip ?? '';
                 if (!ipInput.value && state.device_ip) { ipInput.value = state.device_ip; }
-                state.error             = '';
-                state.voltage           = data.voltage ?? 0;
-                state.total_current     = data.total_current ?? 0;
-                state.module_count      = data.module_count ?? 0;
-                state.channels          = data.channels ?? [];
+                state.error = '';
+                state.voltage = data.voltage ?? 0;
+                state.total_current = data.total_current ?? 0;
+                state.module_count = data.module_count ?? 0;
+                state.channels = data.channels ?? [];
                 // 初始化新通道的可見性（預設全部顯示）
                 for (const ch of state.channels) {
                     if (chartChannelVisible[ch.id] === undefined) chartChannelVisible[ch.id] = true;
                 }
-                state.undervoltage      = data.undervoltage ?? false;
-                state.overvoltage       = data.overvoltage ?? false;
-                state.system_error      = data.system_error ?? false;
+                state.undervoltage = data.undervoltage ?? false;
+                state.overvoltage = data.overvoltage ?? false;
+                state.system_error = data.system_error ?? false;
             } else {
                 // 斷線：只更新 error，其餘資料保留供查看（UI 凍結）
                 state.error = data.error ?? '';
@@ -131,7 +131,7 @@ createApp({
             // 圖表歷史累積（只在已連線且未暫停時）
             if (state.connected && !chartPaused.value) {
                 const t = new Date();
-                const lbl = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
+                const lbl = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`;
                 _chartHistory.timestamps.push(lbl);
                 _chartHistory.voltage.push(data.voltage ?? 0);
                 _chartHistory.totalCurrent.push(data.total_current ?? 0);
@@ -152,11 +152,11 @@ createApp({
 
         function connectWs() {
             clearTimeout(wsRetryTimer);
-            if (ws) { try { ws.close(); } catch (_) {} }
+            if (ws) { try { ws.close(); } catch (_) { } }
             ws = new WebSocket(`ws://${location.host}/ws/status`);
             ws.onmessage = (e) => applyStatus(JSON.parse(e.data));
-            ws.onclose   = () => { wsRetryTimer = setTimeout(connectWs, 3000); };
-            ws.onerror   = () => { ws.close(); };
+            ws.onclose = () => { wsRetryTimer = setTimeout(connectWs, 3000); };
+            ws.onerror = () => { ws.close(); };
         }
 
         async function doConnect() {
@@ -195,11 +195,11 @@ createApp({
                     // 只在有至少一個有效欄位時才更新，避免以全 null 覆蓋快取
                     if (data.ip != null || data.mac != null) {
                         networkInfo.value = data;
-                        try { localStorage.setItem('caparoc_network_info', JSON.stringify(data)); } catch (_) {}
+                        try { localStorage.setItem('caparoc_network_info', JSON.stringify(data)); } catch (_) { }
                         return true;
                     }
                 }
-            } catch (_) {}
+            } catch (_) { }
             return false;
         }
 
@@ -226,11 +226,11 @@ createApp({
                     const hasData = data.identity && Object.values(data.identity).some(v => v != null);
                     if (hasData) {
                         deviceInfo.value = data;
-                        try { localStorage.setItem('caparoc_device_info', JSON.stringify(data)); } catch (_) {}
+                        try { localStorage.setItem('caparoc_device_info', JSON.stringify(data)); } catch (_) { }
                         return true;
                     }
                 }
-            } catch (_) {}
+            } catch (_) { }
             return false;
         }
 
@@ -298,7 +298,7 @@ createApp({
 
         // Per-module 批次設定
         const batchNominalByMod = reactive({});
-        const batchStatusByMod  = reactive({});
+        const batchStatusByMod = reactive({});
 
         async function setModuleNominal(mod) {
             const val = Math.round(parseFloat(batchNominalByMod[mod]));
@@ -313,7 +313,7 @@ createApp({
                 r.ok ? ok++ : fail++;
             }
             batchStatusByMod[mod] = {
-                ok:  fail === 0,
+                ok: fail === 0,
                 msg: fail === 0 ? `✓ ${ok} 個通道完成` : `${ok} 成功，${fail} 失敗`,
             };
             batchNominalByMod[mod] = '';
@@ -322,13 +322,13 @@ createApp({
 
 
         // -- 系統日誌 --
-        const logEntries   = ref([]);
-        const logTotal     = ref(0);
-        const logPage      = ref(0);
-        const logPageSize  = ref(20);
-        const logFilter    = ref('all');
+        const logEntries = ref([]);
+        const logTotal = ref(0);
+        const logPage = ref(0);
+        const logPageSize = ref(20);
+        const logFilter = ref('all');
         const logAutoScroll = ref(true);
-        let   _logTimer    = null;
+        let _logTimer = null;
 
         const logTotalPages = computed(() =>
             Math.max(1, Math.ceil(logTotal.value / logPageSize.value))
@@ -342,25 +342,25 @@ createApp({
                 );
                 if (r.ok) {
                     const data = await r.json();
-                    logTotal.value   = data.total;
+                    logTotal.value = data.total;
                     logEntries.value = data.entries;
                     // 頁碼超出範圍時自動修正
                     const maxPage = Math.max(0, logTotalPages.value - 1);
                     if (logPage.value > maxPage) logPage.value = maxPage;
                 }
-            } catch (_) {}
+            } catch (_) { }
         }
 
         async function clearLogs() {
             await fetch('/api/logs/clear', { method: 'POST' });
             logEntries.value = [];
-            logTotal.value   = 0;
-            logPage.value    = 0;
+            logTotal.value = 0;
+            logPage.value = 0;
         }
 
         function setPageSize(n) {
             logPageSize.value = n;
-            logPage.value     = 0;
+            logPage.value = 0;
             fetchLogs();
         }
 
@@ -393,8 +393,8 @@ createApp({
         function _getChartSlice() {
             const n = chartWindow.value;
             return {
-                labels:       _chartHistory.timestamps.slice(-n),
-                voltage:      _chartHistory.voltage.slice(-n),
+                labels: _chartHistory.timestamps.slice(-n),
+                voltage: _chartHistory.voltage.slice(-n),
                 totalCurrent: _chartHistory.totalCurrent.slice(-n),
             };
         }
@@ -415,14 +415,14 @@ createApp({
                 const r = await fetch('/api/history?minutes=30');
                 if (r.ok) {
                     const hist = await r.json();
-                    _chartHistory.timestamps   = hist.timestamps    || [];
-                    _chartHistory.voltage      = hist.voltage       || [];
+                    _chartHistory.timestamps = hist.timestamps || [];
+                    _chartHistory.voltage = hist.voltage || [];
                     _chartHistory.totalCurrent = hist.total_current || [];
-                    _chartHistory.channels     = {};
+                    _chartHistory.channels = {};
                     for (const [id, vals] of Object.entries(hist.channels || {}))
                         _chartHistory.channels[parseInt(id)] = vals;
                 }
-            } catch (_) {}
+            } catch (_) { }
 
             // 確認仍在圖表頁（fetch 期間可能已離頁）
             if (currentPage.value !== 'charts') return;
@@ -430,10 +430,14 @@ createApp({
             if (!gcEl) return;
 
             const zoomCfg = {
-                pan:  { enabled: true,  mode: 'x',
-                        onPanComplete:  () => { chartHistoryMode.value = true; } },
-                zoom: { wheel: { enabled: true }, mode: 'x',
-                        onZoomComplete: () => { chartHistoryMode.value = true; } },
+                pan: {
+                    enabled: true, mode: 'x',
+                    onPanComplete: () => { chartHistoryMode.value = true; }
+                },
+                zoom: {
+                    wheel: { enabled: true }, mode: 'x',
+                    onZoomComplete: () => { chartHistoryMode.value = true; }
+                },
             };
             const slice = _getChartSlice();
 
@@ -442,27 +446,37 @@ createApp({
                 data: {
                     labels: slice.labels,
                     datasets: [
-                        { label: '電壓 (V)',   data: slice.voltage,       yAxisID: 'yV',
-                          borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.08)',
-                          tension: 0.3, pointRadius: 0, borderWidth: 2 },
-                        { label: '總電流 (A)', data: slice.totalCurrent,  yAxisID: 'yA',
-                          borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,0.08)',
-                          tension: 0.3, pointRadius: 0, borderWidth: 2 },
+                        {
+                            label: '電壓 (V)', data: slice.voltage, yAxisID: 'yV',
+                            borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.08)',
+                            tension: 0.3, pointRadius: 0, borderWidth: 2
+                        },
+                        {
+                            label: '總電流 (A)', data: slice.totalCurrent, yAxisID: 'yA',
+                            borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,0.08)',
+                            tension: 0.3, pointRadius: 0, borderWidth: 2
+                        },
                     ],
                 },
                 options: {
                     animation: false, responsive: true, maintainAspectRatio: false,
                     interaction: { mode: 'index', intersect: false },
                     scales: {
-                        yV: { type: 'linear', position: 'left',
-                              title: { display: true, text: '電壓 (V)', color: '#3b82f6' },
-                              grid: { color: 'rgba(255,255,255,0.05)' },
-                              ticks: { color: '#3b82f6', callback: v => Number(v).toFixed(2) } },
-                        yA: { type: 'linear', position: 'right', min: 0,
-                              title: { display: true, text: '電流 (A)', color: '#f97316' },
-                              grid: { drawOnChartArea: false }, ticks: { color: '#f97316' } },
-                        x:  { grid: { color: 'rgba(255,255,255,0.05)' },
-                              ticks: { maxTicksLimit: 6, color: '#9aaac4', maxRotation: 0 } },
+                        yV: {
+                            type: 'linear', position: 'left',
+                            title: { display: true, text: '電壓 (V)', color: '#3b82f6' },
+                            grid: { color: 'rgba(255,255,255,0.05)' },
+                            ticks: { color: '#3b82f6', callback: v => Number(v).toFixed(2) }
+                        },
+                        yA: {
+                            type: 'linear', position: 'right', min: 0,
+                            title: { display: true, text: '電流 (A)', color: '#f97316' },
+                            grid: { drawOnChartArea: false }, ticks: { color: '#f97316' }
+                        },
+                        x: {
+                            grid: { color: 'rgba(255,255,255,0.05)' },
+                            ticks: { maxTicksLimit: 6, color: '#9aaac4', maxRotation: 0 }
+                        },
                     },
                     plugins: {
                         legend: { labels: { color: '#c5d0e6', usePointStyle: true } },
@@ -489,8 +503,8 @@ createApp({
                 const modChannels = channelsByModule.value[mod] || [];
                 const datasets = modChannels.map((ch, i) => ({
                     label: `CH${ch.channel}`,
-                    data:  (_chartHistory.channels[ch.id] || []).slice(-n),
-                    borderColor:     CHART_COLORS[i % CHART_COLORS.length],
+                    data: (_chartHistory.channels[ch.id] || []).slice(-n),
+                    borderColor: CHART_COLORS[i % CHART_COLORS.length],
                     backgroundColor: 'transparent',
                     tension: 0.3, pointRadius: 0, borderWidth: 1.5,
                     hidden: chartChannelVisible[ch.id] === false,
@@ -502,11 +516,15 @@ createApp({
                         animation: false, responsive: true, maintainAspectRatio: false,
                         interaction: { mode: 'index', intersect: false },
                         scales: {
-                            y: { min: 0,
-                                 title: { display: true, text: '電流 (A)', color: '#9aaac4' },
-                                 grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9aaac4' } },
-                            x: { grid: { color: 'rgba(255,255,255,0.05)' },
-                                 ticks: { maxTicksLimit: 6, color: '#9aaac4', maxRotation: 0 } },
+                            y: {
+                                min: 0,
+                                title: { display: true, text: '電流 (A)', color: '#9aaac4' },
+                                grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9aaac4' }
+                            },
+                            x: {
+                                grid: { color: 'rgba(255,255,255,0.05)' },
+                                ticks: { maxTicksLimit: 6, color: '#9aaac4', maxRotation: 0 }
+                            },
                         },
                         plugins: {
                             legend: { labels: { color: '#c5d0e6', usePointStyle: true } },
@@ -521,7 +539,7 @@ createApp({
             if (!_globalChart) return;
             const n = chartWindow.value;
             const slice = _getChartSlice();
-            _globalChart.data.labels           = slice.labels;
+            _globalChart.data.labels = slice.labels;
             _globalChart.data.datasets[0].data = slice.voltage;
             _globalChart.data.datasets[1].data = slice.totalCurrent;
             _globalChart.update('none');
@@ -569,7 +587,7 @@ createApp({
             isShuttingDown.value = true;
             // 停止 WebSocket 重連
             clearTimeout(wsRetryTimer);
-            if (ws) { try { ws.close(); } catch (_) {} }
+            if (ws) { try { ws.close(); } catch (_) { } }
             // 呼叫後端關閉
             try {
                 await fetch('/api/shutdown', { method: 'POST' });
@@ -591,12 +609,12 @@ createApp({
                 if (logAutoScroll.value)
                     _logTimer = setInterval(() => { logPage.value = 0; fetchLogs(); }, 2000);
             }
-            if (page === 'charts')         { nextTick(_initCharts); }
-            if (prevPage === 'charts')     { _destroyCharts(); }
+            if (page === 'charts') { nextTick(_initCharts); }
+            if (prevPage === 'charts') { _destroyCharts(); }
             // 進入系統狀態頁且已連線 → 自動重新讀取最新設定
             if (page === 'system-status' && state.connected) refreshDeviceInfo();
             // 進入連線設定頁且已連線 → 自動重新讀取網路資訊
-            if (page === 'connection'    && state.connected) refreshNetworkInfo();
+            if (page === 'connection' && state.connected) refreshNetworkInfo();
         });
 
         // 自動更新開關

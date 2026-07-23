@@ -218,15 +218,17 @@
                                 <div class="mod-header">
                                     <span class="mod-title">模組 {{ mod }}</span>
                                     <span class="mod-ch-count">{{ channelsByModule[mod].length }} 通道</span>
+                                    <span class="mod-readonly-badge" v-if="isModNominalReadOnly(mod)">⚙️ 額定電流需手動設定（旋鈕）</span>
                                 </div>
 
                                 <!-- 模組批次列 -->
                                 <div class="mod-batch-bar">
                                     <span style="font-size:0.82rem;color:#7a8aaa;white-space:nowrap">本模組套用</span>
                                     <input type="number" v-model="batchNominalByMod[mod]" min="1" max="20" step="1"
-                                        placeholder="A" class="nominal-input" :disabled="!state.connected" />
+                                        placeholder="A" class="nominal-input"
+                                        :disabled="!state.connected || isModNominalReadOnly(mod)" />
                                     <button class="btn btn-sm" @click="setModuleNominal(mod)"
-                                        :disabled="!state.connected">套用</button>
+                                        :disabled="!state.connected || isModNominalReadOnly(mod)">套用</button>
                                     <span class="feedback-msg" :class="batchStatusByMod[mod]?.ok ? 'ok' : 'err'"
                                         v-if="batchStatusByMod[mod]?.msg">{{ batchStatusByMod[mod].msg }}</span>
                                 </div>
@@ -248,11 +250,11 @@
                                             <td>
                                                 <input type="number" v-model="nominalInputs[ch.id]" min="1" max="20"
                                                     step="1" :placeholder="ch.nominal_amps" class="nominal-input"
-                                                    :disabled="!state.connected" />
+                                                    :disabled="!state.connected || isModNominalReadOnly(ch.module)" />
                                             </td>
                                             <td>
                                                 <button class="btn btn-sm" @click="setNominal(ch.id)"
-                                                    :disabled="!state.connected">設定</button>
+                                                    :disabled="!state.connected || isModNominalReadOnly(ch.module)">設定</button>
                                                 <span class="feedback-msg"
                                                     :class="nominalFeedback[ch.id]?.ok ? 'ok' : 'err'"
                                                     v-if="nominalFeedback[ch.id]?.msg">

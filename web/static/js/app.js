@@ -287,6 +287,7 @@ createApp({
             }
             let ok = 0, fail = 0;
             for (const ch of state.channels) {
+                if (isModNominalReadOnly(ch.module)) continue;  // 跳過不支援遠端設定的模組
                 const r = await fetch(`/api/channel/${ch.id}/nominal?current_amps=${val}`, { method: 'POST' });
                 r.ok ? ok++ : fail++;
             }
@@ -299,6 +300,11 @@ createApp({
         // Per-module 批次設定
         const batchNominalByMod = reactive({});
         const batchStatusByMod = reactive({});
+
+        // 判斷模組的 nominal 是否為 read-only（從硬體探測結果）
+        function isModNominalReadOnly(mod) {
+            return channelsByModule.value[mod]?.[0]?.nominal_readonly ?? false;
+        }
 
         async function setModuleNominal(mod) {
             const val = Math.round(parseFloat(batchNominalByMod[mod]));
@@ -660,7 +666,7 @@ createApp({
             refreshDeviceInfo, refreshNetworkInfo,
             nominalInputs, nominalFeedback, batchNominal, batchStatus,
             setNominal, setAllNominal,
-            batchNominalByMod, batchStatusByMod, setModuleNominal,
+            batchNominalByMod, batchStatusByMod, setModuleNominal, isModNominalReadOnly,
             logEntries, logTotal, logPage, logPageSize, logFilter,
             logAutoScroll, logTotalPages,
             fetchLogs, clearLogs, setPageSize,

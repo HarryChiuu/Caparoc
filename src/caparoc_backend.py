@@ -49,6 +49,8 @@ class CaparocBackend:
         # 動態對應表：由 _read_current_status 每次更新
         # { global_ch_id: (module, channel) }，正確反映實際通道佈局
         self._ch_id_map: dict[int, tuple[int, int]] = {}
+        # 不支援 CIP 遠端設定額定電流的模組（連線時主動探測）
+        self._nominal_readonly_modules: set = set()
 
         # I/O 狀態
         self.implicit_mode_enabled = False
@@ -308,6 +310,12 @@ class CaparocBackend:
                        'modules': self.module_count,
                        'voltage': dev.get('voltage', '')}
             )
+
+            # 探測各模組的額定電流可寫性（需在 _ch_id_map 建立後）
+            # 先讀一次狀態以建立 _ch_id_map，再探測
+            self._read_current_status()
+            self._probe_all_modules()
+
             return True
 
         except Exception as e:
@@ -657,7 +665,106 @@ class CaparocBackend:
         """
         return 5 + ((module - 1) * 4 + (channel - 1)) * 3 + 1
 
-    def set_nominal_current(self, module, channel, current_amps, verify=True):
+    def is_module_nominal_readonly(self, module: int) -> bool:
+        """True 表示此模組的額定電流無法透過 CIP 遠端設定（連線時主動探測確認）。"""
+        return module in self._nominal_readonly_modules
+
+    def _probe_nominal_writable(self, module: int) -> bool:
+        """
+        探測某模組是否支援 CIP 額定電流寫入。
+
+        方法：第一個實體通道寫入 nominal ± 1（probe 對照組），
+               0.8 秒後驗證是否改變。若成功立即還原。
+
+        Returns:
+            True  = 可寫（主動探測確認）
+            False = read-only（2 通道型或其他硬體限制）
+        """
+        try:
+            # 找模組內第一個實體通道（存在於 _ch_id_map）
+            first_ch = None
+            for gch, (m, c) in self._ch_id_map.items():
+                if m == module:
+                    first_ch = c
+                    break
+            if first_ch is None:
+                return False   # 模組沒有實體通道
+
+            # 讀取目前 nominal
+            inp = self.driver.generic_message(
+                service=0x0E, class_code=0x04,
+                instance=self.input_instance, attribute=3, connected=False
+            )
+            if not inp or not hasattr(inp, 'value'):
+                return False
+            inp_off = self.get_channel_offset(module, first_ch)
+            if len(inp.value) <= inp_off + 2:
+                return False
+            current_nominal = inp.value[inp_off + 1]
+            if current_nominal == 0:
+                return False
+
+            # 計算 probe 對照組（寫 nominal ± 1）
+            probe_val = (current_nominal - 1) if current_nominal > 1 else (current_nominal + 1)
+
+            nominal_inst = self._get_nominal_param_instance(module, first_ch)
+            wr = self.driver.generic_message(
+                service=0x10, class_code=0x0F, instance=nominal_inst,
+                attribute=1, request_data=bytes([probe_val]),
+                connected=True, unconnected_send=False
+            )
+            if getattr(wr, 'error', None):
+                return False   # CIP 端點明確拒絕
+
+            time.sleep(0.8)
+
+            # 讀回驗證
+            inp2 = self.driver.generic_message(
+                service=0x0E, class_code=0x04,
+                instance=self.input_instance, attribute=3, connected=False
+            )
+            if not inp2 or not hasattr(inp2, 'value'):
+                return False
+            actual = inp2.value[inp_off + 1] if len(inp2.value) > inp_off + 2 else current_nominal
+
+            if actual == probe_val:
+                # 寫入成功 → 立即還原
+                wr2 = self.driver.generic_message(
+                    service=0x10, class_code=0x0F, instance=nominal_inst,
+                    attribute=1, request_data=bytes([current_nominal]),
+                    connected=True, unconnected_send=False
+                )
+                return True
+            else:
+                return False   # 齔嘯寫入，read-only
+
+        except Exception as e:
+            self.logger.warning(
+                f"_probe_nominal_writable M{module} 例外: {e}",
+                extra={'log_module': 'CONN'}
+            )
+            return False
+
+    def _probe_all_modules(self):
+        """
+        對所有已連線模組進行額定電流寫入探測。
+        失敗的模組加入 _nominal_readonly_modules。
+        連線後內部呼叫一次。
+        """
+        self._nominal_readonly_modules.clear()
+        self.logger.info(
+            f"開始探測 {self.module_count} 個模組的額定電流可寫性...",
+            extra={'log_module': 'CONN'}
+        )
+        for mod in range(1, self.module_count + 1):
+            writable = self._probe_nominal_writable(mod)
+            status = "可寫入" if writable else "read-only（需手動旋鈕）"
+            self.logger.info(
+                f"  M{mod}: nominal {status}",
+                extra={'log_module': 'CONN'}
+            )
+            if not writable:
+                self._nominal_readonly_modules.add(mod)
         """
         設定通道的額定電流（使用 Config Assembly）
 

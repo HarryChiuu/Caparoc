@@ -203,6 +203,7 @@ def _format_status(raw: dict | None) -> dict:
             "on":           ch["is_on"],
             "current_amps": round(ch["flowing_current"], 2),
             "nominal_amps": round(ch["nominal_current"], 1),
+            "nominal_readonly": backend.is_module_nominal_readonly(ch["module"]),
             "warn_80":      ch["warning_80"],
             "overload":     ch["overload"],
             "short_circuit": ch["short_circuit"],

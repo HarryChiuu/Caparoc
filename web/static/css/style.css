@@ -470,6 +470,16 @@ body {
     border: 1px solid #2a2f45;
 }
 
+.mod-readonly-badge {
+    font-size: 0.72rem;
+    color: #7a8aaa;
+    background: #1e2535;
+    border: 1px solid #2a2f45;
+    padding: 2px 8px;
+    border-radius: 3px;
+    margin-left: 4px;
+}
+
 .nominal-input {
     width: 78px;
     padding: 6px 10px;

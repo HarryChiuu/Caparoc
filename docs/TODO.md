@@ -529,23 +529,57 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-##### 4.3.2 通道設定頁按模組分區顯示
+##### 4.3.2 通道設定頁按模組分區顯示 ✅ **已完成（2026-07-23）**
 
-> **目的**：与儀表板「通道控制」區塊一致，將目前單一大表格改為依模組分區，方便混合模組（2/4 通道）的額定電流設定  
-> **依貫**：4.2.2 已完成 ✅，activeModules + channelsByModule 已 export  
-> **預估工時**：1 小時
+> **目的**：与儀表板「通道控制」區塊一致，將目前單一大表格改為依模組分區，方便混合模組（2/4 通道）的額定電流設定
 
-**工作項目**：
-- [ ] `app.js`：新增 `batchNominalByMod = reactive({})`、`batchStatusByMod = reactive({})`
-- [ ] `app.js`：新增 `setModuleNominal(mod)` 函式，對 `channelsByModule[mod]` 各通道依序呼叫 API
-- [ ] `app.js`：`return {}` 加入三個新符號
-- [ ] `index.html`：將通道設定 `section` 改為外層 `v-for mod in activeModules` 巢狀結構
-- [ ] `index.html`：每模組一個 `.mod-header` 標題列，表格移除「模組」欄（已在標題顯示）
-- [ ] `index.html`：每模組標題列下継模組批次列（輸入框 + 「套用至本模組」按鈕）
-- [ ] `index.html`：頂部保留全域批次列（套用至全部通道）
-- [ ] `index.html`：通道編號改用 `CH{{ ch.channel }}`（模組內序號）
+**完成內容**：
+- [x] `app.js`：新增 `batchNominalByMod`、`batchStatusByMod`、`setModuleNominal(mod)`
+- [x] `index.html`：外層 `v-for mod in activeModules`，每模組獨立標題列 + 批次列 + 表格
+- [x] 全域批次列保留（套用至全部通道）
+- [x] 通道編號改用 `CH{{ ch.channel }}`（模組內序號）
+- [x] `style.css`：新增 `.mod-batch-bar` 樣式
 
-**預估工時**：1 小時
+---
+
+##### 4.3.5 通道設定頁 nominal_readonly 主動探測（2 通道模組反灰 + 說明）
+
+> **背景**：CAPAROC 2 通道斷路器模組的額定電流無法透過 EIP CIP 遠端設定（Config Assembly / Parameter Object 寫入均被靜默忽略），需在 UI 明確標示並禁用輸入。  
+> **設計**：連線後自動探測每個模組是否支援 CIP nominal 寫入，結果記錄為 `nominal_readonly` 欄位隨 WebSocket 推送到前端。  
+> **預估工時**：2-3 小時
+
+**實作步驟**：
+
+**Step 1 — `src/caparoc_backend.py`**
+- [ ] `__init__` 新增 `self._nominal_readonly_modules: set[int] = set()`
+- [ ] 新增 `_probe_nominal_writable(module: int) -> bool`：
+  1. 讀取 module 第一個實體通道的目前 nominal（Input Assembly）
+  2. 透過 Class 0x0F Parameter Object 寫入 nominal ± 1（probe 值）
+  3. 等 0.8 秒
+  4. 讀回 Input Assembly 驗證；若已改變 → 可寫（True），立即還原原值
+  5. 若未改變 → read-only（False），不需還原
+- [ ] 新增 `_probe_all_modules()`：對 module 1..module_count 逐一呼叫，失敗的加入 `_nominal_readonly_modules`，並寫入 log
+- [ ] `connect()` 成功後呼叫 `_probe_all_modules()`
+- [ ] 新增 `is_module_nominal_readonly(module: int) -> bool`（查 set）
+
+**Step 2 — `web/app.py`**
+- [ ] `_format_status()` 每個 channel 物件加入：`"nominal_readonly": backend.is_module_nominal_readonly(ch["module"])`
+
+**Step 3 — `web/static/js/app.js`**
+- [ ] 移除 `length < 4` 判斷邏輯（如有）
+- [ ] 新增 `isModNominalReadOnly(mod)` function：`return channelsByModule.value[mod]?.[0]?.nominal_readonly ?? false`
+- [ ] `setAllNominal` 加 filter：只對 `!isModNominalReadOnly(ch.module)` 的通道呼叫 API
+- [ ] `return {}` 加入 `isModNominalReadOnly`
+
+**Step 4 — `web/templates/index.html`**
+- [ ] 模組標題列加說明 badge：`v-if="isModNominalReadOnly(mod)"` 顯示「⚙ 額定電流需手動設定（旋鈕）」
+- [ ] 模組批次列 input + button：`:disabled` 加入 `|| isModNominalReadOnly(mod)`
+- [ ] 通道表格每列 input + button：`:disabled` 加入 `|| isModNominalReadOnly(ch.module)`
+
+**Step 5 — `web/static/css/style.css`**
+- [ ] 新增 `.mod-readonly-badge` 樣式：小字灰色標籤（不影響現有版型）
+
+**預估工時**：2-3 小時
 
 ---
 
@@ -904,7 +938,7 @@ docker compose up -d
 | 優先級 | 任務 | 預估工時 |
 |--------|------|---------|
 | 高 | 4.3.1 設定值外部化（config 合併） | 1h |
-| 高 | **4.3.2 通道設定頁依模組分區** | **1h** |
+| 高 | **4.3.5 nominal_readonly 主動探測（2 通道模組反灰）** | **2-3h** |
 | 高 | 4.4.1 CLI 通道詳細狀態顯示 | 2-3h |
 | 中 | 4.3.3 UI 視覺一致性與元件統一 | 2-3h |
 | 中 | 4.4.2/4.4.3 CLI 設備/網路資訊指令 | 1h |

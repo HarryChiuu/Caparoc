@@ -425,6 +425,7 @@ class CaparocBackend:
         """
         讀取設備實際通道狀態，重建 output_data buffer。
         防止首次連線時誤關已在運行的通道。
+        同步所有模組，不僅模組 1。
         """
         try:
             response = self.driver.generic_message(
@@ -434,15 +435,18 @@ class CaparocBackend:
                 attribute=3,
                 connected=False
             )
-            if response and hasattr(response, 'value') and len(response.value) >= 18:
+            if response and hasattr(response, 'value') and len(response.value) >= 6:
                 data = response.value
                 self.current_output_data = bytearray(18)
-                byte1_value = 0x80  # bit7=1 (release)
-                for ch in range(1, 5):
-                    offset = self.get_channel_offset(1, ch)
-                    if len(data) > offset and (data[offset] & 0x01):
-                        byte1_value |= (1 << (ch - 1))
-                self.current_output_data[1] = byte1_value
+                module_count = data[1] if len(data) > 1 else self.module_count
+                for mod in range(1, max(module_count, self.module_count) + 1):
+                    byte_value = 0x80  # bit7=1 (release)
+                    for ch in range(1, self.channels_per_module + 1):
+                        offset = self.get_channel_offset(mod, ch)
+                        if len(data) > offset and (data[offset] & 0x01):
+                            byte_value |= (1 << (ch - 1))
+                    if mod < len(self.current_output_data):
+                        self.current_output_data[mod] = byte_value
         except Exception:
             pass  # 同步失敗不影響後續操作，使用預設空白狀態
 
@@ -1081,12 +1085,12 @@ class CaparocBackend:
                                 attribute=3,
                                 connected=False
                             )
-                            if verify_resp and hasattr(verify_resp, 'value') and len(verify_resp.value) >= 2:
-                                actual_byte1 = verify_resp.value[1]
-                                if actual_byte1 == new_value:
-                                    print(f"       ✅ 驗證成功 (設備 byte[1]=0x{actual_byte1:02X})")
+                            if verify_resp and hasattr(verify_resp, 'value') and len(verify_resp.value) > byte_offset:
+                                actual_byte = verify_resp.value[byte_offset]
+                                if actual_byte == new_value:
+                                    print(f"       ✅ 驗證成功 (設備 byte[{byte_offset}]=0x{actual_byte:02X})")
                                 else:
-                                    print(f"       ⚠️ 驗證警告：設備 byte[1]=0x{actual_byte1:02X}, 預期=0x{new_value:02X}")
+                                    print(f"       ⚠️ 驗證警告：設備 byte[{byte_offset}]=0x{actual_byte:02X}, 預期=0x{new_value:02X}")
                         except Exception as ve:
                             print(f"       ⚠️ 無法驗證: {ve}")
                     else:

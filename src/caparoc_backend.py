@@ -300,7 +300,6 @@ class CaparocBackend:
             self._start_heartbeat(self.driver)
 
             self.channels_initialized = True
-            self._connected = True
 
             dev = conn_result['device_info']
             self.logger.info(
@@ -311,10 +310,13 @@ class CaparocBackend:
                        'voltage': dev.get('voltage', '')}
             )
 
-            # 探測各模組的額定電流可寫性（需在 _ch_id_map 建立後）
-            # 先讀一次狀態以建立 _ch_id_map，再探測
+            # 先讀一次狀態建立 _ch_id_map，再探測額定電流可寫性
+            # ❗ 必須在 _connected = True 之前完成，避免 WebSocket 讀取與 probe 並發損寮 TCP
             self._read_current_status()
             self._probe_all_modules()
+
+            # probe 完成後才開啟 WebSocket 讀取
+            self._connected = True
 
             return True
 
@@ -690,50 +692,55 @@ class CaparocBackend:
             if first_ch is None:
                 return False   # 模組沒有實體通道
 
-            # 讀取目前 nominal
-            inp = self.driver.generic_message(
-                service=0x0E, class_code=0x04,
-                instance=self.input_instance, attribute=3, connected=False
-            )
-            if not inp or not hasattr(inp, 'value'):
-                return False
-            inp_off = self.get_channel_offset(module, first_ch)
-            if len(inp.value) <= inp_off + 2:
-                return False
-            current_nominal = inp.value[inp_off + 1]
-            if current_nominal == 0:
-                return False
+            # 所有 CIP 呼叫均持 _cip_lock，避免與 WebSocket read 並發
+            with self._cip_lock:
+                # 讀取目前 nominal
+                inp = self.driver.generic_message(
+                    service=0x0E, class_code=0x04,
+                    instance=self.input_instance, attribute=3, connected=False
+                )
+                if not inp or not hasattr(inp, 'value'):
+                    return False
+                inp_off = self.get_channel_offset(module, first_ch)
+                if len(inp.value) <= inp_off + 2:
+                    return False
+                current_nominal = inp.value[inp_off + 1]
+                if current_nominal == 0:
+                    return False
 
             # 計算 probe 對照組（寫 nominal ± 1）
             probe_val = (current_nominal - 1) if current_nominal > 1 else (current_nominal + 1)
-
             nominal_inst = self._get_nominal_param_instance(module, first_ch)
-            wr = self.driver.generic_message(
-                service=0x10, class_code=0x0F, instance=nominal_inst,
-                attribute=1, request_data=bytes([probe_val]),
-                connected=True, unconnected_send=False
-            )
+
+            with self._cip_lock:
+                wr = self.driver.generic_message(
+                    service=0x10, class_code=0x0F, instance=nominal_inst,
+                    attribute=1, request_data=bytes([probe_val]),
+                    connected=True, unconnected_send=False
+                )
             if getattr(wr, 'error', None):
                 return False   # CIP 端點明確拒絕
 
             time.sleep(0.8)
 
-            # 讀回驗證
-            inp2 = self.driver.generic_message(
-                service=0x0E, class_code=0x04,
-                instance=self.input_instance, attribute=3, connected=False
-            )
+            with self._cip_lock:
+                # 讀回驗證
+                inp2 = self.driver.generic_message(
+                    service=0x0E, class_code=0x04,
+                    instance=self.input_instance, attribute=3, connected=False
+                )
             if not inp2 or not hasattr(inp2, 'value'):
                 return False
             actual = inp2.value[inp_off + 1] if len(inp2.value) > inp_off + 2 else current_nominal
 
             if actual == probe_val:
                 # 寫入成功 → 立即還原
-                wr2 = self.driver.generic_message(
-                    service=0x10, class_code=0x0F, instance=nominal_inst,
-                    attribute=1, request_data=bytes([current_nominal]),
-                    connected=True, unconnected_send=False
-                )
+                with self._cip_lock:
+                    self.driver.generic_message(
+                        service=0x10, class_code=0x0F, instance=nominal_inst,
+                        attribute=1, request_data=bytes([current_nominal]),
+                        connected=True, unconnected_send=False
+                    )
                 return True
             else:
                 return False   # 齔嘯寫入，read-only

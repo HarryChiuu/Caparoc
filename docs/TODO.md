@@ -529,7 +529,27 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-##### 4.3.2 視覺一致性與元件統一化
+##### 4.3.2 通道設定頁按模組分區顯示
+
+> **目的**：与儀表板「通道控制」區塊一致，將目前單一大表格改為依模組分區，方便混合模組（2/4 通道）的額定電流設定  
+> **依貫**：4.2.2 已完成 ✅，activeModules + channelsByModule 已 export  
+> **預估工時**：1 小時
+
+**工作項目**：
+- [ ] `app.js`：新增 `batchNominalByMod = reactive({})`、`batchStatusByMod = reactive({})`
+- [ ] `app.js`：新增 `setModuleNominal(mod)` 函式，對 `channelsByModule[mod]` 各通道依序呼叫 API
+- [ ] `app.js`：`return {}` 加入三個新符號
+- [ ] `index.html`：將通道設定 `section` 改為外層 `v-for mod in activeModules` 巢狀結構
+- [ ] `index.html`：每模組一個 `.mod-header` 標題列，表格移除「模組」欄（已在標題顯示）
+- [ ] `index.html`：每模組標題列下継模組批次列（輸入框 + 「套用至本模組」按鈕）
+- [ ] `index.html`：頂部保留全域批次列（套用至全部通道）
+- [ ] `index.html`：通道編號改用 `CH{{ ch.channel }}`（模組內序號）
+
+**預估工時**：1 小時
+
+---
+
+##### 4.3.3 視覚一致性與元件統一化
 
 > **目的**：統一按鈕、表格、卡片、提示訊息等 UI 元件的外觀語言
 
@@ -543,7 +563,7 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-##### 4.3.3 行動裝置基本支援
+##### 4.3.4 行動裝置基本支援
 
 > **目的**：讓 Web UI 在平板/手機瀏覽器可操作（能顯示與操作即可，不要求完美）
 
@@ -884,8 +904,9 @@ docker compose up -d
 | 優先級 | 任務 | 預估工時 |
 |--------|------|---------|
 | 高 | 4.3.1 設定值外部化（config 合併） | 1h |
+| 高 | **4.3.2 通道設定頁依模組分區** | **1h** |
 | 高 | 4.4.1 CLI 通道詳細狀態顯示 | 2-3h |
-| 中 | 4.3.2 UI 視覺一致性與元件統一 | 2-3h |
+| 中 | 4.3.3 UI 視覺一致性與元件統一 | 2-3h |
 | 中 | 4.4.2/4.4.3 CLI 設備/網路資訊指令 | 1h |
 | 中 | 4.5 數據記錄與分析 | 6-8h |
 | 中 | 4.6 告警與通知系統 | 4-5h |

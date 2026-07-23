@@ -2,6 +2,29 @@
 
 ---
 
+## [2026-07-23] 多模組支援修彌——通道控制常打模組1、動態通道識別（21deea8, 757a427, af89bd8）
+
+### 🐛 Bug 修正
+
+**按下第 2/3 模組開關都只打到模組 1（21deea8）**
+- **根因**：web/app.py 的 `channel_on/off` API 虫`get_module_and_channel()` 得到 `module` 後卻並未傳入下一層；`set_channel(channel, state)` 的 `byte_offset` 永遠寫死為 1（Module 1 對應的 Output byte）
+- **修正**：`set_channel` 新增 `module` 參數，簽名改為 `set_channel(module, channel, state)`；`byte_offset = module`（Module N 對應 Output byte N）
+- **連帶修彌**：`web/app.py` channel API 補傳 `module`；`caparoc_controller.py` CLI `on/off` 指令先呼叫 `get_module_and_channel` 再傳入
+
+### ✨ 新功能
+
+**2/4 通道混合模組自動識別——過濾空槽通道（757a427）**
+- **動機**：安裝 2 通道 BREAKER 的模組，前端仍顯示 4 個卡片（CH3/CH4 無實體）
+- **實測依據**：Input Assembly 中空槽的 `nominal_byte`（offset+1）= 0，實體通道必然 ≥ 1A
+- **修正**：`_read_current_status` 內 `nominal_byte == 0` 跳過，`global_ch` 改為連續計數（對應實際安裝的通道，不再以等差公式假設模組全满）
+
+**動態通道對應表，完整支援任意 2/4 通道混合模組（af89bd8）**
+- **門題**：`get_module_and_channel()` 之前使用等差公式，假設每模組都有慣 4 通道；若 2 通道模組不在最後一個位置，開關 ID 會對應錯誤
+- **修正**：新增 `self._ch_id_map: dict[int, tuple[int, int]]`，每次 `_read_current_status` 讀取硬體後即時更新；`get_module_and_channel()` 改為優先查表，fallback 才用公式
+- **效果**：新安裝任意模組（2 或 4 通道）自動識別，無需手動設定
+
+---
+
 ## [2026-05-25] Bug fixes — CIP 並發斷線、IP 倒序、拔線重連失敗（d726a88, 20e396f, b779752）
 
 ### 🐛 Bug 修正

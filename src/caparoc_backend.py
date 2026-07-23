@@ -1231,28 +1231,34 @@ class CaparocBackend:
             voltage = voltage_raw / 100.0
 
             channels = {}
+            global_ch = 0
             for module in range(1, module_count + 1):
                 for ch in range(1, self.channels_per_module + 1):
-                    global_ch = (module - 1) * self.channels_per_module + ch
                     offset = self.get_channel_offset(module, ch)
 
-                    if len(data) > offset + 2:
-                        status_byte  = data[offset]
-                        nominal_byte = data[offset + 1]
-                        flowing_byte = data[offset + 2]
+                    if len(data) <= offset + 2:
+                        break  # 資料不足，此模組後續通道也不會有資料
 
-                        channels[global_ch] = {
-                            'module':        module,
-                            'channel':       ch,
-                            'is_on':         bool(status_byte & 0x01),
-                            'flowing_current': flowing_byte / 10.0,
-                            'nominal_current': float(nominal_byte),
-                            'warning_80':    bool(status_byte & 0x02),
-                            'overload':      bool(status_byte & 0x04),
-                            'short_circuit': bool(status_byte & 0x08),
-                            'hardware_fault': bool(status_byte & 0x10),
-                            'total_shutdown': bool(status_byte & 0x20)
-                        }
+                    nominal_byte = data[offset + 1]
+                    if nominal_byte == 0:
+                        continue  # nominal_amps=0 代表空槽（非實體通道），跳過
+
+                    global_ch += 1
+                    status_byte  = data[offset]
+                    flowing_byte = data[offset + 2]
+
+                    channels[global_ch] = {
+                        'module':          module,
+                        'channel':         ch,
+                        'is_on':           bool(status_byte & 0x01),
+                        'flowing_current': flowing_byte / 10.0,
+                        'nominal_current': float(nominal_byte),
+                        'warning_80':      bool(status_byte & 0x02),
+                        'overload':        bool(status_byte & 0x04),
+                        'short_circuit':   bool(status_byte & 0x08),
+                        'hardware_fault':  bool(status_byte & 0x10),
+                        'total_shutdown':  bool(status_byte & 0x20),
+                    }
 
             result = {
                 'timestamp':         time.time(),

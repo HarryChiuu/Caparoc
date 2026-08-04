@@ -1867,10 +1867,11 @@ class CaparocBackend:
                 result['error'] = f"Attr5 write error: {resp_cfg.error}"
                 return result
 
-            # Attr5 寫入成功，IP 可能已立即生效
-            result['success'] = True
+            # Attr5 寫入成功；等待設備儲存後再切換模式（參考封包分析：兩次寫入間需間隔）
+            time.sleep(3)
 
-            # Step 2: 寫入 Attr 3 = Static IP；IP 變更後連線中斷屬正常現象
+            # Step 2: 寫入 Attr 3 = Static IP；觸發後設備會短暫進入 DHCP 過渡狀態再套用新 IP
+            result['success'] = True
             try:
                 static_data = struct.pack('<I', 0)
                 driver.generic_message(

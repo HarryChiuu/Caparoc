@@ -330,8 +330,10 @@ def set_static_ip(driver, backend: CaparocBackend):
 
     result = backend.set_device_ip(driver, new_ip, subnet, gateway)
     if result['success']:
-        print(f"  ✅ 寫入成功！設備 IP 已變更為 {new_ip}")
-        print("     連線中斷為正常現象，請以新 IP 重新連線。")
+        print(f"  ✅ 寫入完成！")
+        print(f"     設備正在套用新 IP，過程中可能短暫進入 DHCP 過渡狀態。")
+        print(f"     請等待 10-15 秒後，再以新 IP 連線：")
+        print(f"     python tests/test_ip_config.py {new_ip}")
     else:
         print(f"  ❌ 寫入失敗: {result['error']}")
 

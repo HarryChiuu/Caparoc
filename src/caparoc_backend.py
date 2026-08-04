@@ -1848,29 +1848,37 @@ class CaparocBackend:
         gw_addr = gateway if gateway else "0.0.0.0"
 
         try:
-            # Step 1: 寫入 Attr 3 = Static IP (DWORD = 0x00000000)
-            static_data = struct.pack('<I', 0)
-            resp_ctrl = driver.generic_message(
-                service=0x10, class_code=0xF5, instance=1,
-                attribute=3, request_data=static_data, connected=False
-            )
-            # generic_message 失敗時通常拋 Exception，不需額外檢查回傳值
-
-            # Step 2: 組裝 Attr 5 資料
-            # 格式: IP(4) + Subnet(4) + Gateway(4) + NS1(4) + NS2(4) + DomainName UDINT len(4) + data(0)
+            # Step 1: 組裝 Attr 5 資料（先寫 IP，再切模式，確保設備用新 IP）
+            # CIP 以 Little-Endian UDINT 儲存 IP，需反轉 bytes
+            # 格式: IP(4) + Subnet(4) + Gateway(4) + NS1(4) + NS2(4) + DomainName SSTRING len(2)
             config_data = (
-                _socket.inet_aton(new_ip) +
-                _socket.inet_aton(subnet) +
-                _socket.inet_aton(gw_addr) +
+                _socket.inet_aton(new_ip)[::-1] +
+                _socket.inet_aton(subnet)[::-1] +
+                _socket.inet_aton(gw_addr)[::-1] +
                 bytes(4) +               # NameServer1 = 0.0.0.0
                 bytes(4) +               # NameServer2 = 0.0.0.0
                 struct.pack('<H', 0)     # DomainName SSTRING: length=0
             )
             resp_cfg = driver.generic_message(
                 service=0x10, class_code=0xF5, instance=1,
-                attribute=5, request_data=config_data, connected=False
+                attribute=5, request_data=config_data, connected=True
             )
+            if resp_cfg and hasattr(resp_cfg, 'error') and resp_cfg.error:
+                result['error'] = f"Attr5 write error: {resp_cfg.error}"
+                return result
+
+            # Attr5 寫入成功，IP 可能已立即生效
             result['success'] = True
+
+            # Step 2: 寫入 Attr 3 = Static IP；IP 變更後連線中斷屬正常現象
+            try:
+                static_data = struct.pack('<I', 0)
+                driver.generic_message(
+                    service=0x10, class_code=0xF5, instance=1,
+                    attribute=3, request_data=static_data, connected=True
+                )
+            except Exception:
+                pass  # 連線因 IP 改變而中斷，屬預期行為
 
         except Exception as e:
             result['error'] = str(e)
@@ -1890,11 +1898,15 @@ class CaparocBackend:
         result = {'success': False, 'error': None}
         try:
             dhcp_data = struct.pack('<I', 2)  # Configuration Control = 2 (DHCP)
-            driver.generic_message(
+            resp = driver.generic_message(
                 service=0x10, class_code=0xF5, instance=1,
-                attribute=3, request_data=dhcp_data, connected=False
+                attribute=3, request_data=dhcp_data, connected=True
             )
+            if resp and hasattr(resp, 'error') and resp.error:
+                result['error'] = f"Attr3 write error: {resp.error}"
+                return result
             result['success'] = True
-        except Exception as e:
-            result['error'] = str(e)
+        except Exception:
+            # 連線因 IP 改變而中斷，屬預期行為
+            result['success'] = True
         return result

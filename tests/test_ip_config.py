@@ -36,18 +36,32 @@ ATTR_IFACE  = 5     # Interface Configuration (IP/Subnet/Gateway/DNS)
 
 CTRL_NAMES = {0: "Static IP", 1: "BOOTP", 2: "DHCP"}
 
+# CIP 以 Little-Endian UDINT 儲存 IP，需反轉後才能用 inet_ntoa
+_le2ip = lambda b, off: socket.inet_ntoa(b[off:off+4][::-1])
+_ip2le = lambda ip: socket.inet_aton(ip)[::-1]
+
 
 def _read_attr(driver, attr):
-    return driver.generic_message(
-        service=SVC_GET, class_code=CLASS_TCPIP, instance=INST,
-        attribute=attr, connected=False
-    )
+    """嘗試 unconnected 再 connected，回傳第一個成功的結果"""
+    for connected in (False, True):
+        resp = driver.generic_message(
+            service=SVC_GET, class_code=CLASS_TCPIP, instance=INST,
+            attribute=attr, connected=connected,
+            unconnected_send=not connected,
+        )
+        if resp and not (hasattr(resp, 'error') and resp.error):
+            return resp
+        mode = "unconnected" if not connected else "connected"
+        err = getattr(resp, 'error', '(no resp)') if resp else '(no resp)'
+        print(f"  [debug] Attr{attr} {mode} failed: {err}")
+    return None
 
 
 def _write_attr(driver, attr, data: bytes):
     return driver.generic_message(
         service=SVC_SET, class_code=CLASS_TCPIP, instance=INST,
-        attribute=attr, request_data=data, connected=False
+        attribute=attr, request_data=data, connected=False,
+        unconnected_send=True,
     )
 
 
@@ -57,28 +71,35 @@ def read_config(driver):
 
     # Attr 3: Configuration Control
     resp = _read_attr(driver, ATTR_CTRL)
-    if resp and resp.value and len(resp.value) >= 4:
-        ctrl = struct.unpack('<I', resp.value[:4])[0]
-        print(f"  IP 取得方式 (Attr3): {CTRL_NAMES.get(ctrl, f'未知 0x{ctrl:02X}')}  [{ctrl}]")
-        print(f"  raw bytes         : {resp.value[:4].hex()}")
+    if resp and resp.value is not None:
+        raw = bytes(resp.value)
+        if len(raw) >= 4:
+            ctrl = struct.unpack('<I', raw[:4])[0]
+            print(f"  IP 取得方式 (Attr3): {CTRL_NAMES.get(ctrl, f'未知 0x{ctrl:02X}')}  [{ctrl}]")
+            print(f"  raw bytes         : {raw[:4].hex()}")
+        else:
+            print(f"  Attr3 資料長度不足: {raw.hex()}")
     else:
         print("  Attr3 讀取失敗")
 
     # Attr 5: Interface Configuration
     resp = _read_attr(driver, ATTR_IFACE)
-    if resp and resp.value and len(resp.value) >= 12:
-        raw = resp.value
-        ip      = socket.inet_ntoa(raw[0:4])
-        subnet  = socket.inet_ntoa(raw[4:8])
-        gw      = socket.inet_ntoa(raw[8:12])
-        dns1    = socket.inet_ntoa(raw[12:16]) if len(raw) >= 16 else "—"
-        dns2    = socket.inet_ntoa(raw[16:20]) if len(raw) >= 20 else "—"
-        print(f"  IP 位址   (Attr5) : {ip}")
-        print(f"  子網路遮罩        : {subnet}")
-        print(f"  預設閘道          : {gw if gw != '0.0.0.0' else '（未設定）'}")
-        print(f"  DNS1              : {dns1}")
-        print(f"  DNS2              : {dns2}")
-        print(f"  raw bytes         : {raw[:20].hex()}")
+    if resp and resp.value is not None:
+        raw = bytes(resp.value)
+        if len(raw) >= 12:
+            ip      = _le2ip(raw, 0)
+            subnet  = _le2ip(raw, 4)
+            gw      = _le2ip(raw, 8)
+            dns1    = _le2ip(raw, 12) if len(raw) >= 16 else "—"
+            dns2    = _le2ip(raw, 16) if len(raw) >= 20 else "—"
+            print(f"  IP 位址   (Attr5) : {ip}")
+            print(f"  子網路遮罩        : {subnet}")
+            print(f"  預設閘道          : {gw if gw != '0.0.0.0' else '（未設定）'}")
+            print(f"  DNS1              : {dns1}")
+            print(f"  DNS2              : {dns2}")
+            print(f"  raw bytes         : {raw[:20].hex()}")
+        else:
+            print(f"  Attr5 資料長度不足: {raw.hex()}")
     else:
         print("  Attr5 讀取失敗")
 
@@ -92,8 +113,10 @@ def set_static_ip(driver, backend: CaparocBackend):
     # 先讀目前設定作為預設值
     resp = _read_attr(driver, ATTR_IFACE)
     cur_subnet = "255.255.255.0"
-    if resp and resp.value and len(resp.value) >= 8:
-        cur_subnet = socket.inet_ntoa(resp.value[4:8])
+    if resp and resp.value is not None:
+        raw = bytes(resp.value)
+        if len(raw) >= 8:
+            cur_subnet = _le2ip(raw, 4)
 
     new_ip = input("  新 IP 位址（cancel 取消）: ").strip()
     if new_ip.lower() == "cancel":
@@ -112,9 +135,9 @@ def set_static_ip(driver, backend: CaparocBackend):
     gw_addr = gateway if gateway else "0.0.0.0"
     attr3_bytes = struct.pack('<I', 0)
     attr5_bytes = (
-        socket.inet_aton(new_ip) +
-        socket.inet_aton(subnet) +
-        socket.inet_aton(gw_addr) +
+        _ip2le(new_ip) +
+        _ip2le(subnet) +
+        _ip2le(gw_addr) +
         bytes(4) +            # DNS1
         bytes(4) +            # DNS2
         struct.pack('<H', 0)  # DomainName SSTRING len=0

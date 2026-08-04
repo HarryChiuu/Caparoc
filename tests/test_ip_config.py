@@ -15,6 +15,7 @@ IP 設定功能測試工具
 import sys
 import struct
 import socket
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -77,6 +78,25 @@ def _parse_list_identity(data: bytes, src_ip: str) -> dict | None:
         return None
 
 
+def _get_broadcast_addresses() -> list[str]:
+    """取得所有本機網路介面的廣播位址，包含 APIPA (169.254.x.x/16)"""
+    broadcasts = {'255.255.255.255'}
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip.startswith('127.'):
+                continue
+            parts = ip.split('.')
+            # APIPA 是 /16；一般辦公室網路假設 /24
+            if ip.startswith('169.254.'):
+                broadcasts.add('169.254.255.255')
+            else:
+                broadcasts.add('.'.join(parts[:3]) + '.255')
+    except Exception:
+        pass
+    return list(broadcasts)
+
+
 def discover_devices(timeout: float = 2.0) -> list[dict]:
     """
     廣播 EtherNet/IP List Identity (UDP 44818)，回傳網路上所有回應的設備。
@@ -97,8 +117,10 @@ def discover_devices(timeout: float = 2.0) -> list[dict]:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.settimeout(0.3)
+    broadcasts = _get_broadcast_addresses()
     try:
-        sock.sendto(pkt, ('255.255.255.255', EIP_PORT))
+        for bcast in broadcasts:
+            sock.sendto(pkt, (bcast, EIP_PORT))
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
@@ -115,20 +137,70 @@ def discover_devices(timeout: float = 2.0) -> list[dict]:
     return devices
 
 
+def _eip_port_open(ip: str, timeout: float = 0.5) -> bool:
+    """TCP 連線測試：確認 IP 上的 EtherNet/IP port 44818 是否有回應"""
+    try:
+        with socket.create_connection((ip, 44818), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def discover_by_arp() -> list[dict]:
+    """
+    從 Windows ARP table 掃出同網段設備，逐一測試 port 44818，
+    回傳可連線的設備清單。
+    """
+    import subprocess
+    result = subprocess.run(['arp', '-a'], capture_output=True, text=True)
+
+    # 依 MAC 分組，避免同一設備多個快取 IP 重複顯示
+    mac_to_ips: dict[str, list[str]] = {}
+    current_iface = None
+    for line in result.stdout.splitlines():
+        if '介面' in line or 'Interface' in line:
+            current_iface = line
+            continue
+        parts = line.split()
+        if len(parts) >= 3 and parts[2] in ('動態', 'dynamic'):
+            ip, mac = parts[0], parts[1]
+            mac_to_ips.setdefault(mac, []).append(ip)
+
+    devices = []
+    for mac, ips in mac_to_ips.items():
+        # 測試哪個 IP 目前 active
+        active = [ip for ip in ips if _eip_port_open(ip)]
+        for ip in active:
+            devices.append({'ip': ip, 'mac': mac, 'name': f'MAC {mac}', 'via': 'ARP'})
+
+    return devices
+
+
 def run_discovery() -> str | None:
-    """列印探索結果，張使者選擇設備。回傳選定的 IP，或 None 表示取消。"""
-    print(f"\n正在探索網路上的 EtherNet/IP 設備（廣播 UDP 44818，等待 2s）...")
+    """列印探索結果，讓使用者選擇設備。回傳選定的 IP，或 None 表示取消。"""
+    broadcasts = _get_broadcast_addresses()
+    print(f"\n正在探索 EtherNet/IP 設備（廣播目標：{', '.join(broadcasts)}，等待 2s）...")
     devices = discover_devices(timeout=2.0)
 
     if not devices:
-        print("  ❕ 未發現任何設備，請檢查網路連線")
+        print("  List Identity 廣播無回應，改用 ARP table 掃描...")
+        devices = discover_by_arp()
+
+    if not devices:
+        print("  ❕ 未發現任何設備，請確認：")
+        print("     1. 設備已開機且連接同一網路")
+        print("     2. 若設備為 DHCP 模式，請確認 DHCP server 已分配 IP")
+        print("     3. 可手動指定 IP：python tests/test_ip_config.py <IP>")
         return None
 
     print(f"\n  發現 {len(devices)} 台設備：")
-    print(f"  {'#':>2}  {'IP 位址':<18} {'Vendor':>6}  產品名稱")
+    print(f"  {'#':>2}  {'IP 位址':<18}  {'MAC / 產品名稱'}")
     print("  " + "-"*55)
     for i, d in enumerate(devices, 1):
-        print(f"  {i:>2}  {d['ip']:<18} {d['vendor_id']:>6}  {d['name']}  (S/N: {d['serial']})")
+        via = f"  [{d.get('via','EIP')}]" if d.get('via') else ''
+        extra = d.get('serial', '')
+        extra_str = f"  S/N: {extra}" if extra else ''
+        print(f"  {i:>2}  {d['ip']:<18}  {d['name']}{extra_str}{via}")
     print()
 
     if len(devices) == 1:

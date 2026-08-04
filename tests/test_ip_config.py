@@ -41,6 +41,111 @@ _le2ip = lambda b, off: socket.inet_ntoa(b[off:off+4][::-1])
 _ip2le = lambda ip: socket.inet_aton(ip)[::-1]
 
 
+# ── EtherNet/IP List Identity 設備探索 ──────────────────────────────
+
+def _parse_list_identity(data: bytes, src_ip: str) -> dict | None:
+    """Parse a List Identity response, return device info dict or None"""
+    try:
+        if len(data) < 30:
+            return None
+        if struct.unpack_from('<H', data, 0)[0] != 0x0063:
+            return None
+        # header=24, item_count=2, type_id=2, item_len=2, proto_ver=2 = offset 32
+        # socket_addr: sin_family(2)+sin_port(2)+sin_addr(4)+zero(8) = 16 bytes
+        off = 32
+        if off + 16 > len(data):
+            return None
+        ip = socket.inet_ntoa(data[off+4:off+8])  # socket struct uses BE
+        off += 16
+        if off + 12 > len(data):
+            return None
+        vendor_id   = struct.unpack_from('<H', data, off)[0];  off += 2
+        device_type = struct.unpack_from('<H', data, off)[0];  off += 2
+        product_code= struct.unpack_from('<H', data, off)[0];  off += 2
+        rev_major   = data[off]; rev_minor = data[off+1];      off += 2
+        off += 2  # status
+        serial      = struct.unpack_from('<I', data, off)[0];  off += 4
+        name_len    = data[off];                               off += 1
+        name = data[off:off+name_len].decode('ascii', errors='replace')
+        return {
+            'ip': ip, 'src_ip': src_ip,
+            'vendor_id': vendor_id, 'name': name,
+            'revision': f"{rev_major}.{rev_minor}",
+            'serial': f"{serial:08X}",
+        }
+    except Exception:
+        return None
+
+
+def discover_devices(timeout: float = 2.0) -> list[dict]:
+    """
+    廣播 EtherNet/IP List Identity (UDP 44818)，回傳網路上所有回應的設備。
+    不需知道設備 IP，不需管理員權限。
+    """
+    EIP_PORT = 44818
+    # 24-byte ENIP encapsulation header，無資料段
+    pkt = (
+        struct.pack('<H', 0x0063) +  # Command: List Identity
+        struct.pack('<H', 0x0000) +  # Length
+        struct.pack('<I', 0) +       # Session Handle
+        struct.pack('<I', 0) +       # Status
+        b'\x00' * 8 +               # Sender Context
+        struct.pack('<I', 0)         # Options
+    )
+    devices = []
+    seen_ips = set()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    sock.settimeout(0.3)
+    try:
+        sock.sendto(pkt, ('255.255.255.255', EIP_PORT))
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                data, addr = sock.recvfrom(1024)
+                if addr[0] not in seen_ips:
+                    seen_ips.add(addr[0])
+                    dev = _parse_list_identity(data, addr[0])
+                    if dev:
+                        devices.append(dev)
+            except socket.timeout:
+                pass
+    finally:
+        sock.close()
+    return devices
+
+
+def run_discovery() -> str | None:
+    """列印探索結果，張使者選擇設備。回傳選定的 IP，或 None 表示取消。"""
+    print(f"\n正在探索網路上的 EtherNet/IP 設備（廣播 UDP 44818，等待 2s）...")
+    devices = discover_devices(timeout=2.0)
+
+    if not devices:
+        print("  ❕ 未發現任何設備，請檢查網路連線")
+        return None
+
+    print(f"\n  發現 {len(devices)} 台設備：")
+    print(f"  {'#':>2}  {'IP 位址':<18} {'Vendor':>6}  產品名稱")
+    print("  " + "-"*55)
+    for i, d in enumerate(devices, 1):
+        print(f"  {i:>2}  {d['ip']:<18} {d['vendor_id']:>6}  {d['name']}  (S/N: {d['serial']})")
+    print()
+
+    if len(devices) == 1:
+        ans = input(f"  選擇設備 [Enter=選第1台 / 0=离開]: ").strip()
+        if ans == '0':
+            return None
+        return devices[0]['ip']
+
+    ans = input(f"  選擇編號 [1-{len(devices)} / 0=离開]: ").strip()
+    if ans == '0' or not ans.isdigit():
+        return None
+    idx = int(ans) - 1
+    if 0 <= idx < len(devices):
+        return devices[idx]['ip']
+    return None
+
+
 def _read_attr(driver, attr):
     """嘗試 unconnected 再 connected，回傳第一個成功的結果"""
     for connected in (False, True):
@@ -183,7 +288,14 @@ def set_dhcp(driver, backend: CaparocBackend):
 
 # ── 主程式 ──────────────────────────────────────────────────
 def main():
-    device_ip = DEFAULT_IP
+    # 沒有給定 IP 時，自動廣播探索
+    if len(sys.argv) > 1:
+        device_ip = sys.argv[1]
+    else:
+        device_ip = run_discovery()
+        if device_ip is None:
+            return
+
     print(f"\n{'='*55}")
     print(f"  IP 設定功能測試  →  {device_ip}")
     print(f"  CIP Class 0xF5 (TCP/IP Interface Object)")

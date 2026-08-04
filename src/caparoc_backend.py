@@ -1876,3 +1876,25 @@ class CaparocBackend:
             result['error'] = str(e)
 
         return result
+
+    def set_device_dhcp(self, driver):
+        """
+        透過 CIP Class 0xF5 將設備切換為 DHCP 模式。
+
+        只需寫入 Attr 3 = 0x02（DHCP），設備會自行向 DHCP server 取得 IP。
+        ⚠️ 成功後設備 IP 立即改變，現有連線會中斷（正常現象）。
+
+        Returns:
+            dict: {'success': bool, 'error': str or None}
+        """
+        result = {'success': False, 'error': None}
+        try:
+            dhcp_data = struct.pack('<I', 2)  # Configuration Control = 2 (DHCP)
+            driver.generic_message(
+                service=0x10, class_code=0xF5, instance=1,
+                attribute=3, request_data=dhcp_data, connected=False
+            )
+            result['success'] = True
+        except Exception as e:
+            result['error'] = str(e)
+        return result

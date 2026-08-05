@@ -395,8 +395,17 @@ def _cip_fix_as_static(device_ip: str, new_ip: str = None,
                     result = {'success': True, 'error': None}  # RST 視為成功
 
             if result['success']:
-                print(f"  ✅ 完成！設備已設定為靜態 {target}")
-                print(f"     請等待 10 秒後驗證：python tests/test_ip_config.py {target}")
+                target = new_ip if new_ip else device_ip
+                print(f"  ✅ 指令送出完成")
+                print(f"  ⏳ 等待設備套用設定（15 秒）...")
+                time.sleep(15)
+                try:
+                    with socket.create_connection((target, 44818), timeout=3):
+                        print(f"  ✅ 驗證成功：設備已在 {target}")
+                        print(f"     python tests/test_ip_config.py {target}")
+                except OSError:
+                    print(f"  ⚠️  15 秒後仍無法連線，可能需要更長時間")
+                    print(f"     請稍後再試：python tests/test_ip_config.py {target}")
             else:
                 print(f"  ❌ 失敗: {result['error']}")
             return result['success']
@@ -498,26 +507,46 @@ def main():
 
         elif choice == '5':
             print("\n── 新設備完整設定（DHCP → 靜態 IP）───────────────────")
-            print("  步驟：監聽 DHCP → 等設備取得 IP → CIP 固化靜態")
-            print("  ⚠️  需要 PC 有 DHCP server 運行（設備才能拿到 IP）\n")
+            print("  步驟：取得 MAC → 找 DHCP IP → CIP 固化靜態\n")
 
-            # Step 1: 取得 MAC
-            found_mac = _listen_dhcp_discover(iface)
+            # Step 1: 取得 MAC（先掃 ARP，再監聽 DHCP）
+            print("  Step 1: 先掃描 ARP table，再監聽 DHCP Discover（15 秒）...")
+            found_mac = _listen_dhcp_discover(iface, timeout=15.0)
             if not found_mac:
-                print("  ⚠️  未偵測到設備，請重插設備網路線後再試")
-                continue
+                print("  未偵測到 DHCP Discover（設備可能已有 IP）")
+                found_mac = input("  請輸入設備 MAC（格式 cc:cc:ea:9f:c9:72，留空取消）: ").strip().lower()
+                if not found_mac:
+                    continue
 
             print(f"\n  設備 MAC: {found_mac}")
 
-            # Step 2: 等待設備拿到 DHCP IP
-            dhcp_ip = _wait_for_dhcp_ip(found_mac, timeout=30.0)
-            if not dhcp_ip:
-                print("  ⚠️  設備未取得 DHCP IP（DHCP server 是否有在運行？）")
-                print(f"     如果知道設備 IP，可直接用：python tests/test_ip_config.py <IP>")
-                continue
+            # Step 2: 先查 ARP table，有就直接用，沒有再等
+            mac_variants = {found_mac.lower(), found_mac.replace(':', '-').lower()}
+            result_arp = subprocess.run(['arp', '-a'], capture_output=True, text=True)
+            dhcp_ip = None
+            for line in result_arp.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 2 and parts[1].lower() in mac_variants:
+                    try:
+                        with socket.create_connection((parts[0], 44818), timeout=0.8):
+                            dhcp_ip = parts[0]
+                            print(f"  ✅ ARP table 找到設備：{dhcp_ip}")
+                            break
+                    except OSError:
+                        pass
 
-            # Step 3: 設定靜態 IP
-            print(f"\n  設備目前 DHCP IP: {dhcp_ip}")
+            if not dhcp_ip:
+                print("\n  Step 2: ARP table 無結果，等待設備取得 DHCP IP...")
+                dhcp_ip = _wait_for_dhcp_ip(found_mac, timeout=30.0)
+
+            if not dhcp_ip:
+                print("  ⚠️  ARP table 找不到設備 IP")
+                dhcp_ip = input("  請手動輸入設備目前 IP（留空取消）: ").strip()
+                if not dhcp_ip:
+                    continue
+
+            # Step 3: 固化靜態 IP
+            print(f"\n  Step 3: 設備目前 IP: {dhcp_ip}")
             print("  選擇：")
             print(f"    [1] 保留此 IP 作為靜態（{dhcp_ip}）")
             print("    [2] 指定新的靜態 IP")
@@ -529,6 +558,9 @@ def main():
                 new_ip = input("  新靜態 IP: ").strip()
                 subnet_in = input("  子網路遮罩 [Enter=255.255.255.0]: ").strip()
                 subnet = subnet_in if subnet_in else "255.255.255.0"
+                gw_in = input("  預設閘道   [Enter=0.0.0.0]: ").strip()
+                gateway = gw_in if gw_in else "0.0.0.0"
+                _cip_fix_as_static(dhcp_ip, new_ip, subnet, gateway)
                 gw_in = input("  預設閘道   [Enter=0.0.0.0]: ").strip()
                 gateway = gw_in if gw_in else "0.0.0.0"
                 _cip_fix_as_static(dhcp_ip, new_ip, subnet, gateway)

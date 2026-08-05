@@ -330,10 +330,17 @@ def set_static_ip(driver, backend: CaparocBackend):
 
     result = backend.set_device_ip(driver, new_ip, subnet, gateway)
     if result['success']:
-        print(f"  ✅ 寫入完成！")
-        print(f"     設備正在套用新 IP，過程中可能短暫進入 DHCP 過渡狀態。")
-        print(f"     請等待 10-15 秒後，再以新 IP 連線：")
-        print(f"     python tests/test_ip_config.py {new_ip}")
+        print(f"  ✅ 指令送出完成！")
+        print(f"  ⏳ 等待設備套用設定（15 秒）...")
+        import time as _t
+        _t.sleep(10)
+        try:
+            with socket.create_connection((new_ip, 44818), timeout=3):
+                print(f"  ✅ 驗證成功：設備已在 {new_ip}")
+                print(f"     python tests/test_ip_config.py {new_ip}")
+        except OSError:
+            print(f"  ⚠️  10 秒後仍無法連線，請稍後再試")
+            print(f"     python tests/test_ip_config.py {new_ip}")
     else:
         print(f"  ❌ 寫入失敗: {result['error']}")
 
@@ -354,8 +361,11 @@ def set_dhcp(driver, backend: CaparocBackend):
 
     result = backend.set_device_dhcp(driver)
     if result['success']:
-        print("  ✅ 寫入成功！設備正在向 DHCP server 取得 IP。")
-        print("     請用 Wireshark 觀察 DHCP Discover 封包。")
+        print("  ✅ 指令送出完成！")
+        print("  ⏳ 等待設備切換 DHCP（10 秒）...")
+        import time as _t
+        _t.sleep(10)
+        print("  ✅ 完成！請執行 arp -a 確認設備新 IP")
     else:
         print(f"  ❌ 寫入失敗: {result['error']}")
 

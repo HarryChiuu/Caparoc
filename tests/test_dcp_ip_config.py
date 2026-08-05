@@ -506,61 +506,53 @@ def main():
                 print("  ⚠️  超時未收到 DHCP Discover，請重插設備網路線後再試")
 
         elif choice == '5':
-            print("\n── 新設備完整設定（DHCP → 靜態 IP）───────────────────")
-            print("  步驟：取得 MAC → 找 DHCP IP → CIP 固化靜態\n")
+            print("\n── 新設備完整設定（MAC → 強制靜態 IP）─────────────────")
+            print("  不需知道設備目前 IP，透過 DCP Layer 2 直接寫入\n")
 
-            # Step 1: 取得 MAC（先掃 ARP，再監聽 DHCP）
-            print("  Step 1: 先掃描 ARP table，再監聽 DHCP Discover（15 秒）...")
+            # Step 1: 取得 MAC
+            print("  Step 1: 監聽 DHCP Discover（15 秒）...")
             found_mac = _listen_dhcp_discover(iface, timeout=15.0)
             if not found_mac:
-                print("  未偵測到 DHCP Discover（設備可能已有 IP）")
+                print("  未偵測到 DHCP Discover（設備可能已有 IP，不再廣播）")
                 found_mac = input("  請輸入設備 MAC（格式 cc:cc:ea:9f:c9:72，留空取消）: ").strip().lower()
                 if not found_mac:
                     continue
 
             print(f"\n  設備 MAC: {found_mac}")
 
-            # Step 2: 先查 ARP table，有就直接用，沒有再等
-            mac_variants = {found_mac.lower(), found_mac.replace(':', '-').lower()}
-            result_arp = subprocess.run(['arp', '-a'], capture_output=True, text=True)
-            dhcp_ip = None
-            for line in result_arp.stdout.splitlines():
-                parts = line.split()
-                if len(parts) >= 2 and parts[1].lower() in mac_variants:
-                    try:
-                        with socket.create_connection((parts[0], 44818), timeout=0.8):
-                            dhcp_ip = parts[0]
-                            print(f"  ✅ ARP table 找到設備：{dhcp_ip}")
-                            break
-                    except OSError:
-                        pass
+            # Step 2: 輸入目標靜態 IP
+            new_ip = input("  目標靜態 IP（cancel 取消）: ").strip()
+            if new_ip.lower() == 'cancel':
+                continue
+            subnet_in = input("  子網路遮罩 [Enter=255.255.255.0]: ").strip()
+            subnet = subnet_in if subnet_in else "255.255.255.0"
+            gw_in = input("  預設閘道   [Enter=0.0.0.0]: ").strip()
+            gateway = gw_in if gw_in else "0.0.0.0"
 
-            if not dhcp_ip:
-                print("\n  Step 2: ARP table 無結果，等待設備取得 DHCP IP...")
-                dhcp_ip = _wait_for_dhcp_ip(found_mac, timeout=30.0)
+            confirm = input(f"\n  確認將 {found_mac} 設為靜態 {new_ip}？ [Y/N]: ").strip().upper()
+            if confirm != 'Y':
+                continue
 
-            if not dhcp_ip:
-                print("  ⚠️  ARP table 找不到設備 IP")
-                dhcp_ip = input("  請手動輸入設備目前 IP（留空取消）: ").strip()
-                if not dhcp_ip:
-                    continue
+            # Step 3: DCP Set IP（Layer 2）
+            print(f"\n  Step 2: 發送 DCP Set IP → {found_mac}")
+            dcp_set_ip(iface, found_mac, new_ip, subnet, gateway)
 
-            # Step 3: 固化靜態 IP
-            print(f"\n  Step 3: 設備目前 IP: {dhcp_ip}")
-            print("  選擇：")
-            print(f"    [1] 保留此 IP 作為靜態（{dhcp_ip}）")
-            print("    [2] 指定新的靜態 IP")
-            sub = input("  請選擇 [1/2]: ").strip()
-
-            if sub == '1':
-                _cip_fix_as_static(dhcp_ip)
-            elif sub == '2':
-                new_ip = input("  新靜態 IP: ").strip()
-                subnet_in = input("  子網路遮罩 [Enter=255.255.255.0]: ").strip()
-                subnet = subnet_in if subnet_in else "255.255.255.0"
-                gw_in = input("  預設閘道   [Enter=0.0.0.0]: ").strip()
-                gateway = gw_in if gw_in else "0.0.0.0"
-                _cip_fix_as_static(dhcp_ip, new_ip, subnet, gateway)
+            # Step 4: 等待 + 驗證
+            print(f"  Step 3: 等待設備套用（10 秒）...")
+            for i in range(10, 0, -1):
+                print(f"         {i}s...", end='\r')
+                time.sleep(1)
+            print()
+            try:
+                with socket.create_connection((new_ip, 44818), timeout=3):
+                    print(f"  ✅ 驗證成功！設備已在 {new_ip}")
+                    print(f"     可用 python tests/test_ip_config.py {new_ip} 管理")
+            except OSError:
+                print(f"  ⚠️  port 44818 無法連線")
+                print(f"  可能原因：")
+                print(f"    1. DCP Set IP 此設備不支援 → 改用 [5b] CIP 方式")
+                print(f"    2. 設備需要更長時間 → 稍後再試 python tests/test_ip_config.py {new_ip}")
+                print(f"    3. Wireshark 確認 DCP 封包是否送出（過濾: ether.type == 0x8892）")
                 gw_in = input("  預設閘道   [Enter=0.0.0.0]: ").strip()
                 gateway = gw_in if gw_in else "0.0.0.0"
                 _cip_fix_as_static(dhcp_ip, new_ip, subnet, gateway)

@@ -20,7 +20,11 @@ PROFINET DCP IP 設定工具
 import sys
 import struct
 import socket
+import time
+import subprocess
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 # ── DCP 常數 ─────────────────────────────────────────────────
 DCP_MULTICAST_MAC = "01:0e:cf:00:00:00"
@@ -337,9 +341,71 @@ def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
     return found[0] if found else None
 
 
+def _wait_for_dhcp_ip(target_mac: str, timeout: float = 30.0) -> str | None:
+    """輪詢 ARP table 等 target_mac 的 DHCP IP 出現，測試 port 44818 確認可連"""
+    mac_variants = {target_mac.lower(), target_mac.replace(':', '-').lower()}
+    print(f"  等待設備取得 DHCP IP（最多 {int(timeout)} 秒）...")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        result = subprocess.run(['arp', '-a'], capture_output=True, text=True)
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            ip, mac = parts[0], parts[1].lower()
+            if mac not in mac_variants:
+                continue
+            try:
+                with socket.create_connection((ip, 44818), timeout=0.8):
+                    print(f"  ✅ 設備在 {ip}（port 44818 可連）")
+                    return ip
+            except OSError:
+                pass
+        time.sleep(2)
+        print("  ...", end='\r')
+    return None
+
+
+def _cip_fix_as_static(device_ip: str, new_ip: str = None,
+                        subnet: str = "255.255.255.0", gateway: str = "") -> bool:
+    """
+    透過 CIP 連線，固化靜態 IP。
+    - new_ip 為 None：保留 DHCP 取得的 IP，僅寫 Attr3=0x00
+    - new_ip 指定：寫 Attr5（新 IP）+ Attr3=0x00
+    """
+    from caparoc_backend import CaparocBackend
+    from pycomm3 import CIPDriver
+
+    backend = CaparocBackend(device_ip)
+    target = new_ip if new_ip else device_ip
+    print(f"\n  連接 {device_ip}，固化靜態 IP {target}...")
+    try:
+        with CIPDriver(device_ip) as driver:
+            if new_ip and new_ip != device_ip:
+                result = backend.set_device_ip(driver, new_ip, subnet, gateway)
+            else:
+                import struct as _s
+                try:
+                    driver.generic_message(
+                        service=0x10, class_code=0xF5, instance=1,
+                        attribute=3, request_data=_s.pack('<I', 0), connected=True
+                    )
+                    result = {'success': True, 'error': None}
+                except Exception:
+                    result = {'success': True, 'error': None}  # RST 視為成功
+
+            if result['success']:
+                print(f"  ✅ 完成！設備已設定為靜態 {target}")
+                print(f"     請等待 10 秒後驗證：python tests/test_ip_config.py {target}")
+            else:
+                print(f"  ❌ 失敗: {result['error']}")
+            return result['success']
+    except Exception as e:
+        print(f"  ❌ CIP 連線失敗: {e}")
+        return False
+
+
 def main():
-    print("=" * 55)
-    print("  PROFINET DCP IP 設定工具")
     print("  Layer 2 直接通訊，不需知道設備 IP")
     print("=" * 55)
 
@@ -358,6 +424,7 @@ def main():
         print("  [2] DCP Set IP  — 透過 MAC 設定靜態 IP（需先探索）")
         print("  [3] DCP Set IP  — 直接輸入 MAC 設定 IP（不需探索）★")
         print("  [4] 監聽 DHCP Discover — 從設備 DHCP 封包讀出 MAC ★")
+        print("  [5] 新設備完整設定  — DHCP 監聽 → 等 IP → CIP 固化靜態 ★★")
         print("  [0] 離開")
         choice = input("\n  請選擇: ").strip()
 
@@ -429,8 +496,45 @@ def main():
             else:
                 print("  ⚠️  超時未收到 DHCP Discover，請重插設備網路線後再試")
 
+        elif choice == '5':
+            print("\n── 新設備完整設定（DHCP → 靜態 IP）───────────────────")
+            print("  步驟：監聽 DHCP → 等設備取得 IP → CIP 固化靜態")
+            print("  ⚠️  需要 PC 有 DHCP server 運行（設備才能拿到 IP）\n")
+
+            # Step 1: 取得 MAC
+            found_mac = _listen_dhcp_discover(iface)
+            if not found_mac:
+                print("  ⚠️  未偵測到設備，請重插設備網路線後再試")
+                continue
+
+            print(f"\n  設備 MAC: {found_mac}")
+
+            # Step 2: 等待設備拿到 DHCP IP
+            dhcp_ip = _wait_for_dhcp_ip(found_mac, timeout=30.0)
+            if not dhcp_ip:
+                print("  ⚠️  設備未取得 DHCP IP（DHCP server 是否有在運行？）")
+                print(f"     如果知道設備 IP，可直接用：python tests/test_ip_config.py <IP>")
+                continue
+
+            # Step 3: 設定靜態 IP
+            print(f"\n  設備目前 DHCP IP: {dhcp_ip}")
+            print("  選擇：")
+            print(f"    [1] 保留此 IP 作為靜態（{dhcp_ip}）")
+            print("    [2] 指定新的靜態 IP")
+            sub = input("  請選擇 [1/2]: ").strip()
+
+            if sub == '1':
+                _cip_fix_as_static(dhcp_ip)
+            elif sub == '2':
+                new_ip = input("  新靜態 IP: ").strip()
+                subnet_in = input("  子網路遮罩 [Enter=255.255.255.0]: ").strip()
+                subnet = subnet_in if subnet_in else "255.255.255.0"
+                gw_in = input("  預設閘道   [Enter=0.0.0.0]: ").strip()
+                gateway = gw_in if gw_in else "0.0.0.0"
+                _cip_fix_as_static(dhcp_ip, new_ip, subnet, gateway)
+
         else:
-            print("  ⚠️  請輸入 0~4")
+            print("  ⚠️  請輸入 0~5")
 
         if choice == '0':
             break

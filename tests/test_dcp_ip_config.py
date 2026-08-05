@@ -341,6 +341,108 @@ def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
     return found[0] if found else None
 
 
+def _check_port_67() -> bool:
+    """確認 port 67 可用；占用時顯示是哪個程式"""
+    test = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    test.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        test.bind(('', 67))
+        return True
+    except OSError:
+        print("  ❌ port 67 被占用，無法啟動 mini DHCP server")
+        try:
+            r = subprocess.run(
+                ['powershell', '-c',
+                 'Get-NetUDPEndpoint -LocalPort 67 | ForEach-Object {'
+                 ' $p = Get-Process -Id $_.OwningProcess -EA SilentlyContinue;'
+                 ' "$($p.Name) (PID $($_.OwningProcess))" }'],
+                capture_output=True, text=True, timeout=5
+            )
+            if r.stdout.strip():
+                print(f"     占用程式：{r.stdout.strip()}")
+        except Exception:
+            pass
+        print("  ⚠️  請先關閉占用 port 67 的程式（例如 BootP-DHCP Tool）後再試")
+        return False
+    finally:
+        test.close()
+
+
+def _build_dhcp_reply(xid: bytes, chaddr: bytes, offered_ip: str,
+                       server_ip: str, subnet: str, msg_type: int) -> bytes:
+    """組裝 DHCP Offer（msg_type=2）或 ACK（msg_type=5）封包"""
+    pkt = bytes([2, 1, 6, 0])            # op=Reply, htype=Eth, hlen=6, hops=0
+    pkt += xid                            # Transaction ID
+    pkt += b'\x00\x00\x80\x00'           # secs=0, flags=broadcast
+    pkt += b'\x00' * 4                   # ciaddr
+    pkt += socket.inet_aton(offered_ip)  # yiaddr
+    pkt += socket.inet_aton(server_ip)   # siaddr
+    pkt += b'\x00' * 4                   # giaddr
+    pkt += chaddr + b'\x00' * 10         # chaddr (6 + 10 padding = 16)
+    pkt += b'\x00' * 64                  # sname
+    pkt += b'\x00' * 128                 # file
+    pkt += b'\x63\x82\x53\x63'          # DHCP magic cookie
+    pkt += bytes([53, 1, msg_type])      # Option 53: message type
+    pkt += bytes([54, 4]) + socket.inet_aton(server_ip)   # Option 54: server ID
+    pkt += bytes([51, 4, 0, 1, 81, 128])  # Option 51: lease 86400s
+    pkt += bytes([1, 4]) + socket.inet_aton(subnet)       # Option 1: subnet mask
+    pkt += b'\xff'                        # Option 255: end
+    return pkt
+
+
+def _mini_dhcp_server(server_ip: str, target_mac: str,
+                       assign_ip: str, subnet: str = "255.255.255.0",
+                       timeout: float = 30.0) -> bool:
+    """
+    回應指定 MAC 的 DHCP Discover/Request，分配 assign_ip。
+    回傳 True = 設備成功取得 IP。
+    """
+    target_bytes = bytes(int(x, 16) for x in target_mac.replace('-', ':').split(':'))
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    sock.settimeout(1.0)
+    sock.bind(('', 67))
+
+    deadline = time.time() + timeout
+    offered = False
+    try:
+        while time.time() < deadline:
+            try:
+                data, _ = sock.recvfrom(1024)
+            except socket.timeout:
+                continue
+            if len(data) < 240 or data[236:240] != b'\x63\x82\x53\x63':
+                continue
+            chaddr = data[28:34]
+            if chaddr != target_bytes:
+                continue
+            xid = data[4:8]
+            # 解析 message-type option
+            msg_type, i = None, 240
+            while i < len(data) - 1:
+                opt = data[i]
+                if opt == 255: break
+                if opt == 0: i += 1; continue
+                length = data[i + 1]
+                if opt == 53 and length >= 1:
+                    msg_type = data[i + 2]
+                i += 2 + length
+            if msg_type == 1:  # Discover → Offer
+                reply = _build_dhcp_reply(xid, chaddr, assign_ip, server_ip, subnet, 2)
+                sock.sendto(reply, ('255.255.255.255', 68))
+                print(f"  📤 DHCP Offer → {assign_ip}（{target_mac}）")
+                offered = True
+            elif msg_type == 3 and offered:  # Request → ACK
+                reply = _build_dhcp_reply(xid, chaddr, assign_ip, server_ip, subnet, 5)
+                sock.sendto(reply, ('255.255.255.255', 68))
+                print(f"  ✅ DHCP ACK → 設備已取得 {assign_ip}")
+                return True
+    finally:
+        sock.close()
+    return False
+
+
 def _wait_for_dhcp_ip(target_mac: str, timeout: float = 30.0) -> str | None:
     """輪詢 ARP table 等 target_mac 的 DHCP IP 出現，測試 port 44818 確認可連"""
     mac_variants = {target_mac.lower(), target_mac.replace(':', '-').lower()}
@@ -397,15 +499,15 @@ def _cip_fix_as_static(device_ip: str, new_ip: str = None,
             if result['success']:
                 target = new_ip if new_ip else device_ip
                 print(f"  ✅ 指令送出完成")
-                print(f"  ⏳ 等待設備套用設定（15 秒）...")
-                time.sleep(15)
+                print(f"  ⏳ 等待設備套用設定（10 秒）...")
+                time.sleep(10)
                 try:
                     with socket.create_connection((target, 44818), timeout=3):
                         print(f"  ✅ 驗證成功：設備已在 {target}")
                         print(f"     python tests/test_ip_config.py {target}")
                 except OSError:
-                    print(f"  ⚠️  15 秒後仍無法連線，可能需要更長時間")
-                    print(f"     請稍後再試：python tests/test_ip_config.py {target}")
+                    print(f"  ⚠️  10 秒後仍無法連線，請稍後再試")
+                    print(f"     python tests/test_ip_config.py {target}")
             else:
                 print(f"  ❌ 失敗: {result['error']}")
             return result['success']
@@ -415,6 +517,8 @@ def _cip_fix_as_static(device_ip: str, new_ip: str = None,
 
 
 def main():
+    print("=" * 55)
+    print("  PROFINET DCP / DHCP IP 設定工具")
     print("  Layer 2 直接通訊，不需知道設備 IP")
     print("=" * 55)
 
@@ -429,11 +533,11 @@ def main():
     devices = []
 
     while True:
-        print("\n  [1] DCP Identify — 探索所有 PROFINET 設備")
-        print("  [2] DCP Set IP  — 透過 MAC 設定靜態 IP（需先探索）")
-        print("  [3] DCP Set IP  — 直接輸入 MAC 設定 IP（不需探索）★")
-        print("  [4] 監聽 DHCP Discover — 從設備 DHCP 封包讀出 MAC ★")
-        print("  [5] 新設備完整設定  — DHCP 監聽 → 等 IP → CIP 固化靜態 ★★")
+        print("\n  [1] DCP Identify      — 探索所有 PROFINET 設備 ⚠️ 此設備不支援")
+        print("  [2] DCP Set IP        — 透過 MAC 設定 IP（需先 [1]）⚠️ 此設備不支援")
+        print("  [3] DCP Set IP        — 直接輸入 MAC ⚠️ 此設備不支援")
+        print("  [4] 監聽 DHCP Discover — 從 DHCP 封包讀出 MAC ✅")
+        print("  [5] 新設備完整設定     — mini DHCP → CIP 固化靜態 ✅")
         print("  [0] 離開")
         choice = input("\n  請選擇: ").strip()
 
@@ -442,183 +546,98 @@ def main():
 
         elif choice == '1':
             print("\n── DCP Identify All ──────────────────────────────────")
-            devices = dcp_identify(iface)
-            if not devices:
-                print("  ⚠️  無回應（可能是 scapy 無法接收入站封包）")
-                print("     請改用 [4] 監聽 DHCP，或 [3] 直接輸入 MAC")
-            else:
-                print(f"\n  發現 {len(devices)} 台設備：")
-                print(f"  {'#':>2}  {'IP 位址':<18}  {'MAC 位址':<20}  名稱")
-                print("  " + "-" * 60)
-                for i, d in enumerate(devices, 1):
-                    name = d.get('name') or '（未知）'
-                    print(f"  {i:>2}  {d['ip']:<18}  {d['mac']:<20}  {name}")
+            print("  ⚠️  此功能對 CAPAROC 設備無效（scapy 無法接收入站封包）")
+            print("     請改用 [4] 監聽 DHCP 取得 MAC")
 
         elif choice in ('2', '3'):
-            if choice == '2':
-                if not devices:
-                    print("  ⚠️  請先執行 [1] 探索設備，或改用 [3] 直接輸入 MAC")
-                    continue
-                if len(devices) == 1:
-                    target_mac = devices[0]['mac']
-                    print(f"\n  目標設備：{target_mac}  （目前 IP: {devices[0]['ip']}）")
-                else:
-                    idx = input(f"  選擇設備編號 [1-{len(devices)}]: ").strip()
-                    if not idx.isdigit() or not (1 <= int(idx) <= len(devices)):
-                        continue
-                    target_mac = devices[int(idx) - 1]['mac']
-            else:
-                print("\n── DCP Set IP（直接指定 MAC）─────────────────────────")
-                print("  設備 MAC 可從設備標籤、Wireshark 或 [4] 監聽 DHCP 取得")
-                target_mac = input("  設備 MAC 位址（格式 cc:cc:ea:9f:c9:72）: ").strip().lower()
-                if not target_mac:
-                    continue
-
-            new_ip = input("  新 IP 位址（cancel 取消）: ").strip()
-            if new_ip.lower() == 'cancel':
-                continue
-            subnet_in = input("  子網路遮罩 [Enter=255.255.255.0]: ").strip()
-            subnet = subnet_in if subnet_in else "255.255.255.0"
-            gw_in = input("  預設閘道   [Enter=0.0.0.0 不設定]: ").strip()
-            gateway = gw_in if gw_in else "0.0.0.0"
-            confirm = input(f"\n  確認將 {target_mac} 的 IP 設為 {new_ip}？ [Y/N]: ").strip().upper()
-            if confirm != 'Y':
-                continue
-            dcp_set_ip(iface, target_mac, new_ip, subnet, gateway)
-            print(f"\n  完成！請等待 2-3 秒後，用以下指令驗證：")
-            print(f"  python tests/test_ip_config.py {new_ip}")
+            print("\n  ⚠️  DCP Set IP 對此設備無效（設備不接受 PN-DCP Set 指令）")
+            print("     請改用 [5] 完整設定流程")
 
         elif choice == '4':
             print("\n── 監聽 DHCP Discover（等待設備廣播）────────────────────")
             found_mac = _listen_dhcp_discover(iface)
             if found_mac:
-                ans = input(f"\n  立即對 {found_mac} 設定靜態 IP？ [Y/N]: ").strip().upper()
+                ans = input(f"\n  發現 MAC: {found_mac}，立即進入 [5] 設定靜態 IP？ [Y/N]: ").strip().upper()
                 if ans == 'Y':
-                    new_ip = input("  新 IP 位址: ").strip()
-                    subnet_in = input("  子網路遮罩 [Enter=255.255.255.0]: ").strip()
-                    subnet = subnet_in if subnet_in else "255.255.255.0"
-                    gw_in = input("  預設閘道   [Enter=0.0.0.0]: ").strip()
-                    gateway = gw_in if gw_in else "0.0.0.0"
-                    dcp_set_ip(iface, found_mac, new_ip, subnet, gateway)
-                    print(f"\n  完成！請等待 3 秒後驗證：")
-                    print(f"  python tests/test_ip_config.py {new_ip}")
+                    choice = '5_with_mac'
+                    # 帶著已知 MAC 直接進入 [5] 流程
+                    _run_new_device_setup(iface, prefill_mac=found_mac)
             else:
-                print("  ⚠️  超時未收到 DHCP Discover，請重插設備網路線後再試")
+                print("  ⚠️  超時，請重插設備網路線後再試")
 
         elif choice == '5':
-            print("\n── 新設備完整設定（MAC → 強制靜態 IP）─────────────────")
-            print("  不需知道設備目前 IP，透過 DCP Layer 2 直接寫入\n")
-
-            # Step 1: 取得 MAC
-            print("  Step 1: 監聽 DHCP Discover（15 秒）...")
-            found_mac = _listen_dhcp_discover(iface, timeout=15.0)
-            if not found_mac:
-                print("  未偵測到 DHCP Discover（設備可能已有 IP，不再廣播）")
-                found_mac = input("  請輸入設備 MAC（格式 cc:cc:ea:9f:c9:72，留空取消）: ").strip().lower()
-                if not found_mac:
-                    continue
-
-            print(f"\n  設備 MAC: {found_mac}")
-
-            # Step 2: 輸入目標靜態 IP
-            new_ip = input("  目標靜態 IP（cancel 取消）: ").strip()
-            if new_ip.lower() == 'cancel':
-                continue
-            subnet_in = input("  子網路遮罩 [Enter=255.255.255.0]: ").strip()
-            subnet = subnet_in if subnet_in else "255.255.255.0"
-            gw_in = input("  預設閘道   [Enter=0.0.0.0]: ").strip()
-            gateway = gw_in if gw_in else "0.0.0.0"
-
-            confirm = input(f"\n  確認將 {found_mac} 設為靜態 {new_ip}？ [Y/N]: ").strip().upper()
-            if confirm != 'Y':
-                continue
-
-            # Step 3: DCP Set IP（Layer 2）
-            print(f"\n  Step 2: 發送 DCP Set IP → {found_mac}")
-            dcp_set_ip(iface, found_mac, new_ip, subnet, gateway)
-
-            # Step 4: 等待 + 驗證
-            print(f"  Step 3: 等待設備套用（10 秒）...")
-            for i in range(10, 0, -1):
-                print(f"         {i}s...", end='\r')
-                time.sleep(1)
-            print()
-            try:
-                with socket.create_connection((new_ip, 44818), timeout=3):
-                    print(f"  ✅ 驗證成功！設備已在 {new_ip}")
-                    print(f"     可用 python tests/test_ip_config.py {new_ip} 管理")
-            except OSError:
-                print(f"  ⚠️  port 44818 無法連線")
-                print(f"  可能原因：")
-                print(f"    1. DCP Set IP 此設備不支援 → 改用 [5b] CIP 方式")
-                print(f"    2. 設備需要更長時間 → 稍後再試 python tests/test_ip_config.py {new_ip}")
-                print(f"    3. Wireshark 確認 DCP 封包是否送出（過濾: ether.type == 0x8892）")
-                gw_in = input("  預設閘道   [Enter=0.0.0.0]: ").strip()
-                gateway = gw_in if gw_in else "0.0.0.0"
-                _cip_fix_as_static(dhcp_ip, new_ip, subnet, gateway)
+            _run_new_device_setup(iface)
 
         else:
             print("  ⚠️  請輸入 0~5")
 
-        if choice == '0':
-            break
 
-        elif choice == '1':
-            print("\n── DCP Identify All ──────────────────────────────────")
-            devices = dcp_identify(iface)
-            if not devices:
-                print("  ⚠️  無回應（可能是 scapy 無法接收入站封包）")
-                print("     請改用 [3] 直接輸入 MAC 設定 IP")
-            else:
-                print(f"\n  發現 {len(devices)} 台設備：")
-                print(f"  {'#':>2}  {'IP 位址':<18}  {'MAC 位址':<20}  名稱")
-                print("  " + "-" * 60)
-                for i, d in enumerate(devices, 1):
-                    name = d.get('name') or '（未知）'
-                    print(f"  {i:>2}  {d['ip']:<18}  {d['mac']:<20}  {name}")
+def _run_new_device_setup(iface: str, prefill_mac: str = None):
+    """
+    新設備完整設定：mini DHCP server 分配 IP → CIP 固化靜態。
+    prefill_mac: 已從 [4] 取得的 MAC，跳過監聽步驟。
+    """
+    print("\n── 新設備完整設定（mini DHCP → CIP 固化靜態）──────────")
+    print("  前提：PC 在 192.168.50.x 網段，BootP-DHCP Tool 已關閉\n")
 
-        elif choice in ('2', '3'):
-            if choice == '2':
-                if not devices:
-                    print("  ⚠️  請先執行 [1] 探索設備，或改用 [3] 直接輸入 MAC")
-                    continue
-                if len(devices) == 1:
-                    target_mac = devices[0]['mac']
-                    print(f"\n  目標設備：{target_mac}  （目前 IP: {devices[0]['ip']}）")
-                else:
-                    idx = input(f"  選擇設備編號 [1-{len(devices)}]: ").strip()
-                    if not idx.isdigit() or not (1 <= int(idx) <= len(devices)):
-                        continue
-                    target_mac = devices[int(idx) - 1]['mac']
-            else:
-                # [3] 直接輸入 MAC
-                print("\n── DCP Set IP（直接指定 MAC）─────────────────────────")
-                print("  設備 MAC 可從設備標籤、Wireshark 或先前紀錄取得")
-                target_mac = input("  設備 MAC 位址（格式 cc:cc:ea:9f:c9:72）: ").strip().lower()
-                if not target_mac:
-                    continue
+    # 自檢 port 67
+    if not _check_port_67():
+        return
 
-            new_ip = input("  新 IP 位址（cancel 取消）: ").strip()
-            if new_ip.lower() == 'cancel':
-                continue
+    from scapy.all import get_if_addr
+    server_ip = get_if_addr(iface)
+    if not server_ip or server_ip in ('0.0.0.0', ''):
+        print("  ❌ 無法取得此網卡 IP")
+        return
+    print(f"  PC IP（DHCP server）: {server_ip}")
 
-            subnet_in = input("  子網路遮罩 [Enter=255.255.255.0]: ").strip()
-            subnet = subnet_in if subnet_in else "255.255.255.0"
-
-            gw_in = input("  預設閘道   [Enter=0.0.0.0 不設定]: ").strip()
-            gateway = gw_in if gw_in else "0.0.0.0"
-
-            confirm = input(f"\n  確認將 {target_mac} 的 IP 設為 {new_ip}？ [Y/N]: ").strip().upper()
-            if confirm != 'Y':
-                continue
-
-            dcp_set_ip(iface, target_mac, new_ip, subnet, gateway)
-            print(f"\n  完成！請等待 2-3 秒後，用以下指令驗證：")
-            print(f"  python tests/test_ip_config.py {new_ip}")
-
+    # Step 1: 取得設備 MAC
+    if prefill_mac:
+        target_mac = prefill_mac
+        print(f"\n  Step 1: 設備 MAC（已從 DHCP 監聽取得）: {target_mac}")
+    else:
+        print("\n  Step 1: 取得設備 MAC")
+        sub = input("    [1] 輸入已知 MAC  [2] 監聽 DHCP Discover（30秒）: ").strip()
+        if sub == '1':
+            target_mac = input("    MAC（格式 cc:cc:ea:9f:c9:72）: ").strip().lower()
         else:
-            print("  ⚠️  請輸入 0~3")
+            print("    等待設備 DHCP Discover（30秒），請確認設備已接上網路...")
+            target_mac = _listen_dhcp_discover(iface, timeout=30.0)
+            if not target_mac:
+                target_mac = input("    未偵測到，手動輸入 MAC（留空取消）: ").strip().lower()
+        if not target_mac:
+            return
+
+    # Step 2: 目標靜態 IP
+    assign_ip = input(f"\n  目標靜態 IP（e.g. 192.168.50.223）: ").strip()
+    if not assign_ip:
+        return
+    subnet_in = input("  子網路遮罩 [Enter=255.255.255.0]: ").strip()
+    subnet = subnet_in if subnet_in else "255.255.255.0"
+
+    print(f"\n  設備 MAC : {target_mac}")
+    print(f"  目標 IP  : {assign_ip}")
+    if input("  確認啟動 mini DHCP server？ [Y/N]: ").strip().upper() != 'Y':
+        return
+
+    # Step 3: mini DHCP server
+    print(f"\n  Step 3: mini DHCP server 啟動，等待設備 DHCP Discover（30秒）...")
+    print(f"          請確認設備在 DHCP 模式，並已接上網路或重插網路線")
+    got = _mini_dhcp_server(server_ip, target_mac, assign_ip, subnet, timeout=30.0)
+    if not got:
+        print("  ⚠️  超時，設備未送出 DHCP Discover")
+        print("     請確認設備在 DHCP 模式，或重插網路線")
+        return
+
+    # Step 4: 等待設備套用 → CIP 固化靜態
+    print(f"\n  Step 4: 等待設備上線（10秒）...")
+    for i in range(10, 0, -1):
+        print(f"          {i}s...", end='\r')
+        time.sleep(1)
+    print()
+    _cip_fix_as_static(assign_ip)
 
 
 if __name__ == "__main__":
     main()
+

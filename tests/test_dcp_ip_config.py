@@ -369,14 +369,15 @@ def _check_port_67() -> bool:
 
 
 def _build_dhcp_reply(xid: bytes, chaddr: bytes, offered_ip: str,
-                       server_ip: str, subnet: str, msg_type: int) -> bytes:
+                       server_ip: str, subnet: str, msg_type: int,
+                       client_flags: bytes = b'\x80\x00') -> bytes:
     """組裝 DHCP Offer（msg_type=2）或 ACK（msg_type=5）封包"""
     pkt = bytes([2, 1, 6, 0])            # op=Reply, htype=Eth, hlen=6, hops=0
     pkt += xid                            # Transaction ID
-    pkt += b'\x00\x00\x80\x00'           # secs=0, flags=broadcast
+    pkt += b'\x00\x00' + client_flags    # secs=0, flags（繼承 client 的 flags）
     pkt += b'\x00' * 4                   # ciaddr
     pkt += socket.inet_aton(offered_ip)  # yiaddr
-    pkt += socket.inet_aton(server_ip)   # siaddr
+    pkt += b'\x00' * 4                   # siaddr（DHCP 標準用 Option 54 識別 server）
     pkt += b'\x00' * 4                   # giaddr
     pkt += chaddr + b'\x00' * 10         # chaddr (6 + 10 padding = 16)
     pkt += b'\x00' * 64                  # sname
@@ -386,7 +387,11 @@ def _build_dhcp_reply(xid: bytes, chaddr: bytes, offered_ip: str,
     pkt += bytes([54, 4]) + socket.inet_aton(server_ip)   # Option 54: server ID
     pkt += bytes([51, 4, 0, 1, 81, 128])  # Option 51: lease 86400s
     pkt += bytes([1, 4]) + socket.inet_aton(subnet)       # Option 1: subnet mask
+    pkt += bytes([3, 4]) + socket.inet_aton(server_ip)    # Option 3: router（必要）
     pkt += b'\xff'                        # Option 255: end
+    # DHCP 封包最小 300 bytes（向後相容 BOOTP）
+    if len(pkt) < 300:
+        pkt += b'\x00' * (300 - len(pkt))
     return pkt
 
 
@@ -423,6 +428,7 @@ def _mini_dhcp_server(server_ip: str, target_mac: str,
             xid = data[4:8]
             # 解析 message-type option
             msg_type, i = None, 240
+            client_flags = data[10:12]  # 保存 client 的 flags 供 reply 使用
             while i < len(data) - 1:
                 opt = data[i]
                 if opt == 255: break
@@ -432,12 +438,12 @@ def _mini_dhcp_server(server_ip: str, target_mac: str,
                     msg_type = data[i + 2]
                 i += 2 + length
             if msg_type == 1:  # Discover → Offer
-                reply = _build_dhcp_reply(xid, chaddr, assign_ip, server_ip, subnet, 2)
+                reply = _build_dhcp_reply(xid, chaddr, assign_ip, server_ip, subnet, 2, client_flags)
                 sock.sendto(reply, ('255.255.255.255', 68))
-                print(f"  📤 DHCP Offer → {assign_ip}（{target_mac}）")
+                print(f"  📤 DHCP Offer → {assign_ip}")
                 offered = True
-            elif msg_type == 3:  # Request → ACK (target or broadcast request)
-                reply = _build_dhcp_reply(xid, chaddr, assign_ip, server_ip, subnet, 5)
+            elif msg_type == 3:  # Request → ACK
+                reply = _build_dhcp_reply(xid, chaddr, assign_ip, server_ip, subnet, 5, client_flags)
                 sock.sendto(reply, ('255.255.255.255', 68))
                 print(f"  ✅ DHCP ACK → 設備已取得 {assign_ip}")
                 return True

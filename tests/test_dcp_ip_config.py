@@ -392,9 +392,10 @@ def _build_dhcp_reply(xid: bytes, chaddr: bytes, offered_ip: str,
 
 def _mini_dhcp_server(server_ip: str, target_mac: str,
                        assign_ip: str, subnet: str = "255.255.255.0",
-                       timeout: float = 30.0) -> bool:
+                       timeout: float = None) -> bool:
     """
     回應指定 MAC 的 DHCP Discover/Request，分配 assign_ip。
+    timeout=None 表示持續監聽不限時，Ctrl+C 可中斷。
     回傳 True = 設備成功取得 IP。
     """
     target_bytes = bytes(int(x, 16) for x in target_mac.replace('-', ':').split(':'))
@@ -404,10 +405,12 @@ def _mini_dhcp_server(server_ip: str, target_mac: str,
     sock.settimeout(1.0)
     sock.bind(('', 67))
 
-    deadline = time.time() + timeout
+    deadline = time.time() + timeout if timeout else None
     offered = False
     try:
-        while time.time() < deadline:
+        while True:
+            if deadline and time.time() > deadline:
+                break
             try:
                 data, _ = sock.recvfrom(1024)
             except socket.timeout:
@@ -433,11 +436,13 @@ def _mini_dhcp_server(server_ip: str, target_mac: str,
                 sock.sendto(reply, ('255.255.255.255', 68))
                 print(f"  📤 DHCP Offer → {assign_ip}（{target_mac}）")
                 offered = True
-            elif msg_type == 3 and offered:  # Request → ACK
+            elif msg_type == 3:  # Request → ACK (target or broadcast request)
                 reply = _build_dhcp_reply(xid, chaddr, assign_ip, server_ip, subnet, 5)
                 sock.sendto(reply, ('255.255.255.255', 68))
                 print(f"  ✅ DHCP ACK → 設備已取得 {assign_ip}")
                 return True
+            else:
+                print(f"  [debug] 收到 DHCP msg_type={msg_type} from {':'.join(f'{b:02x}' for b in chaddr)}")
     finally:
         sock.close()
     return False
@@ -620,19 +625,22 @@ def _run_new_device_setup(iface: str, prefill_mac: str = None):
     if input("  確認啟動 mini DHCP server？ [Y/N]: ").strip().upper() != 'Y':
         return
 
-    # Step 3: mini DHCP server
-    print(f"\n  Step 3: mini DHCP server 啟動，等待設備 DHCP Discover（30秒）...")
-    print(f"          請確認設備在 DHCP 模式，並已接上網路或重插網路線")
-    got = _mini_dhcp_server(server_ip, target_mac, assign_ip, subnet, timeout=30.0)
-    if not got:
-        print("  ⚠️  超時，設備未送出 DHCP Discover")
-        print("     請確認設備在 DHCP 模式，或重插網路線")
+    print(f"\n  mini DHCP server 已啟動，持續監聽（按 Ctrl+C 中斷）")
+    print(f"  ⚡ 請現在重插設備網路線！")
+    print(f"     或在另一個視窗: python tests/test_ip_config.py <目前IP> → [3] 切 DHCP")
+
+    try:
+        got = _mini_dhcp_server(server_ip, target_mac, assign_ip, subnet, timeout=None)
+    except KeyboardInterrupt:
+        print("\n  中斷")
         return
 
-    # Step 4: 等待設備套用 → CIP 固化靜態
-    print(f"\n  Step 4: 等待設備上線（10秒）...")
+    if not got:
+        return
+
+    print(f"\n  等待設備上線（10 秒）...")
     for i in range(10, 0, -1):
-        print(f"          {i}s...", end='\r')
+        print(f"  {i}s...", end='\r')
         time.sleep(1)
     print()
     _cip_fix_as_static(assign_ip)

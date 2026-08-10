@@ -270,9 +270,9 @@ def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
     import time
     from scapy.all import get_if_hwaddr
 
-    # 取得本機 MAC，用來排除 PC 自己的 DHCP
+    # 統一格式（colons）排除 PC 自身的 DHCP Discover
     try:
-        own_mac = get_if_hwaddr(iface).lower()
+        own_mac = get_if_hwaddr(iface).lower().replace('-', ':')
     except Exception:
         own_mac = ''
 
@@ -285,9 +285,9 @@ def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
         s.settimeout(2.0)
         s.bind(('', 67))
         print(f"  監聽 UDP port 67（最多 {int(timeout)} 秒）... Ctrl+C 中斷")
-        seen = set()
+        print(f"  （PC 自身 MAC {own_mac} 已自動排除）")
+        seen: dict[str, int] = {}  # mac → count
         deadline = time.time() + timeout
-        found_mac = None
         try:
             while time.time() < deadline:
                 try:
@@ -298,39 +298,109 @@ def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
                     continue
                 chaddr = data[28:34]
                 mac = ':'.join(f'{b:02x}' for b in chaddr)
-                if mac in seen or mac == '00:00:00:00:00:00' or mac == own_mac:
+                if mac == '00:00:00:00:00:00' or mac == own_mac:
                     continue
-                seen.add(mac)
-                print(f"\n  ✅ 發現設備 MAC: {mac}")
-                found_mac = mac
-                break
+                seen[mac] = seen.get(mac, 0) + 1
+                if seen[mac] == 1:
+                    print(f"  📡 發現 DHCP Discover from: {mac}")
         except KeyboardInterrupt:
             pass
         finally:
             s.close()
-        return found_mac
+
+        if not seen:
+            return None
+
+        macs = list(seen.keys())
+        if len(macs) == 1:
+            print(f"\n  ✅ 設備 MAC: {macs[0]}")
+            return macs[0]
+
+        # 多個 MAC，讓使用者選擇
+        print(f"\n  發現 {len(macs)} 個設備：")
+        for i, m in enumerate(macs, 1):
+            print(f"    [{i}] {m}  （Discover × {seen[m]}）")
+        choice = input("  選擇設備編號: ").strip()
+        if choice.isdigit() and 1 <= int(choice) <= len(macs):
+            return macs[int(choice) - 1]
+        return None
 
     except (PermissionError, OSError):
-        print("  ⚠️  port 67 無法綁定，改用 scapy 監聽...")
+        print("  ⚠️  port 67 無法綁定，改用 Raw Socket 混雜模式監聽...")
 
-    # ── 方法 B: scapy sniff（不用 lfilter，直接抓所有封包手動過濾）──
+    # ── 方法 B: Windows Raw Socket + SIO_RCVALL（混雜模式，同 Wireshark 原理）──
+    import socket as _sock
+    DHCP_MAGIC = b'\x63\x82\x53\x63'
+    found_raw = []
+    try:
+        rs = _sock.socket(_sock.AF_INET, _sock.SOCK_RAW, _sock.IPPROTO_IP)
+        rs.setsockopt(_sock.IPPROTO_IP, _sock.IP_HDRINCL, 1)
+        rs.settimeout(1.0)
+        # 取得網卡 IP
+        from scapy.all import get_if_addr
+        bind_ip = get_if_addr(iface) or '0.0.0.0'
+        rs.bind((bind_ip, 0))
+        # 開啟混雜模式 - 接收所有進入此 NIC 的封包
+        rs.ioctl(_sock.SIO_RCVALL, _sock.RCVALL_ON)
+        print(f"  Raw Socket 混雜模式（{bind_ip}），等待 DHCP Discover...")
+        deadline = time.time() + timeout
+        try:
+            while time.time() < deadline:
+                try:
+                    raw_pkt, _ = rs.recvfrom(65535)
+                except _sock.timeout:
+                    continue
+                # IP header: 首 byte 低4位 = IHL（以 4 bytes 計）
+                if len(raw_pkt) < 28:
+                    continue
+                ihl = (raw_pkt[0] & 0x0F) * 4
+                proto = raw_pkt[9]
+                if proto != 17:  # UDP only
+                    continue
+                udp_start = ihl
+                if len(raw_pkt) < udp_start + 8:
+                    continue
+                dst_port = int.from_bytes(raw_pkt[udp_start + 2:udp_start + 4], 'big')
+                if dst_port != 67:
+                    continue
+                payload = raw_pkt[udp_start + 8:]
+                if len(payload) < 240 or payload[0] != 1:
+                    continue
+                if payload[236:240] != DHCP_MAGIC:
+                    continue
+                chaddr = payload[28:34]
+                mac = ':'.join(f'{b:02x}' for b in chaddr)
+                if mac in (own_mac, '00:00:00:00:00:00') or mac in found_raw:
+                    continue
+                found_raw.append(mac)
+                print(f"\n  ✅ 發現設備 MAC（Raw Socket）: {mac}")
+        except KeyboardInterrupt:
+            pass
+        finally:
+            try:
+                rs.ioctl(_sock.SIO_RCVALL, _sock.RCVALL_OFF)
+            except Exception:
+                pass
+            rs.close()
+        if found_raw:
+            return found_raw[0]
+    except Exception as e:
+        print(f"  ⚠️  Raw Socket 失敗: {e}，改用 scapy...")
+
+    # ── 方法 C: scapy sniff with BPF filter ──
     from scapy.all import sniff
     found = []
-    print(f"  等待 DHCP Discover（最多 {int(timeout)} 秒）... 請重插設備網路線")
-
-    DHCP_MAGIC = b'\x63\x82\x53\x63'  # DHCP magic cookie
+    print(f"  等待 DHCP Discover（scapy，{int(timeout)} 秒）...")
 
     def handle(pkt):
         src_mac = pkt.src.lower() if hasattr(pkt, 'src') else ''
         if not src_mac or src_mac in (own_mac, 'ff:ff:ff:ff:ff:ff') or src_mac in found:
             return
         raw = bytes(pkt)
-        # 確認封包含 DHCP magic cookie 且是 DHCP Discover（type=1）
         idx = raw.find(DHCP_MAGIC)
         if idx < 0:
             return
         opts = raw[idx + 4:]
-        # 找 Option 53 (message-type)
         i = 0
         while i < len(opts) - 2:
             if opts[i] == 255:
@@ -340,14 +410,15 @@ def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
                 continue
             olen = opts[i + 1]
             if opts[i] == 53 and olen >= 1:
-                if opts[i + 2] == 1:  # Discover
+                if opts[i + 2] == 1:
                     found.append(src_mac)
                     print(f"\n  ✅ 發現設備 MAC: {src_mac}")
                 return
             i += 2 + olen
 
     try:
-        sniff(iface=iface, timeout=timeout, prn=handle)
+        sniff(iface=iface, timeout=timeout, prn=handle,
+              filter="udp dst port 67")
     except KeyboardInterrupt:
         pass
 

@@ -313,28 +313,41 @@ def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
     except (PermissionError, OSError):
         print("  ⚠️  port 67 無法綁定，改用 scapy 監聽...")
 
-    # ── 方法 B: scapy sniff ──────────────────────────────
-    from scapy.all import sniff, DHCP, IP
+    # ── 方法 B: scapy sniff（不用 lfilter，直接抓所有封包手動過濾）──
+    from scapy.all import sniff
     found = []
     print(f"  等待 DHCP Discover（最多 {int(timeout)} 秒）... 請重插設備網路線")
 
+    DHCP_MAGIC = b'\x63\x82\x53\x63'  # DHCP magic cookie
+
     def handle(pkt):
-        if not (pkt.haslayer(DHCP) and pkt.haslayer(IP)):
-            return
-        if pkt[IP].src != '0.0.0.0':
-            return
-        opts = dict(o for o in pkt[DHCP].options if isinstance(o, tuple))
-        if opts.get('message-type') != 1:
-            return
         src_mac = pkt.src.lower() if hasattr(pkt, 'src') else ''
-        if src_mac in (own_mac, '') or src_mac in found:
+        if not src_mac or src_mac in (own_mac, 'ff:ff:ff:ff:ff:ff') or src_mac in found:
             return
-        found.append(src_mac)
-        print(f"\n  ✅ 發現設備 MAC: {src_mac}")
+        raw = bytes(pkt)
+        # 確認封包含 DHCP magic cookie 且是 DHCP Discover（type=1）
+        idx = raw.find(DHCP_MAGIC)
+        if idx < 0:
+            return
+        opts = raw[idx + 4:]
+        # 找 Option 53 (message-type)
+        i = 0
+        while i < len(opts) - 2:
+            if opts[i] == 255:
+                break
+            if opts[i] == 0:
+                i += 1
+                continue
+            olen = opts[i + 1]
+            if opts[i] == 53 and olen >= 1:
+                if opts[i + 2] == 1:  # Discover
+                    found.append(src_mac)
+                    print(f"\n  ✅ 發現設備 MAC: {src_mac}")
+                return
+            i += 2 + olen
 
     try:
-        sniff(iface=iface, timeout=timeout, prn=handle,
-              lfilter=lambda p: p.haslayer('DHCP') if hasattr(p, 'haslayer') else False)
+        sniff(iface=iface, timeout=timeout, prn=handle)
     except KeyboardInterrupt:
         pass
 

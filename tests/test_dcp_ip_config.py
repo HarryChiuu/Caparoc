@@ -309,21 +309,21 @@ def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
             s.close()
 
         if not seen:
+            print("  ⚠️  UDP port 67 超時未找到外部設備，改用 Raw Socket 混雜模式...")
+            # 不 return，繼續往下走 Method B
+
+        else:
+            macs = list(seen.keys())
+            if len(macs) == 1:
+                print(f"\n  ✅ 設備 MAC: {macs[0]}")
+                return macs[0]
+            print(f"\n  發現 {len(macs)} 個設備：")
+            for i, m in enumerate(macs, 1):
+                print(f"    [{i}] {m}  （Discover × {seen[m]}）")
+            choice = input("  選擇設備編號: ").strip()
+            if choice.isdigit() and 1 <= int(choice) <= len(macs):
+                return macs[int(choice) - 1]
             return None
-
-        macs = list(seen.keys())
-        if len(macs) == 1:
-            print(f"\n  ✅ 設備 MAC: {macs[0]}")
-            return macs[0]
-
-        # 多個 MAC，讓使用者選擇
-        print(f"\n  發現 {len(macs)} 個設備：")
-        for i, m in enumerate(macs, 1):
-            print(f"    [{i}] {m}  （Discover × {seen[m]}）")
-        choice = input("  選擇設備編號: ").strip()
-        if choice.isdigit() and 1 <= int(choice) <= len(macs):
-            return macs[int(choice) - 1]
-        return None
 
     except (PermissionError, OSError):
         print("  ⚠️  port 67 無法綁定，改用 Raw Socket 混雜模式監聽...")

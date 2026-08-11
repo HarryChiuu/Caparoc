@@ -5,7 +5,7 @@
 > **補充文件**: TODO.md (功能規劃)、CHANGELOG.md (版本歷史)
 
 **當前版本**: v4.2  
-**最後更新**: 2026-05-25  
+**最後更新**: 2026-08-04  
 **主要開發者**: Harry Chiu
 
 
@@ -198,18 +198,12 @@ Byte 6+:  通道狀態 (每個通道 3 bytes)
 
 ---
 
-### 4. CIP Class 0xF5 寫入 IP（`set_device_ip` 初版）
+### 4. CIP Class 0xF5 寫入 IP（初版錯誤結論 → 已修正）
 
-**原理**: 透過 CIP TCP/IP Interface Object（Class 0xF5）寫入設備 IP：
-1. Set_Attribute_Single Attr 3 = `0x00`（強制 Static IP 模式）
-2. Set_Attribute_Single Attr 5（IP + Subnet + Gateway + NS + DomainName）
+> ⚠️ **此條目為舊有錯誤紀錄，CIP 0xF5 實際可用，詳見下方「IP 設定成功解決方案」**
 
-**問題**:
-- ❌ Attr 5 讀取無回應（`read_device_network_config` 回傳「Attr 5 無回應」）
-- ❌ 設備不支援 CIP Class 0xF5 的標準 Get/Set，嘗試 Attr 1/3/5 均失敗
-- ❌ 原廠確認 CAPAROC 設備不透過 CIP 管理 IP，需改用 PROFINET DCP 協議
-
-**結論**: 放棄 CIP 0xF5 方案，改用 PROFINET DCP Layer 2 封包（`scapy` 實作）。現有程式碼（`set_device_ip()`、`read_device_network_config()`）將保留簽名、改寫函式體，不影響 CLI 呼叫層。
+舊結論（已作廢）：Attr5 無回應、設備不支援 CIP 0xF5、需用 PROFINET DCP。  
+實際原因：unconnected 模式在此設備無效，改用 `connected=True` 後讀寫均成功。
 
 ---
 
@@ -236,6 +230,91 @@ Byte 6+:  通道狀態 (每個通道 3 bytes)
    - **不會**自動設定電流
    - **僅顯示**手動設定指引
    - 這是最實用的方式
+
+---
+
+### IP 設定（CIP Class 0xF5）
+
+**開發日期**: 2026-08-04  
+**分支**: `feature/ip-config-dhcp`  
+**相關檔案**: `src/caparoc_backend.py`、`tests/test_ip_config.py`
+
+#### 背景
+
+從 Wireshark 捕獲已知工具（PRONETA）對設備進行 DHCP 切換的封包，逆向分析出 CIP 通訊協議後，以程式實作相同功能。
+
+#### 最終實作方案
+
+**修改靜態 IP**（`set_device_ip()`）：
+1. 寫入 Attr 5（IP/Subnet/Gateway）— `connected=True`
+2. 寫入 Attr 3 = `0x00000000`（Static 模式）— 設備 IP 改變後連線中斷，此步例外視為成功
+
+**切換 DHCP**（`set_device_dhcp()`）：
+1. 寫入 Attr 3 = `0x00000002`（DHCP 模式）— 設備立即 RST 並發出 DHCP Discover
+
+#### 試錯過程
+
+**試錯 1：unconnected vs connected 模式**
+
+```python
+# 初版：connected=False（unconnected messaging）
+driver.generic_message(..., connected=False)
+# 結果：(no resp) — 讀寫均無回應，但不丟例外
+# 誤以為失敗，實際上寫入「有時有效」（取決於 pycomm3 行為）
+
+# 修正：connected=True（connected explicit messaging）
+driver.generic_message(..., connected=True)
+# 結果：正常讀寫，有正確回應
+```
+
+**試錯 2：IP bytes 字節序（Byte Order）**
+
+讀取 Attr 5 後發現 IP 顯示為 `221.50.168.192`（倒序），原因：
+
+> CIP 以 **Little-Endian UDINT** 儲存 IP 位址。
+> `socket.inet_ntoa()` 期望 Big-Endian（網路位元組序），需先反轉。
+
+```python
+# 錯誤：直接 inet_ntoa
+socket.inet_ntoa(raw[0:4])          # → 221.50.168.192 ❌
+
+# 正確：反轉後 inet_ntoa
+socket.inet_ntoa(raw[0:4][::-1])    # → 192.168.50.221 ✅
+
+# 寫入時同樣反轉
+socket.inet_aton("192.168.50.111")[::-1]   # Big→LE
+```
+
+**試錯 3：寫入成功但回報失敗（`failed to send message`）**
+
+第一次使用 `connected=True` 時，Attr 5 寫入成功 → 設備 IP 立即改變 → 連線中斷 → Attr 3 第二次寫入拋出 `failed to send message` → 程式誤判為失敗。
+
+解法：Attr 5 寫入成功後先設 `result['success'] = True`，後續連線中斷的例外以 `pass` 略過。
+
+**試錯 4：寫入順序**
+
+初版順序：Attr 3（切 Static）→ Attr 5（寫 IP）  
+問題：設備可能在 Attr 3 切換時套用舊 Attr 5，忽略後續寫入。
+
+修正順序：**Attr 5（寫 IP）→ Attr 3（觸發切換）**
+
+#### 關鍵 Wireshark 觀察
+
+| 操作 | 連線關閉方式 | 後續行為 |
+|---|---|---|
+| 修改靜態 IP | FIN,ACK（正常關閉） | ARP Probe × 4 → ARP Announcement → 新 IP 可連 |
+| 切換 DHCP | RST,ACK（強制重置） | DHCP Discover → Offer → ACK |
+
+ARP Probe 序列（修改靜態 IP 後設備自動執行）：
+```
+PhoenixConta → Broadcast  ARP Probe "Who has 192.168.50.111?" × 4
+PhoenixConta → Broadcast  ARP Announcement for 192.168.50.111  × 2
+```
+
+#### 待實作
+
+- [ ] DHCP → 靜態 IP 切換（目前寫入後設備行為待驗證）
+- [ ] 整合進主程式 CLI（`setting [4]` 選單）
 
 ---
 

@@ -2,6 +2,36 @@
 
 ---
 
+## [2026-08-11] IP 設定功能完整實作（feature/ip-config-dhcp）
+
+### ✨ 新功能
+
+**CIP 0xF5 TCP/IP Interface Object 讀寫（`caparoc_backend.py`）**
+- `set_device_ip()`：靜態 IP 設定（Attr5 + Attr3）；修正 CIP Little-Endian 字節序
+- `set_device_dhcp()`：切換 DHCP 模式（Attr3=0x02）
+- 修正：IP 使用 `connected=True`（此設備不支援 Unconnected Send 0x52）
+- 修正：Attr5 寫入成功後標記 success，Attr3 連線中斷視為正常
+
+**整合式 IP 設定工具（`src/caparoc_ip_config.py`，正式版）**
+- `[1]` 讀取設備網路設定（IP/Subnet/GW/Mode）
+- `[2]` 設定靜態 IP
+- `[3]` 切換為 DHCP 模式
+- `[4]` 從 DHCP 模式配置靜態 IP（新裝置初始設定）：mini DHCP server
+
+**測試工具（`tests/`）**
+- `test_ip_config.py`：互動式 IP 設定 + EtherNet/IP List Identity 自動探索 + ARP fallback
+- `test_dcp_ip_config.py`：PROFINET DCP 工具 + DHCP Discover 監聽 + mini DHCP server [5]
+
+### 🔍 關鍵技術發現（Wireshark 封包分析）
+
+- **CIP IP 字節序**：TCP/IP Interface Object Attr5 以 Little-Endian UDINT 儲存 IP，需 `[::-1]` 反轉
+- **Unconnected Send 不支援**：設備回應 `Service 0x52 not supported`，全部改用 `connected=True`
+- **DHCP Offer 送出方式**：`socket.bind((server_ip, 67))` + 廣播到子網路廣播（如 .255），不能用 `255.255.255.255`，否則 Windows 可能走錯介面
+- **DCP Set IP 無效**：此 CAPAROC 設備不接受 PROFINET DCP Set IP（PN-DCP Set Req 封包送出但設備忽略）
+- **另一支程式（BootP-DHCP Tool）機制**：同時運行 DHCP server（port 67）+ CIP client；先 DHCP 分配已知 IP，再 CIP 固化靜態
+
+---
+
 ## [2026-07-23] 多模組支援修彌——通道控制常打模組1、動態通道識別（21deea8, 757a427, af89bd8）
 
 ### 🐛 Bug 修正

@@ -1,8 +1,40 @@
 # CAPAROC 控制器 - 待實作功能清單
 
-更新日期: 2026-05-25
+更新日期: 2026-08-11
 
 ## ✅ 已完成功能
+
+### IP 設定功能（2026-08-11）
+- [x] **CIP 0xF5 IP 讀寫**（`caparoc_backend.py`）
+  - [x] `set_device_ip()`：靜態 IP 設定（Attr5 + Attr3，LE 字節序）
+  - [x] `set_device_dhcp()`：切換 DHCP 模式
+  - [x] 確認 `connected=True`（設備不支援 Unconnected Send 0x52）
+- [x] **整合工具 `src/caparoc_ip_config.py`**
+  - [x] `[1]` 讀取設備網路設定
+  - [x] `[2]` 設定靜態 IP
+  - [x] `[3]` 切換為 DHCP 模式
+  - [x] `[4]` 從 DHCP 模式配置靜態 IP（新裝置初始設定）
+- [x] **EtherNet/IP List Identity 設備探索**（UDP 廣播，無需管理員）
+- [x] **ARP table fallback 探索**（port 44818 連線測試）
+- [x] **mini DHCP server**（port 67，綁定指定 IP，廣播走子網路廣播）
+
+---
+
+## 🔧 caparoc_ip_config.py 預計修改方向
+
+> 本節記錄下階段對 `src/caparoc_ip_config.py` 的改善項目，確認後實作。
+
+### 待修改項目
+
+| # | 優先 | 說明 |
+|---|---|---|
+| 1 | 低 | **Typo 修正**：`run_discovery()` 輸出中 `廣播0：` → `廣播：` |
+| 2 | 高 | **Server IP 選擇**：多 NIC 環境下列出可用 IP 讓使用者選擇，取代 `gethostbyname()` |
+| 3 | 高 | **[4] 完整固化**：DHCP ACK 後用 `set_device_ip()` 寫 Attr5+Attr3，確保目標 IP 正確 |
+| 4 | 中 | **[4] 從主迴圈獨立**：選 [4] 後 break 現有 CIPDriver 連線，在外部獨立執行 |
+| 5 | 低 | **[4] 前置說明**：顯示前提條件（PC 靜態 IP、BootP-DHCP Tool 已關閉）|
+
+---
 
 ### V3.6 (2025-10-28) - Phase 3-2 完成
 - [x] **即時監控功能** ✅

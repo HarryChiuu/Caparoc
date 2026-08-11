@@ -488,11 +488,13 @@ def _mini_dhcp_server(server_ip: str, target_mac: str,
     回傳 True = 設備成功取得 IP。
     """
     target_bytes = bytes(int(x, 16) for x in target_mac.replace('-', ':').split(':'))
+    # 綁定到指定 IP，確保廣播走正確介面（同 BootP-DHCP Tool 做法）
+    subnet_broadcast = '.'.join(server_ip.split('.')[:3]) + '.255'
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.settimeout(1.0)
-    sock.bind(('', 67))
+    sock.bind((server_ip, 67))
 
     deadline = time.time() + timeout if timeout else None
     offered = False
@@ -501,34 +503,10 @@ def _mini_dhcp_server(server_ip: str, target_mac: str,
         while True:
             if deadline and time.time() > deadline:
                 break
-            # 每 10 秒顯示「等待中」確認程式仍在運行
+            # 每 10 秒輸出等待提示（不做 subprocess，避免阻斷收包）
             if time.time() - last_heartbeat >= 10:
                 last_heartbeat = time.time()
-                # 自檢：確認 BootP-DHCP Tool 沒有偷跑
-                try:
-                    r = subprocess.run(
-                        ['powershell', '-c',
-                         'Get-NetUDPEndpoint -LocalPort 67 | ForEach-Object {'
-                         ' $p = Get-Process -Id $_.OwningProcess -EA SilentlyContinue;'
-                         ' $p.Name }'],
-                        capture_output=True, text=True, timeout=3
-                    )
-                    proc = r.stdout.strip()
-                    if proc and 'python' not in proc.lower():
-                        print(f"\n  ⚠️  [自檢] port 67 被 {proc} 占用，可能攔截了 DHCP！請關閉後重試")
-                except Exception:
-                    pass
-                # 自檢：ARP table 有沒有設備 IP（可能已拿到 IP 不再送 Discover）
-                mac_dash = target_mac.replace(':', '-').lower()
-                arp_r = subprocess.run(['arp', '-a'], capture_output=True, text=True)
-                found_ips = [l.split()[0] for l in arp_r.stdout.splitlines()
-                             if len(l.split()) >= 2 and l.split()[1].lower() == mac_dash]
-                if found_ips:
-                    print(f"\n  ℹ️  [自檢] ARP table 找到設備 IP: {', '.join(found_ips)}")
-                    print(f"       設備可能已有 IP，不再送 DHCP Discover")
-                    print(f"       請在另一個視窗: python tests/test_ip_config.py {found_ips[0]} → [3] 切 DHCP")
-                else:
-                    print(f"  ⏳ 等待 DHCP Discover... (請插拔網路線或在另一視窗切 DHCP)", end='\r')
+                print(f"  ⏳ 等待 DHCP Discover... (請插拔網路線或在另一視窗切 DHCP)", end='\r')
             try:
                 data, _ = sock.recvfrom(1024)
             except socket.timeout:
@@ -552,12 +530,12 @@ def _mini_dhcp_server(server_ip: str, target_mac: str,
                 i += 2 + length
             if msg_type == 1:  # Discover → Offer
                 reply = _build_dhcp_reply(xid, chaddr, assign_ip, server_ip, subnet, 2, client_flags)
-                sock.sendto(reply, ('255.255.255.255', 68))
+                sock.sendto(reply, (subnet_broadcast, 68))
                 print(f"  📤 DHCP Offer → {assign_ip}")
                 offered = True
             elif msg_type == 3:  # Request → ACK
                 reply = _build_dhcp_reply(xid, chaddr, assign_ip, server_ip, subnet, 5, client_flags)
-                sock.sendto(reply, ('255.255.255.255', 68))
+                sock.sendto(reply, (subnet_broadcast, 68))
                 print(f"  ✅ DHCP ACK → 設備已取得 {assign_ip}")
                 return True
             else:

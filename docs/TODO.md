@@ -20,19 +20,22 @@
 
 ---
 
-## 🔧 caparoc_ip_config.py 預計修改方向
+## 🔧 caparoc_ip_config.py 改善項目 ✅ 已完成（2026-08-13）
 
-> 本節記錄下階段對 `src/caparoc_ip_config.py` 的改善項目，確認後實作。
+> 本節記錄對 `src/caparoc_ip_config.py` 的改善項目，比對 `tests/test_dcp_ip_config.py`（DCP/DHCP 實驗工具）後確認並實作。
 
-### 待修改項目
+### 已完成項目
 
 | # | 優先 | 說明 |
 |---|---|---|
-| 1 | 低 | **Typo 修正**：`run_discovery()` 輸出中 `廣播0：` → `廣播：` |
-| 2 | 高 | **Server IP 選擇**：多 NIC 環境下列出可用 IP 讓使用者選擇，取代 `gethostbyname()` |
-| 3 | 高 | **[4] 完整固化**：DHCP ACK 後用 `set_device_ip()` 寫 Attr5+Attr3，確保目標 IP 正確 |
-| 4 | 中 | **[4] 從主迴圈獨立**：選 [4] 後 break 現有 CIPDriver 連線，在外部獨立執行 |
-| 5 | 低 | **[4] 前置說明**：顯示前提條件（PC 靜態 IP、BootP-DHCP Tool 已關閉）|
+| 1 | 低 | **Typo 修正**：`run_discovery()` 輸出 `廣播0：` → `廣播：`（程式碼中已無此 typo，僅 TODO 記錄未勾）✅ |
+| 2 | 高 | **Server IP 選擇**：新增 `_pick_iface()`（移植自 test_dcp_ip_config.py），列出可用網卡含 MAC/IP 讓使用者選擇，取代不可靠的 `gethostbyname()` ✅ |
+| 3 | 高 | **固化完整寫入**：`_provision_new_device()` 改呼叫 `backend.set_device_ip(driver, assign_ip, subnet, gateway)`，DHCP ACK 後正確寫入 Attr5（IP/Subnet/GW）+ Attr3（Static），不再只寫 Attr3 ✅ |
+| 4 | 中 | **從主連線迴圈獨立**：新增頂層選單 [1]連線設備 / [2]新裝置初始設定，`_provision_new_device()` 不再掛在已連線設備的選單下 ✅ |
+| 5 | 低 | **前置說明**：`_provision_new_device()` 開頭顯示前提條件（其他 DHCP/BOOTP 工具已關閉）✅ |
+| 6 | 中 | **自動 MAC 偵測**：新增 `_listen_dhcp_discover()`（移植自 test_dcp_ip_config.py，UDP port 67 → Raw Socket 混雜模式 → scapy sniff 三層 fallback），新裝置設定時可自動監聽 DHCP Discover 取得 MAC，不需手動輸入 ✅ |
+
+**未搬入的功能**：PROFINET DCP Layer 2 Identify/Set IP（test_dcp_ip_config.py 選項 [1]-[3]）— 程式註解確認對此設備硬體無效，故意不整合。
 
 ---
 

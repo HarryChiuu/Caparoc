@@ -43,6 +43,28 @@ CTRL_NAMES = {0: "Static IP", 1: "BOOTP", 2: "DHCP"}
 _le2ip = lambda b, off: socket.inet_ntoa(b[off:off+4][::-1])
 _ip2le = lambda ip: socket.inet_aton(ip)[::-1]
 
+
+def _is_valid_ip(ip: str) -> bool:
+    """檢查是否為合法的 IPv4 位址（四段 0~255，格式如 192.168.50.10）"""
+    try:
+        socket.inet_aton(ip)
+    except (OSError, socket.error):
+        return False
+    return ip.count('.') == 3
+
+
+def _prompt_ip(prompt: str, allow_cancel_values: tuple[str, ...] = ()) -> str | None:
+    """持續要求輸入直到格式正確的 IP，或使用者輸入取消關鍵字（回傳 None）"""
+    while True:
+        value = input(prompt).strip()
+        if value.lower() in allow_cancel_values:
+            return None
+        if not value:
+            return value  # 允許空字串代表「使用預設值/略過」，由呼叫端判斷
+        if _is_valid_ip(value):
+            return value
+        print(f"  ⚠️  「{value}」不是合法的 IP 格式（需為 x.x.x.x，例如 192.168.50.10），請重新輸入")
+
 # ── 設備探索（EtherNet/IP List Identity + ARP fallback）──────
 
 def _parse_list_identity(data: bytes, src_ip: str) -> dict | None:
@@ -207,11 +229,11 @@ def set_static_ip(driver, backend: CaparocBackend):
         if len(raw) >= 8:
             cur_subnet = _le2ip(raw, 4)
 
-    new_ip = input("  新 IP 位址（cancel 取消）: ").strip()
-    if new_ip.lower() == "cancel":
+    new_ip = _prompt_ip("  新 IP 位址（cancel 取消）: ", allow_cancel_values=("cancel",))
+    if new_ip is None:
         return
-    subnet = input(f"  子網路遮罩 [Enter={cur_subnet}]: ").strip() or cur_subnet
-    gateway = input("  預設閘道   [Enter=0.0.0.0]: ").strip()
+    subnet = _prompt_ip(f"  子網路遮罩 [Enter={cur_subnet}]: ") or cur_subnet
+    gateway = _prompt_ip("  預設閘道   [Enter=0.0.0.0]: ") or "0.0.0.0"
 
     print(f"\n  IP={new_ip}  Subnet={subnet}  GW={gateway or '0.0.0.0'}")
     if input("  確認送出？ [Y/N]: ").strip().upper() != 'Y':
@@ -223,7 +245,7 @@ def set_static_ip(driver, backend: CaparocBackend):
         print("  ✅ 指令送出完成！")
         print(f"  ⏳ 等待設備套用...")
         for i in range(10, 0, -1):
-            print(f"  {i}s...", end='\r')
+            print(f"  {i}s...", end='\r', flush=True)
             time.sleep(1)
         print()
         try:
@@ -321,8 +343,12 @@ def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
         print(f"  （請重新插拔網路線，以快速搜尋設備MAC位址）")
         seen: dict[str, int] = {}  # mac → count
         deadline = time.time() + timeout
+        grace_deadline: float | None = None  # 找到第一個設備後，短暫多等一下看有沒有其他設備
+        GRACE_SECONDS = 2.0
         try:
             while time.time() < deadline:
+                if grace_deadline is not None and time.time() >= grace_deadline:
+                    break
                 try:
                     data, _ = s.recvfrom(1024)
                 except _sock.timeout:
@@ -333,9 +359,11 @@ def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
                 mac = ':'.join(f'{b:02x}' for b in chaddr)
                 if mac == '00:00:00:00:00:00' or mac == own_mac:
                     continue
-                seen[mac] = seen.get(mac, 0) + 1
-                if seen[mac] == 1:
+                if mac not in seen:
                     print(f"  📡 發現 DHCP Discover from: {mac}")
+                    if grace_deadline is None:
+                        grace_deadline = time.time() + GRACE_SECONDS
+                seen[mac] = seen.get(mac, 0) + 1
         except KeyboardInterrupt:
             pass
         finally:
@@ -520,7 +548,7 @@ def _mini_dhcp_server(server_ip: str, target_mac: str,
         while True:
             if time.time() - last_status >= 10:
                 last_status = time.time()
-                print(f"  ⏳ 等待 DHCP Discover...", end='\r')
+                print(f"  ⏳ 等待 DHCP Discover...", end='\r', flush=True)
             try:
                 data, _ = sock.recvfrom(1024)
             except socket.timeout:
@@ -592,11 +620,11 @@ def _provision_new_device():
     if not target_mac:
         return
 
-    assign_ip = input("\n  目標靜態 IP（e.g. 192.168.50.XXX）: ").strip()
+    assign_ip = _prompt_ip("\n  目標靜態 IP（e.g. 192.168.50.XXX，留空取消）: ")
     if not assign_ip:
         return
-    subnet = input("  子網路遮罩 [Enter=255.255.255.0]: ").strip() or "255.255.255.0"
-    gateway = input("  預設閘道   [Enter=0.0.0.0 不設定]: ").strip()
+    subnet = _prompt_ip("  子網路遮罩 [Enter=255.255.255.0]: ") or "255.255.255.0"
+    gateway = _prompt_ip("  預設閘道   [Enter=0.0.0.0 不設定]: ") or "0.0.0.0"
 
     print(f"\n  MAC    : {target_mac}")
     print(f"  目標 IP: {assign_ip}")
@@ -604,8 +632,9 @@ def _provision_new_device():
         return
 
     print(f"\n  mini DHCP server 已啟動（按 Ctrl+C 中斷）")
-    print(f"  ⚡ 請重插設備網路線！")
-    print(f"     或在另一個視窗執行: python src/caparoc_ip_config.py <目前IP> → [3] 切 DHCP")
+    print(f"  ⏳ 等待設備自動送出 DHCP Discover（設備會自動重試，通常不需操作）")
+    print(f"  ⚡ 若久候沒有反應，可重插設備網路線以強制立即重試")
+    print(f"     或在另一個終端機執行: python src/caparoc_ip_config.py <目前IP> → [3] 切 DHCP")
 
     try:
         got = _mini_dhcp_server(server_ip, target_mac, assign_ip, subnet)
@@ -618,7 +647,7 @@ def _provision_new_device():
 
     print(f"\n  等待設備上線（10 秒）...")
     for i in range(10, 0, -1):
-        print(f"  {i}s...", end='\r')
+        print(f"  {i}s...", end='\r', flush=True)
         time.sleep(1)
     print()
 

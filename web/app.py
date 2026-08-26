@@ -190,7 +190,7 @@ app.mount("/static", StaticFiles(directory=str(_WEB_DIR / "static")), name="stat
 def _format_status(raw: dict | None) -> dict:
     """將 _read_current_status() 輸出轉換為前端友善格式。"""
     if raw is None:
-        return {"connected": False, "error": "讀取失敗"}
+        return {"connected": False, "device_ip": backend.device_ip, "error": "讀取失敗"}
 
     global_byte = raw.get("global_status_byte", 0)
     channels_raw = raw.get("channels", {})
@@ -320,7 +320,9 @@ def channel_on(channel_id: int):
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="未連線")
     module, ch = backend.get_module_and_channel(channel_id)
-    backend.set_channel(module, ch, True)
+    ok = backend.set_channel(module, ch, True)
+    if not ok:
+        raise HTTPException(status_code=500, detail="開啟失敗，請確認設備連線")
     return {"success": True, "channel": channel_id, "state": "on"}
 
 
@@ -332,7 +334,9 @@ def channel_off(channel_id: int):
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="未連線")
     module, ch = backend.get_module_and_channel(channel_id)
-    backend.set_channel(module, ch, False)
+    ok = backend.set_channel(module, ch, False)
+    if not ok:
+        raise HTTPException(status_code=500, detail="關閉失敗，請確認設備連線")
     return {"success": True, "channel": channel_id, "state": "off"}
 
 
@@ -516,8 +520,11 @@ async def ws_status(websocket: WebSocket):
                                       for ch in payload['channels']},
                 })
             await asyncio.sleep(1.0)
-    except (WebSocketDisconnect, Exception):
-        pass
+    except WebSocketDisconnect:
+        pass  # 前端正常關閉頁面/重整，不需記錄
+    except Exception as e:
+        _WEB_LOGGER.warning(f"WebSocket 迴圈異常中止: {type(e).__name__}: {e}",
+                            extra={'log_module': 'WEB'})
     finally:
         _ws_client_count -= 1
         # 最後一個客戶端斷線 → 啟動倒數，逾時自動 shutdown

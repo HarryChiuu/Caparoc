@@ -669,48 +669,45 @@ def _provision_new_device():
         return
     print(f"  DHCP server IP（此網卡）: {server_ip}")
 
-    # ── 所有參數都在開始監聽前問完，避免 port 67 開著空等使用者打字 ──
-    assign_ip = _prompt_ip("\n  目標靜態 IP（e.g. 192.168.50.XXX，留空取消）: ")
-    if not assign_ip:
-        return
-    subnet = _prompt_ip("  子網路遮罩 [Enter=255.255.255.0]: ") or "255.255.255.0"
-    gateway = _prompt_ip("  預設閘道   [Enter=0.0.0.0 不設定]: ") or "0.0.0.0"
-
-    if assign_ip == server_ip:
-        print(f"  ❌ 目標 IP 與本機網卡 IP 相同（{server_ip}），請重新執行並輸入不同的 IP")
-        return
-    if not _same_subnet(assign_ip, server_ip, subnet):
-        print(f"  ⚠️  目標 IP {assign_ip} 與本機網卡 {server_ip}（遮罩 {subnet}）不同網段，")
-        print(f"     DHCP 分配可能『看似成功』但設備上線後仍連不上。")
-        if input("  仍要繼續？ [Y/N]: ").strip().upper() != 'Y':
-            print("  已取消")
-            return
-
-    sub = input("\n  設備 MAC：[1] 監聽 DHCP Discover 自動偵測（最多 30 秒） [2] 手動輸入: ").strip()
-    manual_mac = None
-    if sub == '2':
-        manual_mac = input("    MAC（格式 cc:cc:ea:9f:c9:72）: ").strip().lower()
-        if not manual_mac:
-            return
-
-    print(f"\n  目標 IP: {assign_ip}  Subnet: {subnet}  GW: {gateway}")
-    print(f"  MAC    : {manual_mac if manual_mac else '（將於下一步自動偵測）'}")
-    if input("  確認啟動 mini DHCP server？ [Y/N]: ").strip().upper() != 'Y':
-        return
-
+    # ── 先找出設備 MAC，再問要給它的 IP ──────────────────────
+    # socket 一開就不再關閉，MAC 偵測與稍後的 mini DHCP server 共用同一個
+    # socket；即使使用者接下來要花時間輸入 IP/遮罩/閘道，設備重送的
+    # DHCP Discover 也只會停在 kernel 的接收緩衝區等著，不會被漏接。
     sock = _open_dhcp_socket(server_ip)
     if sock is None:
         return
 
     try:
-        if manual_mac:
-            target_mac = manual_mac
+        sub = input("\n  設備 MAC：[1] 監聽 DHCP Discover 自動偵測（最多 30 秒） [2] 手動輸入: ").strip()
+        if sub == '2':
+            target_mac = input("    MAC（格式 cc:cc:ea:9f:c9:72）: ").strip().lower()
         else:
             print("    等待設備 DHCP Discover，請確認設備已接上網路...")
             target_mac = _detect_device_mac(iface, sock, timeout=MAC_DETECT_TIMEOUT)
             if not target_mac:
                 target_mac = input("    未偵測到，手動輸入 MAC（留空取消）: ").strip().lower()
         if not target_mac:
+            return
+
+        assign_ip = _prompt_ip("\n  目標靜態 IP（e.g. 192.168.50.XXX，留空取消）: ")
+        if not assign_ip:
+            return
+        subnet = _prompt_ip("  子網路遮罩 [Enter=255.255.255.0]: ") or "255.255.255.0"
+        gateway = _prompt_ip("  預設閘道   [Enter=0.0.0.0 不設定]: ") or "0.0.0.0"
+
+        if assign_ip == server_ip:
+            print(f"  ❌ 目標 IP 與本機網卡 IP 相同（{server_ip}），請重新執行並輸入不同的 IP")
+            return
+        if not _same_subnet(assign_ip, server_ip, subnet):
+            print(f"  ⚠️  目標 IP {assign_ip} 與本機網卡 {server_ip}（遮罩 {subnet}）不同網段，")
+            print(f"     DHCP 分配可能『看似成功』但設備上線後仍連不上。")
+            if input("  仍要繼續？ [Y/N]: ").strip().upper() != 'Y':
+                print("  已取消")
+                return
+
+        print(f"\n  MAC    : {target_mac}")
+        print(f"  目標 IP: {assign_ip}  Subnet: {subnet}  GW: {gateway}")
+        if input("  確認啟動 mini DHCP server？ [Y/N]: ").strip().upper() != 'Y':
             return
 
         print(f"\n  mini DHCP server 已啟動（按 Ctrl+C 中斷）")

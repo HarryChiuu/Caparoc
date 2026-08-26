@@ -1809,9 +1809,11 @@ class CaparocBackend:
                 raw = resp_cfg.value
                 if len(raw) >= 12:
                     import socket as _socket
-                    result['ip']      = _socket.inet_ntoa(raw[0:4])
-                    result['subnet']  = _socket.inet_ntoa(raw[4:8])
-                    result['gateway'] = _socket.inet_ntoa(raw[8:12])
+                    # CIP 以 Little-Endian UDINT 儲存 IP，需反轉 bytes 才是正確順序
+                    # （對稱於 set_device_ip() 寫入時的 inet_aton(...)[::-1]）
+                    result['ip']      = _socket.inet_ntoa(raw[0:4][::-1])
+                    result['subnet']  = _socket.inet_ntoa(raw[4:8][::-1])
+                    result['gateway'] = _socket.inet_ntoa(raw[8:12][::-1])
                     result['success'] = True
             else:
                 result['error'] = "Attr 5 無回應"

@@ -39,6 +39,22 @@
 
 ---
 
+## 🔧 Web CIP 並發修正後續待辦（分支 fix/web-cip-concurrency）
+
+> 背景：2026-08-26 補齊了 `_cip_lock` 到所有寫入路徑（`a1951c6`）、修正通道開關失敗誤報成功（`f721f30`, `20db324`），詳見 `docs/CHANGELOG.md`。過程中複查 `caparoc_backend.py` / `web/app.py` 時額外發現以下項目，尚未處理。
+
+| # | 優先 | 說明 |
+|---|---|---|
+| 1 | 中 | **批次設定額定電流無進度提示**：`app.js` 的 `setAllNominal()`/`setModuleNominal()` 用 `for` 迴圈逐一 `await`，後端 `set_nominal_current()` 的驗證迴圈最多 `sleep(0.5)×6=3秒`，8 通道最長可能等 24 秒且過程中無任何進度顯示；期間每個請求都搶 `_cip_lock`，WebSocket 讀取會被排隊卡住 |
+| 2 | 中 | **`_probe_all_modules` 連線時真的寫入設備做探測**：`_probe_nominal_writable()`（`caparoc_backend.py:681`）用「寫入 nominal±1，等 0.8 秒，讀回驗證，再還原」的方式探測模組是否支援遠端設定，每個模組至少 0.8 秒且**會短暫改變真實設備的額定電流設定**——若中途斷線或崩潰，設備會被留在錯誤值。建議快取探測結果（同一台設備硬體能力不會變）或改用不寫入的探測方式 |
+| 3 | 低 | **重複的額定電流讀取方法**：`_read_nominal_current_silent()`（`caparoc_backend.py:927`）與 `_verify_nominal_current()`（`:1010`）邏輯完全相同，只差 debug print；後者已無 `caparoc_backend.py` 內部呼叫者（只剩 `caparoc_controller.py:753` 用），且是唯一還沒補 `_cip_lock` 的讀取路徑。建議合併為一個帶 `verbose` 參數的方法 |
+| 4 | 低 | **`_read_and_show_result` 位址算錯、對 web 無意義**：`caparoc_backend.py:1123` 用 `instance=0x101`（其他地方一致用 `self.input_instance`=0x65），偏移公式 `20+(channel-1)*2` 也跟 `get_channel_offset()` 對不上；包在 try/except 裡只 `print()`，壞了沒人發現。每次通道開關後多花 `sleep(0.5)` + 一次 CIP 往返，但 web 使用者看不到輸出、WebSocket 一秒後就會刷新真實狀態，等於白跑。建議加參數讓 web 路徑跳過，或直接移除改用 `_read_current_status` |
+| 5 | 低 | **30 處 `generic_message` 呼叫可抽成共用方法**：全檔 30 個呼叫點，`service=0x0E, class_code=0x04, instance=self.input_instance, attribute=3` 這組參數重複至少 8 次。抽出 `_cip_get()`/`_cip_set()` 私有方法並內建 `_cip_lock`，可同時消除重複程式碼與「新增呼叫點忘記上鎖」的風險類別（正是這次 `a1951c6` 要修的問題根源） |
+
+**建議順序**：1、2 影響使用體感與設備安全，優先處理；3、4 是低風險清理；5 是預防性重構，可以最後做或跟其他項目一起處理。
+
+---
+
 ### V3.6 (2025-10-28) - Phase 3-2 完成
 - [x] **即時監控功能** ✅
   - [x] 背景執行緒定期讀取狀態 (可設定0.5s-60s)

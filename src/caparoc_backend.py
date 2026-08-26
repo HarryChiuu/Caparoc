@@ -191,14 +191,17 @@ class CaparocBackend:
 
                 if idle_time >= self.heartbeat_interval:
                     try:
-                        driver.generic_message(
-                            service=0x0E,
-                            class_code=0x04,
-                            instance=self.input_instance,
-                            attribute=3,
-                            connected=True,
-                            unconnected_send=False
-                        )
+                        # 與 _read_current_status / set_channel 等所有 CIP 呼叫共用
+                        # 同一把鎖，避免與其他執行緒並發送出 generic_message
+                        with self._cip_lock:
+                            driver.generic_message(
+                                service=0x0E,
+                                class_code=0x04,
+                                instance=self.input_instance,
+                                attribute=3,
+                                connected=True,
+                                unconnected_send=False
+                            )
                         self.last_activity_time = time.time()
                         if self._hb_fail_logged:
                             self.logger.info(
@@ -813,6 +816,8 @@ class CaparocBackend:
             print(f"❌ 額定電流超出範圍 (1-20A): {current_amps}")
             return False
 
+        self._update_activity()
+
         try:
             base_offset = self.get_config_channel_offset(module, channel)
             offset_current = base_offset
@@ -831,50 +836,60 @@ class CaparocBackend:
             if current_value is not None:
                 print(f"⚠️  變更警告: {ch_label} 目前為 {current_value}A，修改設定為 {current_amps}A")
 
-            # ── 主要方法：Class 0x0F Parameter Object（適用所有模組，含 2 通道）──
-            nominal_inst = self._get_nominal_param_instance(module, channel)
-            print(f"   [0x0F] instance={nominal_inst}，寫入 {current_amps}A")
-            write_response = self.driver.generic_message(
-                service=0x10,
-                class_code=0x0F,
-                instance=nominal_inst,
-                attribute=1,
-                request_data=bytes([current_amps]),
-                connected=True,
-                unconnected_send=False,
-            )
-            wr_err = getattr(write_response, 'error', None)
-            print(f"   [0x0F] write_error={wr_err!r}")
+            # 與 _read_current_status / heartbeat 等所有 CIP 呼叫共用同一把鎖，
+            # 避免多執行緒並發送出 generic_message 破壞 pycomm3 的 TCP 串流；
+            # Config Assembly 的讀取→修改→寫入也需要這把鎖確保原子性
+            with self._cip_lock:
+                # ── 主要方法：Class 0x0F Parameter Object（適用所有模組，含 2 通道）──
+                nominal_inst = self._get_nominal_param_instance(module, channel)
+                print(f"   [0x0F] instance={nominal_inst}，寫入 {current_amps}A")
+                write_response = self.driver.generic_message(
+                    service=0x10,
+                    class_code=0x0F,
+                    instance=nominal_inst,
+                    attribute=1,
+                    request_data=bytes([current_amps]),
+                    connected=True,
+                    unconnected_send=False,
+                )
+                wr_err = getattr(write_response, 'error', None)
+                print(f"   [0x0F] write_error={wr_err!r}")
 
-            if wr_err:
-                # 備用方法：Config Assembly（舊邏輯，對部分模組仍有效）
-                print(f"   [0x0F] 失敗，回退至 Config Assembly...")
-                cfg_resp = self.driver.generic_message(
-                    service=0x0E, class_code=0x04,
-                    instance=self.config_instance, attribute=3, connected=True
-                )
-                if not cfg_resp or (hasattr(cfg_resp, 'error') and cfg_resp.error):
-                    print(f"   ❌ Config Assembly 讀取失敗")
-                    return False
-                config_data = bytearray(cfg_resp.value)
-                if offset_status >= len(config_data):
-                    print(f"   ❌ Offset 超出範圍")
-                    return False
-                config_data[offset_current] = current_amps
-                config_data[offset_status]  = 2
-                for m in range(1, 17):
-                    for ch in range(1, 5):
-                        co = self.get_config_channel_offset(m, ch)
-                        if co + 2 < len(config_data) and config_data[co] > 0 and config_data[co + 2] == 0:
-                            config_data[co + 2] = 2
-                wr2 = self.driver.generic_message(
-                    service=0x10, class_code=0x04,
-                    instance=self.config_instance, attribute=3,
-                    request_data=bytes(config_data), connected=True
-                )
-                if hasattr(wr2, 'error') and wr2.error:
-                    print(f"   ❌ Config Assembly 寫入失敗: {wr2.error}")
-                    return False
+                if wr_err:
+                    # 備用方法：Config Assembly（舊邏輯，對部分模組仍有效）
+                    print(f"   [0x0F] 失敗，回退至 Config Assembly...")
+                    cfg_resp = self.driver.generic_message(
+                        service=0x0E, class_code=0x04,
+                        instance=self.config_instance, attribute=3, connected=True
+                    )
+                    if not cfg_resp or (hasattr(cfg_resp, 'error') and cfg_resp.error):
+                        print(f"   ❌ Config Assembly 讀取失敗")
+                        self.logger.error(f"{ch_label} 額定電流設定失敗：Config Assembly 讀取失敗",
+                                          extra={'log_module': 'INIT', 'channel': global_ch})
+                        return False
+                    config_data = bytearray(cfg_resp.value)
+                    if offset_status >= len(config_data):
+                        print(f"   ❌ Offset 超出範圍")
+                        self.logger.error(f"{ch_label} 額定電流設定失敗：offset 超出範圍",
+                                          extra={'log_module': 'INIT', 'channel': global_ch})
+                        return False
+                    config_data[offset_current] = current_amps
+                    config_data[offset_status]  = 2
+                    for m in range(1, 17):
+                        for ch in range(1, 5):
+                            co = self.get_config_channel_offset(m, ch)
+                            if co + 2 < len(config_data) and config_data[co] > 0 and config_data[co + 2] == 0:
+                                config_data[co + 2] = 2
+                    wr2 = self.driver.generic_message(
+                        service=0x10, class_code=0x04,
+                        instance=self.config_instance, attribute=3,
+                        request_data=bytes(config_data), connected=True
+                    )
+                    if hasattr(wr2, 'error') and wr2.error:
+                        print(f"   ❌ Config Assembly 寫入失敗: {wr2.error}")
+                        self.logger.error(f"{ch_label} 額定電流設定失敗：{wr2.error}",
+                                          extra={'log_module': 'INIT', 'channel': global_ch})
+                        return False
 
             if verify:
                 print(f"\n[驗證] 等待設備應用配置...")
@@ -920,13 +935,14 @@ class CaparocBackend:
             int: 實際額定電流值 (0-20A), 或 None (讀取失敗)
         """
         try:
-            response = driver.generic_message(
-                service=0x0E,
-                class_code=0x04,
-                instance=self.input_instance,
-                attribute=3,
-                connected=False
-            )
+            with self._cip_lock:
+                response = driver.generic_message(
+                    service=0x0E,
+                    class_code=0x04,
+                    instance=self.input_instance,
+                    attribute=3,
+                    connected=False
+                )
 
             if response and hasattr(response, 'value'):
                 data = response.value
@@ -1041,6 +1057,8 @@ class CaparocBackend:
             print("[錯誤] Driver 未初始化")
             return False
 
+        self._update_activity()
+
         with self.io_data_lock:
             byte_offset = module   # Module 1 -> byte 1, Module 2 -> byte 2, ...
             bit_position = channel - 1
@@ -1065,42 +1083,53 @@ class CaparocBackend:
                 time.sleep(0.2)
                 print(f"       ✅ 控制命令已提交")
             else:
+                # 與 _read_current_status / heartbeat 等所有 CIP 呼叫共用同一把鎖，
+                # 避免多執行緒並發送出 generic_message 破壞 pycomm3 的 TCP 串流
                 try:
-                    output_data = bytes(self.current_output_data)
-                    response = self.driver.generic_message(
-                        service=0x10,
-                        class_code=0x04,
-                        instance=self.output_instance,
-                        attribute=3,
-                        request_data=output_data,
-                        connected=False
-                    )
+                    with self._cip_lock:
+                        output_data = bytes(self.current_output_data)
+                        response = self.driver.generic_message(
+                            service=0x10,
+                            class_code=0x04,
+                            instance=self.output_instance,
+                            attribute=3,
+                            request_data=output_data,
+                            connected=False
+                        )
 
-                    if response and not (hasattr(response, 'error') and response.error):
-                        try:
-                            verify_resp = self.driver.generic_message(
-                                service=0x0E,
-                                class_code=0x04,
-                                instance=self.output_instance,
-                                attribute=3,
-                                connected=False
+                        if response and not (hasattr(response, 'error') and response.error):
+                            try:
+                                verify_resp = self.driver.generic_message(
+                                    service=0x0E,
+                                    class_code=0x04,
+                                    instance=self.output_instance,
+                                    attribute=3,
+                                    connected=False
+                                )
+                                if verify_resp and hasattr(verify_resp, 'value') and len(verify_resp.value) > byte_offset:
+                                    actual_byte = verify_resp.value[byte_offset]
+                                    if actual_byte == new_value:
+                                        print(f"       ✅ 驗證成功 (設備 byte[{byte_offset}]=0x{actual_byte:02X})")
+                                    else:
+                                        print(f"       ⚠️ 驗證警告：設備 byte[{byte_offset}]=0x{actual_byte:02X}, 預期=0x{new_value:02X}")
+                            except Exception as ve:
+                                print(f"       ⚠️ 無法驗證: {ve}")
+                        else:
+                            error_msg = response.error if hasattr(response, 'error') else '未知'
+                            print(f"       ❌ 寫入失敗: {error_msg}")
+                            self.logger.error(
+                                f"CH{channel} {'開啟' if state else '關閉'}失敗: {error_msg}",
+                                extra={'log_module': 'CTRL', 'channel': channel}
                             )
-                            if verify_resp and hasattr(verify_resp, 'value') and len(verify_resp.value) > byte_offset:
-                                actual_byte = verify_resp.value[byte_offset]
-                                if actual_byte == new_value:
-                                    print(f"       ✅ 驗證成功 (設備 byte[{byte_offset}]=0x{actual_byte:02X})")
-                                else:
-                                    print(f"       ⚠️ 驗證警告：設備 byte[{byte_offset}]=0x{actual_byte:02X}, 預期=0x{new_value:02X}")
-                        except Exception as ve:
-                            print(f"       ⚠️ 無法驗證: {ve}")
-                    else:
-                        error_msg = response.error if hasattr(response, 'error') else '未知'
-                        print(f"       ❌ 寫入失敗: {error_msg}")
-                        return False
+                            return False
 
                 except Exception as e:
                     print(f"       ❌ 寫入異常: {e}")
                     traceback.print_exc()
+                    self.logger.error(
+                        f"CH{channel} {'開啟' if state else '關閉'}異常: {e}",
+                        extra={'log_module': 'CTRL', 'channel': channel}
+                    )
                     return False
 
         time.sleep(0.5)
@@ -1108,15 +1137,16 @@ class CaparocBackend:
         return True
 
     def _read_and_show_result(self, channel, expected_state):
-        """讀取並顯示控制結果"""
+        """讀取並顯示控制結果（CLI 用；web 路徑靠 WebSocket 每秒刷新，這裡僅供終端機輸出參考）"""
         try:
-            response = self.driver.generic_message(
-                service=0x0E,
-                class_code=0x04,
-                instance=0x101,
-                attribute=3,
-                connected=False
-            )
+            with self._cip_lock:
+                response = self.driver.generic_message(
+                    service=0x0E,
+                    class_code=0x04,
+                    instance=0x101,
+                    attribute=3,
+                    connected=False
+                )
 
             if response and hasattr(response, 'value'):
                 data = response.value
@@ -1406,6 +1436,7 @@ class CaparocBackend:
                 'voltage':           voltage,
                 'channels':          channels
             }
+            self._update_activity()  # 定期成功讀取即視為活躍，避免心跳與此並發搶鎖
             if not self._last_read_ok:
                 self.logger.info(
                     f"設備恢復回應 ({self.device_ip})",

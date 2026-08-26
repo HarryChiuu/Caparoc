@@ -2,7 +2,7 @@
 
 ---
 
-## [2026-08-26] Web CIP 並發鎖補齊 + 通道開關錯誤回報（fix/web-cip-concurrency，a1951c6, f721f30）
+## [2026-08-26] Web CIP 並發鎖補齊 + 通道開關錯誤回報（fix/web-cip-concurrency，a1951c6, f721f30, 20db324）
 
 ### 🐛 Bug 修正
 
@@ -17,6 +17,11 @@
 - **根因**：`web/app.py` 的 `channel_on`/`channel_off` 呼叫 `backend.set_channel()` 後沒有檢查回傳值，失敗時前端仍收到 `{"success": true}`；`set_nominal` 原本就有正確檢查
 - **修正**：`channel_on`/`channel_off` 檢查回傳值，失敗時回傳 HTTP 500 而非謊報成功
 - **連帶修正**：`_format_status(None)` 補上 `device_ip` 欄位，與其他分支一致；WebSocket 迴圈的 `except (WebSocketDisconnect, Exception): pass` 拆開為正常斷線（不記錄）與其他例外（記錄 warning），原本一律吞掉，真正的錯誤完全無跡可查
+
+**前端 `toggleCh()` 完全不檢查回應，後端剛補的 500 形同虛設（20db324）**
+- **根因**：後端 `channel_on`/`channel_off` 改回傳 500 後，前端 `toggleCh()` 仍然 `await fetch(...)` 就結束，不管成功失敗，使用者點了開關沒反應也看不出原因；隔壁 `setNominal()` 早就有完整的 `r.ok` 檢查與回饋機制，只有這裡漏掉
+- **修正**：`toggleCh()` 補上 `r.ok` 檢查與 try/catch，失敗時設定 `channelToggleError[ch.id]`（2.5 秒後自動清除）；新增 `channelToggling` 旗標避免同一通道在請求進行中被連續點擊
+- **連帶修正**：通道卡片新增 `.toggle-err` 短暫紅色邊框閃爍動畫，與 `.fault`（硬體故障，持續顯示）視覺區隔；按鈕在請求進行中停用
 
 ### ⚠️ 待驗證
 

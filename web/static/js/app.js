@@ -246,9 +246,23 @@ createApp({
             _cipReadInFlight = false;
         }
 
+        // 通道開關：進行中旗標（防止連續點擊）與失敗提示（短暫顯示於卡片上）
+        const channelToggling = reactive({});
+        const channelToggleError = reactive({});
+
         async function toggleCh(ch) {
+            if (channelToggling[ch.id]) return;  // 上一個請求還沒回來，避免重複送出
+            channelToggling[ch.id] = true;
             const action = ch.on ? 'off' : 'on';
-            await fetch(`/api/channel/${ch.id}/${action}`, { method: 'POST' });
+            try {
+                const r = await fetch(`/api/channel/${ch.id}/${action}`, { method: 'POST' });
+                if (!r.ok) throw new Error(String(r.status));
+            } catch (e) {
+                channelToggleError[ch.id] = true;
+                setTimeout(() => { channelToggleError[ch.id] = false; }, 2500);
+            } finally {
+                channelToggling[ch.id] = false;
+            }
         }
 
         // -- 通道設定 --
@@ -664,7 +678,7 @@ createApp({
             navigate, toggleSidebar,
             fmt, barPct, cardClass, barClass,
             connecting,
-            doConnect, doDisconnect, toggleCh,
+            doConnect, doDisconnect, toggleCh, channelToggling, channelToggleError,
             networkInfo, deviceInfo, deviceInfoRefreshing, networkInfoRefreshing,
             refreshDeviceInfo, refreshNetworkInfo,
             nominalInputs, nominalFeedback, batchNominal, batchStatus,

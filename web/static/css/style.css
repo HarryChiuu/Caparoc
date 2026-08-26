@@ -354,6 +354,16 @@ body {
     filter: saturate(0.5);
 }
 
+/* 開關操作失敗時短暫閃爍，與 .fault（硬體故障，持續顯示）區隔 */
+.ch-card.toggle-err {
+    animation: toggle-err-flash 0.5s ease-in-out 2;
+}
+
+@keyframes toggle-err-flash {
+    0%, 100% { border-color: #2a2f45; }
+    50% { border-color: #f44336; }
+}
+
 .ch-top {
     display: flex;
     align-items: center;

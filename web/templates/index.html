@@ -90,11 +90,12 @@
                             </div>
                             <div class="ch-grid">
                                 <div class="ch-card" v-for="ch in channelsByModule[mod]" :key="ch.id"
-                                    :class="[cardClass(ch), !state.connected ? 'stale' : '']">
+                                    :class="[cardClass(ch), !state.connected ? 'stale' : '', channelToggleError[ch.id] ? 'toggle-err' : '']">
                                     <div class="ch-top">
                                         <span class="ch-name">CH{{ ch.channel }}</span>
                                         <button class="toggle-btn" :class="ch.on ? 'is-on' : 'is-off'"
-                                            @click="toggleCh(ch)" :disabled="!state.connected">
+                                            @click="toggleCh(ch)" :disabled="!state.connected || channelToggling[ch.id]"
+                                            :title="channelToggleError[ch.id] ? '操作失敗，請確認設備連線' : ''">
                                             {{ ch.on ? '關閉' : '開啟' }}
                                         </button>
                                     </div>

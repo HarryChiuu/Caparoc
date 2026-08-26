@@ -2,6 +2,28 @@
 
 ---
 
+## [2026-08-26] Web CIP 並發鎖補齊 + 通道開關錯誤回報（fix/web-cip-concurrency，a1951c6, f721f30）
+
+### 🐛 Bug 修正
+
+**寫入類 CIP 呼叫完全沒上鎖，與 WebSocket 讀取並發（a1951c6）**
+- **根因**：`_cip_lock` 自 2026-05-25（b779752）加入後只覆蓋了讀取類方法（`_read_current_status`、`get_network_info`、`get_device_info`），但 web 使用者實際會觸發寫入的 `set_channel`、`set_nominal_current`（含其驗證讀取）與心跳執行緒完全沒有上鎖，會與 WebSocket 每秒一次的狀態讀取並發送出 `generic_message`，直接違反鎖原本要防的情境
+- **心跳格外確定會踩到**：`_update_activity()` 定義後從未被任何地方呼叫，`last_activity_time` 永遠不會更新，閒置時間必然在 300 秒後觸發心跳，與 WebSocket 讀取並發——推測是「儀表板開著一段時間後偶爾莫名失聯」的成因之一
+- **修正**：`set_channel()` 的寫入與驗證讀取、`_read_and_show_result()`、`set_nominal_current()` 的主要／備用寫入路徑、`_read_nominal_current_silent()`、`_heartbeat_worker()` 皆補上 `_cip_lock`；`set_channel()`／`set_nominal_current()`／`_read_current_status()` 成功路徑補上 `_update_activity()` 呼叫，讓心跳正確反映實際閒置時間
+- **鎖順序**：已確認全程一致（`io_data_lock → _cip_lock`，僅 `set_channel` 一處巢狀，其餘皆各自獨立取得、不重入），不會死鎖
+- **連帶修正**：`set_channel`／`set_nominal_current` 失敗分支補上 `self.logger.error()`——原本只有 `print()` 到終端機 stdout，web 的 log 面板完全看不到失敗原因
+
+**通道開關失敗仍回報成功（f721f30）**
+- **根因**：`web/app.py` 的 `channel_on`/`channel_off` 呼叫 `backend.set_channel()` 後沒有檢查回傳值，失敗時前端仍收到 `{"success": true}`；`set_nominal` 原本就有正確檢查
+- **修正**：`channel_on`/`channel_off` 檢查回傳值，失敗時回傳 HTTP 500 而非謊報成功
+- **連帶修正**：`_format_status(None)` 補上 `device_ip` 欄位，與其他分支一致；WebSocket 迴圈的 `except (WebSocketDisconnect, Exception): pass` 拆開為正常斷線（不記錄）與其他例外（記錄 warning），原本一律吞掉，真正的錯誤完全無跡可查
+
+### ⚠️ 待驗證
+
+以上鎖相關修正僅通過 `--demo` 模式的 in-process smoke test（demo 模式不會經過 `set_channel` 的真實 CIP 路徑），尚未接實機、開著儀表板同時操作驗證是否真的解決並發失聯問題。
+
+---
+
 ## [2026-08-11] IP 設定功能完整實作（feature/ip-config-dhcp）
 
 ### ✨ 新功能

@@ -22,7 +22,9 @@ import sys
 import struct
 import socket
 import time
+import ipaddress
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -40,6 +42,26 @@ ATTR_IFACE  = 5   # Interface Configuration (IP/Subnet/Gateway/DNS)
 
 CTRL_NAMES = {0: "Static IP", 1: "BOOTP", 2: "DHCP"}
 
+# ── 網路常數 ─────────────────────────────────────────────────
+EIP_PORT         = 44818   # EtherNet/IP 明文 TCP/UDP 埠
+DHCP_SERVER_PORT = 67
+DHCP_CLIENT_PORT = 68
+DHCP_MAGIC       = b'\x63\x82\x53\x63'
+DHCP_LEASE_SECONDS = 86400
+# RFC 2131：client 尚無 IP 且 broadcast flag 有設時，server 應以受限廣播
+# 255.255.255.255 回覆 Offer/ACK，而非依網卡遮罩算出的子網路導向廣播 ——
+# 後者在網卡實際廣播網域與設備回報的遮罩不一致時（例如網卡是 /24 但設備
+# 回報 /23）會送不到設備，導致卡在 Discover→Offer 循環收不到 Request。
+DHCP_LIMITED_BROADCAST = '255.255.255.255'
+
+# DHCP 訊息型別（Option 53）
+DHCP_DISCOVER, DHCP_OFFER, DHCP_REQUEST, DHCP_ACK = 1, 2, 3, 5
+
+# 等待／逾時（秒）
+DEVICE_ONLINE_MAX_WAIT = 30.0   # 寫入 IP 後等設備重新上線的上限
+MAC_DETECT_TIMEOUT     = 30.0   # 偵測設備 MAC 的總上限（三種方法共用）
+DHCP_SERVE_TIMEOUT     = 300.0  # mini DHCP server 自動結束時間
+
 _le2ip = lambda b, off: socket.inet_ntoa(b[off:off+4][::-1])
 _ip2le = lambda ip: socket.inet_aton(ip)[::-1]
 
@@ -47,10 +69,19 @@ _ip2le = lambda ip: socket.inet_aton(ip)[::-1]
 def _is_valid_ip(ip: str) -> bool:
     """檢查是否為合法的 IPv4 位址（四段 0~255，格式如 192.168.50.10）"""
     try:
-        socket.inet_aton(ip)
-    except (OSError, socket.error):
+        ipaddress.IPv4Address(ip)
+        return True
+    except ValueError:
         return False
-    return ip.count('.') == 3
+
+
+def _same_subnet(ip: str, ref_ip: str, mask: str) -> bool:
+    """ip 是否與 ref_ip 位於同一網段。遮罩無法解析時回傳 True（只警告不擋）"""
+    try:
+        net = ipaddress.IPv4Network(f"{ref_ip}/{mask}", strict=False)
+        return ipaddress.IPv4Address(ip) in net
+    except ValueError:
+        return True
 
 
 def _prompt_ip(prompt: str, allow_cancel_values: tuple[str, ...] = ()) -> str | None:
@@ -110,14 +141,35 @@ def _get_broadcast_addresses() -> list[str]:
 
 def _eip_port_open(ip: str, timeout: float = 0.5) -> bool:
     try:
-        with socket.create_connection((ip, 44818), timeout=timeout):
+        with socket.create_connection((ip, EIP_PORT), timeout=timeout):
             return True
     except OSError:
         return False
 
 
+def _wait_for_device(ip: str, max_wait: float = DEVICE_ONLINE_MAX_WAIT, poll: float = 1.0) -> bool:
+    """輪詢 EtherNet/IP 埠直到設備上線或逾時，過程中原地更新剩餘秒數"""
+    deadline = time.time() + max_wait
+    while time.time() < deadline:
+        remain = max(0, int(deadline - time.time()))
+        print(f"  ⏳ 等待設備上線...（剩餘 {remain}s）", end='\r', flush=True)
+        if _eip_port_open(ip, timeout=poll):
+            print(f"\n  ✅ 設備已上線：{ip}")
+            return True
+    print(f"\n  ⚠️  {int(max_wait)}s 內未偵測到設備上線")
+    return False
+
+
+def _probe_eip_hosts(ips: list[str], timeout: float = 0.5, workers: int = 32) -> set[str]:
+    """並行探測多個 IP 的 EtherNet/IP TCP 埠，回傳有回應的 IP 集合"""
+    if not ips:
+        return set()
+    with ThreadPoolExecutor(max_workers=min(workers, len(ips))) as ex:
+        results = ex.map(lambda ip: _eip_port_open(ip, timeout), ips)
+    return {ip for ip, ok in zip(ips, results) if ok}
+
+
 def _discover_devices(timeout: float = 2.0) -> list[dict]:
-    EIP_PORT = 44818
     pkt = (struct.pack('<H', 0x0063) + struct.pack('<H', 0) +
            struct.pack('<I', 0) + struct.pack('<I', 0) +
            b'\x00' * 8 + struct.pack('<I', 0))
@@ -146,17 +198,14 @@ def _discover_devices(timeout: float = 2.0) -> list[dict]:
 
 def _discover_by_arp() -> list[dict]:
     result = subprocess.run(['arp', '-a'], capture_output=True, text=True)
-    mac_to_ips: dict[str, list[str]] = {}
+    ordered_pairs: list[tuple[str, str]] = []  # (mac, ip)，保留 arp -a 原始順序
     for line in result.stdout.splitlines():
         parts = line.split()
         if len(parts) >= 3 and parts[2] in ('動態', 'dynamic'):
-            mac_to_ips.setdefault(parts[1], []).append(parts[0])
-    devices = []
-    for mac, ips in mac_to_ips.items():
-        for ip in ips:
-            if _eip_port_open(ip):
-                devices.append({'ip': ip, 'mac': mac, 'name': f'MAC {mac}', 'via': 'ARP'})
-    return devices
+            ordered_pairs.append((parts[1], parts[0]))
+    reachable = _probe_eip_hosts([ip for _, ip in ordered_pairs])
+    return [{'ip': ip, 'mac': mac, 'name': f'MAC {mac}', 'via': 'ARP'}
+            for mac, ip in ordered_pairs if ip in reachable]
 
 
 def run_discovery() -> str | None:
@@ -243,15 +292,7 @@ def set_static_ip(driver, backend: CaparocBackend):
     result = backend.set_device_ip(driver, new_ip, subnet, gateway)
     if result['success']:
         print("  ✅ 指令送出完成！")
-        print(f"  ⏳ 等待設備套用...")
-        for i in range(10, 0, -1):
-            print(f"  {i}s...", end='\r', flush=True)
-            time.sleep(1)
-        print()
-        try:
-            with socket.create_connection((new_ip, 44818), timeout=3):
-                print(f"  ✅ 驗證成功：設備已在 {new_ip}")
-        except OSError:
+        if not _wait_for_device(new_ip):
             print(f"  ⚠️  請稍後重試：python src/caparoc_ip_config.py {new_ip}")
     else:
         print(f"  ❌ 寫入失敗: {result['error']}")
@@ -317,99 +358,97 @@ def _pick_iface() -> str | None:
     return None
 
 
-def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
+def _open_dhcp_socket(bind_ip: str) -> socket.socket | None:
     """
-    監聽 DHCP Discover，從 CHADDR 欄位讀出設備 MAC。
-    自動排除 PC 自身 MAC，回傳找到的設備 MAC 或 None。
+    綁定 UDP port 67 並回傳該 socket；此 socket 會在整個新裝置設定流程中
+    全程持有，MAC 偵測（方法 A）與 mini DHCP server 共用同一個 socket，
+    中間不再關閉重開，避免使用者輸入參數期間漏接設備的 DHCP Discover。
+
+    刻意綁定到 bind_ip（使用者選定網卡的位址）而非 INADDR_ANY：這台工具
+    常在多網卡主機上執行，若綁 INADDR_ANY，稍後送出 Offer/ACK 廣播封包時
+    作業系統可能選到錯誤的網卡送出，導致設備永遠收不到、卡在 Discover
+    重試迴圈。綁定到特定網卡位址可確保送收都固定走同一張網卡（此為實機
+    測試驗證過的行為）。
+
+    綁定失敗時嘗試找出占用該埠的行程，回傳 None。
     """
-    from scapy.all import get_if_hwaddr
-
-    # 統一格式（colons）排除 PC 自身的 DHCP Discover
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     try:
-        own_mac = get_if_hwaddr(iface).lower().replace('-', ':')
-    except Exception:
-        own_mac = ''
-
-    # ── 方法 A: 標準 UDP socket (port 67) ──────────────────
-    import socket as _sock
-    try:
-        s = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
-        s.setsockopt(_sock.SOL_SOCKET, _sock.SO_REUSEADDR, 1)
-        s.setsockopt(_sock.SOL_SOCKET, _sock.SO_BROADCAST, 1)
-        s.settimeout(2.0)
-        s.bind(('', 67))
-        print(f"  監聽 UDP port 67（最多 {int(timeout)} 秒）... Ctrl+C 中斷")
-        print(f"  （PC 自身 MAC {own_mac} 已自動排除）")
-        print(f"  （請重新插拔網路線，以快速搜尋設備MAC位址）")
-        seen: dict[str, int] = {}  # mac → count
-        deadline = time.time() + timeout
-        grace_deadline: float | None = None  # 找到第一個設備後，短暫多等一下看有沒有其他設備
-        GRACE_SECONDS = 2.0
+        sock.bind((bind_ip, DHCP_SERVER_PORT))
+        return sock
+    except OSError:
+        sock.close()
         try:
-            while time.time() < deadline:
-                if grace_deadline is not None and time.time() >= grace_deadline:
-                    break
-                try:
-                    data, _ = s.recvfrom(1024)
-                except _sock.timeout:
-                    continue
-                if len(data) < 34 or data[0] != 1:
-                    continue
-                chaddr = data[28:34]
-                mac = ':'.join(f'{b:02x}' for b in chaddr)
-                if mac == '00:00:00:00:00:00' or mac == own_mac:
-                    continue
-                if mac not in seen:
-                    print(f"  📡 發現 DHCP Discover from: {mac}")
-                    if grace_deadline is None:
-                        grace_deadline = time.time() + GRACE_SECONDS
-                seen[mac] = seen.get(mac, 0) + 1
-        except KeyboardInterrupt:
-            pass
-        finally:
-            s.close()
+            r = subprocess.run(
+                ['powershell', '-c',
+                 'Get-NetUDPEndpoint -LocalPort 67 | ForEach-Object {'
+                 ' $p = Get-Process -Id $_.OwningProcess -EA SilentlyContinue;'
+                 ' "$($p.Name) (PID $($_.OwningProcess))" }'],
+                capture_output=True, text=True, timeout=5)
+            if r.stdout.strip():
+                print(f"  ❌ port 67 被占用：{r.stdout.strip()}")
+                print("     請先關閉該程式（例如 BootP-DHCP Tool）")
+            else:
+                print("  ❌ port 67 被占用")
+        except Exception:
+            print("  ❌ port 67 被占用")
+        return None
 
-        if not seen:
-            print("  ⚠️  UDP port 67 超時未找到外部設備，改用 Raw Socket 混雜模式...")
-            # 不 return，繼續往下走 Method B
 
-        else:
-            macs = list(seen.keys())
-            if len(macs) == 1:
-                print(f"\n  ✅ 設備 MAC: {macs[0]}")
-                return macs[0]
-            print(f"\n  發現 {len(macs)} 個設備：")
-            for i, m in enumerate(macs, 1):
-                print(f"    [{i}] {m}  （Discover × {seen[m]}）")
-            choice = input("  選擇設備編號: ").strip()
-            if choice.isdigit() and 1 <= int(choice) <= len(macs):
-                return macs[int(choice) - 1]
-            return None
-
-    except (PermissionError, OSError):
-        print("  ⚠️  port 67 無法綁定，改用 Raw Socket 混雜模式監聽...")
-
-    # ── 方法 B: Windows Raw Socket + SIO_RCVALL（混雜模式，同 Wireshark 原理）──
-    import socket as _sock
-    DHCP_MAGIC = b'\x63\x82\x53\x63'
-    found_raw = []
+def _detect_mac_via_socket(sock: socket.socket, own_mac: str, deadline: float,
+                            grace: float = 2.0) -> dict[str, int]:
+    """
+    方法 A：在呼叫端已綁定 port 67 的 socket 上監聽 DHCP Discover。
+    找到第一個設備後再多等 grace 秒，看是否有其他設備一併送出 Discover。
+    socket 由呼叫端持有／關閉，這裡只借用。
+    """
+    sock.settimeout(0.25)
+    seen: dict[str, int] = {}
+    grace_deadline: float | None = None
     try:
-        rs = _sock.socket(_sock.AF_INET, _sock.SOCK_RAW, _sock.IPPROTO_IP)
-        rs.setsockopt(_sock.IPPROTO_IP, _sock.IP_HDRINCL, 1)
+        while time.time() < deadline:
+            if grace_deadline is not None and time.time() >= grace_deadline:
+                break
+            try:
+                data, _ = sock.recvfrom(1024)
+            except socket.timeout:
+                continue
+            if len(data) < 34 or data[0] != DHCP_DISCOVER:
+                continue
+            chaddr = data[28:34]
+            mac = ':'.join(f'{b:02x}' for b in chaddr)
+            if mac == '00:00:00:00:00:00' or mac == own_mac:
+                continue
+            if mac not in seen:
+                print(f"  📡 發現 DHCP Discover from: {mac}")
+                if grace_deadline is None:
+                    grace_deadline = time.time() + grace
+            seen[mac] = seen.get(mac, 0) + 1
+    except KeyboardInterrupt:
+        pass
+    return seen
+
+
+def _detect_mac_via_rawsock(iface: str, own_mac: str, deadline: float) -> str | None:
+    """方法 B：Windows Raw Socket + SIO_RCVALL（混雜模式，同 Wireshark 原理）"""
+    found_raw: list[str] = []
+    try:
+        rs = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_IP)
+        rs.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
         rs.settimeout(1.0)
-        # 取得網卡 IP
         from scapy.all import get_if_addr
         bind_ip = get_if_addr(iface) or '0.0.0.0'
         rs.bind((bind_ip, 0))
         # 開啟混雜模式 - 接收所有進入此 NIC 的封包
-        rs.ioctl(_sock.SIO_RCVALL, _sock.RCVALL_ON)
+        rs.ioctl(socket.SIO_RCVALL, socket.RCVALL_ON)
         print(f"  Raw Socket 混雜模式（{bind_ip}），等待 DHCP Discover...")
-        deadline = time.time() + timeout
         try:
             while time.time() < deadline:
                 try:
                     raw_pkt, _ = rs.recvfrom(65535)
-                except _sock.timeout:
+                except socket.timeout:
                     continue
                 # IP header: 首 byte 低4位 = IHL（以 4 bytes 計）
                 if len(raw_pkt) < 28:
@@ -422,10 +461,10 @@ def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
                 if len(raw_pkt) < udp_start + 8:
                     continue
                 dst_port = int.from_bytes(raw_pkt[udp_start + 2:udp_start + 4], 'big')
-                if dst_port != 67:
+                if dst_port != DHCP_SERVER_PORT:
                     continue
                 payload = raw_pkt[udp_start + 8:]
-                if len(payload) < 240 or payload[0] != 1:
+                if len(payload) < 240 or payload[0] != DHCP_DISCOVER:
                     continue
                 if payload[236:240] != DHCP_MAGIC:
                     continue
@@ -439,7 +478,7 @@ def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
             pass
         finally:
             try:
-                rs.ioctl(_sock.SIO_RCVALL, _sock.RCVALL_OFF)
+                rs.ioctl(socket.SIO_RCVALL, socket.RCVALL_OFF)
             except Exception:
                 pass
             rs.close()
@@ -447,11 +486,15 @@ def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
             return found_raw[0]
     except Exception as e:
         print(f"  ⚠️  Raw Socket 失敗: {e}，改用 scapy...")
+    return None
 
-    # ── 方法 C: scapy sniff with BPF filter ──
+
+def _detect_mac_via_scapy(iface: str, own_mac: str, deadline: float) -> str | None:
+    """方法 C：scapy sniff with BPF filter"""
     from scapy.all import sniff
-    found = []
-    print(f"  等待 DHCP Discover（scapy，{int(timeout)} 秒）...")
+    found: list[str] = []
+    remain = max(0.1, deadline - time.time())
+    print(f"  等待 DHCP Discover（scapy，{int(remain)} 秒）...")
 
     def handle(pkt):
         src_mac = pkt.src.lower() if hasattr(pkt, 'src') else ''
@@ -471,14 +514,14 @@ def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
                 continue
             olen = opts[i + 1]
             if opts[i] == 53 and olen >= 1:
-                if opts[i + 2] == 1:
+                if opts[i + 2] == DHCP_DISCOVER:
                     found.append(src_mac)
                     print(f"\n  ✅ 發現設備 MAC: {src_mac}")
                 return
             i += 2 + olen
 
     try:
-        sniff(iface=iface, timeout=timeout, prn=handle,
+        sniff(iface=iface, timeout=remain, prn=handle,
               filter="udp dst port 67")
     except KeyboardInterrupt:
         pass
@@ -486,28 +529,51 @@ def _listen_dhcp_discover(iface: str, timeout: float = 30.0) -> str | None:
     return found[0] if found else None
 
 
-def _check_port_67() -> bool:
-    test = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    test.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+def _detect_device_mac(iface: str, sock: socket.socket,
+                        timeout: float = MAC_DETECT_TIMEOUT) -> str | None:
+    """
+    偵測設備 MAC：依序嘗試方法 A（呼叫端已綁定的 port 67 socket）→
+    方法 B（Windows Raw Socket 混雜模式）→ 方法 C（scapy sniff）。
+    三者共用同一個 deadline，總耗時上限為 timeout，而非三者相加。
+    """
+    from scapy.all import get_if_hwaddr
+
     try:
-        test.bind(('', 67))
-        return True
-    except OSError:
-        try:
-            r = subprocess.run(
-                ['powershell', '-c',
-                 'Get-NetUDPEndpoint -LocalPort 67 | ForEach-Object {'
-                 ' $p = Get-Process -Id $_.OwningProcess -EA SilentlyContinue;'
-                 ' "$($p.Name) (PID $($_.OwningProcess))" }'],
-                capture_output=True, text=True, timeout=5)
-            if r.stdout.strip():
-                print(f"  ❌ port 67 被占用：{r.stdout.strip()}")
-                print("     請先關閉該程式（例如 BootP-DHCP Tool）")
-        except Exception:
-            print("  ❌ port 67 被占用")
-        return False
-    finally:
-        test.close()
+        own_mac = get_if_hwaddr(iface).lower().replace('-', ':')
+    except Exception:
+        own_mac = ''
+
+    deadline = time.time() + timeout
+    print(f"  監聽 UDP port 67（最多 {int(timeout)} 秒）... Ctrl+C 中斷")
+    print(f"  （PC 自身 MAC {own_mac} 已自動排除）")
+    print(f"  （若遲遲沒有反應，可重新插拔設備網路線觸發它送出 Discover）")
+
+    seen = _detect_mac_via_socket(sock, own_mac, deadline)
+    if seen:
+        macs = list(seen.keys())
+        if len(macs) == 1:
+            print(f"\n  ✅ 設備 MAC: {macs[0]}")
+            return macs[0]
+        print(f"\n  發現 {len(macs)} 個設備：")
+        for i, m in enumerate(macs, 1):
+            print(f"    [{i}] {m}  （Discover × {seen[m]}）")
+        choice = input("  選擇設備編號: ").strip()
+        if choice.isdigit() and 1 <= int(choice) <= len(macs):
+            return macs[int(choice) - 1]
+        return None
+
+    if deadline - time.time() < 3.0:
+        print("  ⚠️  時間已用盡，略過 Raw Socket / scapy 偵測")
+        return None
+
+    print("  ⚠️  UDP port 67 超時未找到外部設備，改用 Raw Socket 混雜模式...")
+    mac = _detect_mac_via_rawsock(iface, own_mac, deadline)
+    if mac:
+        return mac
+
+    if deadline - time.time() < 1.0:
+        return None
+    return _detect_mac_via_scapy(iface, own_mac, deadline)
 
 
 def _build_dhcp_reply(xid: bytes, chaddr: bytes, offered_ip: str,
@@ -520,10 +586,10 @@ def _build_dhcp_reply(xid: bytes, chaddr: bytes, offered_ip: str,
     pkt += b'\x00' * 4                    # giaddr
     pkt += chaddr + b'\x00' * 10          # chaddr 16 bytes
     pkt += b'\x00' * 64 + b'\x00' * 128  # sname + file
-    pkt += b'\x63\x82\x53\x63'           # DHCP magic cookie
+    pkt += DHCP_MAGIC
     pkt += bytes([53, 1, msg_type])
     pkt += bytes([54, 4]) + socket.inet_aton(server_ip)
-    pkt += bytes([51, 4, 0, 1, 81, 128])  # lease 86400s
+    pkt += bytes([51, 4]) + DHCP_LEASE_SECONDS.to_bytes(4, 'big')
     pkt += bytes([1, 4]) + socket.inet_aton(subnet)
     pkt += bytes([3, 4]) + socket.inet_aton(server_ip)  # router（必要）
     pkt += b'\xff'
@@ -532,55 +598,52 @@ def _build_dhcp_reply(xid: bytes, chaddr: bytes, offered_ip: str,
     return pkt
 
 
-def _mini_dhcp_server(server_ip: str, target_mac: str,
-                       assign_ip: str, subnet: str = "255.255.255.0") -> bool:
-    """持續監聽 port 67，分配 assign_ip 給指定 MAC，Ctrl+C 可中斷"""
+def _serve_dhcp(sock: socket.socket, server_ip: str, target_mac: str,
+                 assign_ip: str, subnet: str = "255.255.255.0",
+                 timeout: float = DHCP_SERVE_TIMEOUT) -> bool:
+    """
+    在呼叫端已開啟並持有的 port 67 socket 上持續監聽，分配 assign_ip 給
+    指定 MAC。Ctrl+C 或逾時（預設 5 分鐘）皆會中止；socket 由呼叫端關閉。
+    """
     target_bytes = bytes(int(x, 16) for x in target_mac.replace('-', ':').split(':'))
-    subnet_broadcast = '.'.join(server_ip.split('.')[:3]) + '.255'
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.settimeout(1.0)
-    sock.bind((server_ip, 67))
-    offered = False
+    deadline = time.time() + timeout
     last_status = time.time()
-    try:
-        while True:
-            if time.time() - last_status >= 10:
-                last_status = time.time()
-                print(f"  ⏳ 等待 DHCP Discover...", end='\r', flush=True)
-            try:
-                data, _ = sock.recvfrom(1024)
-            except socket.timeout:
-                continue
-            if len(data) < 240 or data[236:240] != b'\x63\x82\x53\x63':
-                continue
-            chaddr = data[28:34]
-            if chaddr != target_bytes:
-                continue
-            xid = data[4:8]
-            client_flags = data[10:12]
-            msg_type, i = None, 240
-            while i < len(data) - 1:
-                opt = data[i]
-                if opt == 255: break
-                if opt == 0: i += 1; continue
-                length = data[i + 1]
-                if opt == 53 and length >= 1:
-                    msg_type = data[i + 2]
-                i += 2 + length
-            if msg_type == 1:
-                reply = _build_dhcp_reply(xid, chaddr, assign_ip, server_ip, subnet, 2, client_flags)
-                sock.sendto(reply, (subnet_broadcast, 68))
-                print(f"\n  📤 DHCP Offer → {assign_ip}")
-                offered = True
-            elif msg_type == 3:
-                reply = _build_dhcp_reply(xid, chaddr, assign_ip, server_ip, subnet, 5, client_flags)
-                sock.sendto(reply, (subnet_broadcast, 68))
-                print(f"  ✅ DHCP ACK → 設備已取得 {assign_ip}")
-                return True
-    finally:
-        sock.close()
+    while time.time() < deadline:
+        if time.time() - last_status >= 10:
+            last_status = time.time()
+            remain = int(deadline - time.time())
+            print(f"  ⏳ 等待 DHCP Discover...（剩餘 {remain}s）", end='\r', flush=True)
+        try:
+            data, _ = sock.recvfrom(1024)
+        except socket.timeout:
+            continue
+        if len(data) < 240 or data[236:240] != DHCP_MAGIC:
+            continue
+        chaddr = data[28:34]
+        if chaddr != target_bytes:
+            continue
+        xid = data[4:8]
+        client_flags = data[10:12]
+        msg_type, i = None, 240
+        while i < len(data) - 1:
+            opt = data[i]
+            if opt == 255: break
+            if opt == 0: i += 1; continue
+            length = data[i + 1]
+            if opt == 53 and length >= 1:
+                msg_type = data[i + 2]
+            i += 2 + length
+        if msg_type == DHCP_DISCOVER:
+            reply = _build_dhcp_reply(xid, chaddr, assign_ip, server_ip, subnet, DHCP_OFFER, client_flags)
+            sock.sendto(reply, (DHCP_LIMITED_BROADCAST, DHCP_CLIENT_PORT))
+            print(f"\n  📤 DHCP Offer → {assign_ip}")
+        elif msg_type == DHCP_REQUEST:
+            reply = _build_dhcp_reply(xid, chaddr, assign_ip, server_ip, subnet, DHCP_ACK, client_flags)
+            sock.sendto(reply, (DHCP_LIMITED_BROADCAST, DHCP_CLIENT_PORT))
+            print(f"  ✅ DHCP ACK → 設備已取得 {assign_ip}")
+            return True
+    print(f"\n  ⚠️  {int(timeout)}s 內未完成 DHCP 交握")
     return False
 
 
@@ -588,9 +651,6 @@ def _provision_new_device():
     """新裝置初始設定：mini DHCP server 分配 IP → CIP 設定為靜態 IP"""
     print("\n── 新裝置初始設定（DHCP 取得 IP → 設定為靜態 IP）───────")
     print("  前提：其他 DHCP/BOOTP 工具（如 BootP-DHCP Tool）已關閉\n")
-
-    if not _check_port_67():
-        return
 
     if not _check_scapy():
         print("  ❌ 缺少 scapy，無法選擇網卡 / 自動偵測設備 MAC")
@@ -609,47 +669,68 @@ def _provision_new_device():
         return
     print(f"  DHCP server IP（此網卡）: {server_ip}")
 
-    sub = input("\n  設備 MAC：[1] 監聽 DHCP Discover 自動偵測（30秒） [2] 手動輸入: ").strip()
-    if sub == '2':
-        target_mac = input("    MAC（格式 cc:cc:ea:9f:c9:72）: ").strip().lower()
-    else:
-        print("    等待設備 DHCP Discover（30秒），請確認設備已接上網路...")
-        target_mac = _listen_dhcp_discover(iface, timeout=30.0)
-        if not target_mac:
-            target_mac = input("    未偵測到，手動輸入 MAC（留空取消）: ").strip().lower()
-    if not target_mac:
-        return
-
+    # ── 所有參數都在開始監聽前問完，避免 port 67 開著空等使用者打字 ──
     assign_ip = _prompt_ip("\n  目標靜態 IP（e.g. 192.168.50.XXX，留空取消）: ")
     if not assign_ip:
         return
     subnet = _prompt_ip("  子網路遮罩 [Enter=255.255.255.0]: ") or "255.255.255.0"
     gateway = _prompt_ip("  預設閘道   [Enter=0.0.0.0 不設定]: ") or "0.0.0.0"
 
-    print(f"\n  MAC    : {target_mac}")
-    print(f"  目標 IP: {assign_ip}")
+    if assign_ip == server_ip:
+        print(f"  ❌ 目標 IP 與本機網卡 IP 相同（{server_ip}），請重新執行並輸入不同的 IP")
+        return
+    if not _same_subnet(assign_ip, server_ip, subnet):
+        print(f"  ⚠️  目標 IP {assign_ip} 與本機網卡 {server_ip}（遮罩 {subnet}）不同網段，")
+        print(f"     DHCP 分配可能『看似成功』但設備上線後仍連不上。")
+        if input("  仍要繼續？ [Y/N]: ").strip().upper() != 'Y':
+            print("  已取消")
+            return
+
+    sub = input("\n  設備 MAC：[1] 監聽 DHCP Discover 自動偵測（最多 30 秒） [2] 手動輸入: ").strip()
+    manual_mac = None
+    if sub == '2':
+        manual_mac = input("    MAC（格式 cc:cc:ea:9f:c9:72）: ").strip().lower()
+        if not manual_mac:
+            return
+
+    print(f"\n  目標 IP: {assign_ip}  Subnet: {subnet}  GW: {gateway}")
+    print(f"  MAC    : {manual_mac if manual_mac else '（將於下一步自動偵測）'}")
     if input("  確認啟動 mini DHCP server？ [Y/N]: ").strip().upper() != 'Y':
         return
 
-    print(f"\n  mini DHCP server 已啟動（按 Ctrl+C 中斷）")
-    print(f"  ⏳ 等待設備自動送出 DHCP Discover（設備會自動重試，通常不需操作）")
-    print(f"  ⚡ 若久候沒有反應，可重插設備網路線以強制立即重試")
-    print(f"     或在另一個終端機執行: python src/caparoc_ip_config.py <目前IP> → [3] 切 DHCP")
+    sock = _open_dhcp_socket(server_ip)
+    if sock is None:
+        return
 
     try:
-        got = _mini_dhcp_server(server_ip, target_mac, assign_ip, subnet)
-    except KeyboardInterrupt:
-        print("\n  中斷")
-        return
+        if manual_mac:
+            target_mac = manual_mac
+        else:
+            print("    等待設備 DHCP Discover，請確認設備已接上網路...")
+            target_mac = _detect_device_mac(iface, sock, timeout=MAC_DETECT_TIMEOUT)
+            if not target_mac:
+                target_mac = input("    未偵測到，手動輸入 MAC（留空取消）: ").strip().lower()
+        if not target_mac:
+            return
+
+        print(f"\n  mini DHCP server 已啟動（按 Ctrl+C 中斷）")
+        print(f"  ⏳ 等待設備自動送出 DHCP Discover（設備會自動重試，通常不需操作）")
+        print(f"  ⚡ 若久候沒有反應，可重插設備網路線以強制立即重試")
+        print(f"     或在另一個終端機執行: python src/caparoc_ip_config.py <目前IP> → [3] 切 DHCP")
+
+        try:
+            got = _serve_dhcp(sock, server_ip, target_mac, assign_ip, subnet)
+        except KeyboardInterrupt:
+            print("\n  中斷")
+            return
+    finally:
+        sock.close()
 
     if not got:
         return
 
-    print(f"\n  等待設備上線（10 秒）...")
-    for i in range(10, 0, -1):
-        print(f"  {i}s...", end='\r', flush=True)
-        time.sleep(1)
-    print()
+    if not _wait_for_device(assign_ip):
+        print(f"  ⚠️  設備尚未偵測到上線，仍嘗試寫入靜態 IP...")
 
     # CIP 設定靜態 IP：寫入 Attr5（assign_ip/subnet/gateway）+ Attr3（Static）
     # 若只寫 Attr3 而不寫 Attr5，設備設定後可能沿用舊的/預設的 Attr5 值，
@@ -708,27 +789,32 @@ def _run_connected_menu(device_ip: str):
 def main():
     # 已知 IP：略過主選單，直接進入連線設定選單（維持既有用法）
     if len(sys.argv) > 1:
-        _run_connected_menu(sys.argv[1])
+        ip_arg = sys.argv[1]
+        if not _is_valid_ip(ip_arg):
+            print(f"❌ 「{ip_arg}」不是合法的 IP 格式")
+            print(__doc__)
+            return
+        _run_connected_menu(ip_arg)
         return
 
-    print(f"\n{'='*55}")
-    print(f"  CAPAROC IP 設定工具")
-    print(f"{'='*55}")
-    print("\n  [1] 連線設備（自動探索 / 讀取 / 設定靜態 IP / 切換 DHCP）")
-    print("  [2] 新裝置初始設定（DHCP 取得 IP → 設定為靜態 IP）")
-    print("  [0] 離開")
-    choice = input("\n  請選擇: ").strip()
+    while True:
+        print(f"\n{'='*55}")
+        print(f"  CAPAROC IP 設定工具")
+        print(f"{'='*55}")
+        print("\n  [1] 連線設備（自動探索 / 讀取 / 設定靜態 IP / 切換 DHCP）")
+        print("  [2] 新裝置初始設定（DHCP 取得 IP → 設定為靜態 IP）")
+        print("  [0] 離開")
+        choice = input("\n  請選擇: ").strip()
 
-    if choice == '0':
-        return
-    if choice == '2':
-        _provision_new_device()
-        return
+        if choice == '0':
+            return
+        if choice == '2':
+            _provision_new_device()
+            continue
 
-    device_ip = run_discovery()
-    if device_ip is None:
-        return
-    _run_connected_menu(device_ip)
+        device_ip = run_discovery()
+        if device_ip is not None:
+            _run_connected_menu(device_ip)
 
 
 if __name__ == "__main__":

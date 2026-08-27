@@ -311,14 +311,25 @@ set_nominal_current(1, 2, 4, verify=True)   # 模組1 通道2 設為 4A
 
 ## 4. Web UI 頁面一覽（Phase 4.2）
 
-| 頁面 | 路徑 | 對應後端 | 說明 |
-|------|------|----------|------|
-| 儀表板 | `#dashboard` | `_read_current_status()` / WebSocket | 通道卡片、開關按鈕、即時電流 |
-| 通道設定 | `#channel-config` | `set_nominal_current()` / `GET /api/status` | 額定電流表格（可編輯） |
-| 圖表監控 | `#chart` | `GET /api/history?minutes=N` | 雙 Y 軸、模組分圖、zoom、30 分鐘歷史 |
-| 系統日誌 | `#logs` | `GET /api/logs` | 等級篩選、顏色編碼、預載今日 .log |
-| 系統狀態 | `#device-status` | `GET /api/device/info` | Identity Object + Class 0x0F |
-| 連線設定 | `#connection` | `GET /api/device/network` / `POST /api/connect` | IP 表單 + 網路資訊面板 |
+> **導覽機制**：SPA 式 `v-if` 分頁切換，由 `app.js` 的 `currentPage` ref 控制。
+> **沒有 router、沒有 hash、不寫入瀏覽歷史**——下表的「頁面代號」是 `navItems` 裡的 `page` 值，
+> 不是可直接輸入的網址錨點。
+
+| 頁面 | 頁面代號 | 對應後端 | 說明 |
+|------|----------|----------|------|
+| 儀表板 | `dashboard` | `_read_current_status()` / WebSocket | 通道卡片、開關按鈕、即時電流 |
+| 圖表監控 | `charts` | `GET /api/history?minutes=N` | 雙 Y 軸、模組分圖、zoom、30 分鐘歷史 |
+| 通道設定 | `channel-settings` | `set_nominal_current()` / `POST /api/channels/nominal` | 額定電流表格（依模組分區，可編輯） |
+| 系統日誌 | `logs` | `GET /api/logs` | 等級篩選、顏色編碼、分頁、自動更新 |
+| 系統狀態 | `system-status` | `GET /api/device/info` | Identity Object + Class 0x0F |
+| 連線設定 | `connection` | `GET /api/device/network` / `POST /api/connect` | IP 連線表單 + 網路資訊面板（MAC / hostname） |
+| IP 設定 | `ip-config` | `GET /api/ipconfig/current`、`POST /api/ipconfig/{discover,static,dhcp}` | 網段搜尋設備、讀取/變更設備 IP、切換 DHCP |
+
+> ⚠️ **`/api/device/network` 與 `/api/ipconfig/current` 容易混淆**：
+> 前者走 `get_network_info()`（0xF5 + 0xF6），提供 **MAC / hostname**，但**沒有** IP 取得方式；
+> 後者走 `read_device_network_config()`（0xF5 Attr1/3/5），提供 **`config_control`
+> （Static / BOOTP / DHCP）**，是「IP 設定」頁判斷目前模式所必需。
+> 兩者用途不同，**新增欄位前先確認要加在哪一支**。
 
 ---
 

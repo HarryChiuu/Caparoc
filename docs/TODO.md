@@ -1,6 +1,6 @@
 # CAPAROC 控制器 - 待實作功能清單
 
-更新日期: 2026-08-11
+更新日期: 2026-08-27
 
 ## ✅ 已完成功能
 
@@ -52,6 +52,148 @@
 | 5 | 低 | 30 處 `generic_message` 重複、易漏上鎖 | ✅ 抽出內建 `_cip_lock` 的 `_cip_get()`/`_cip_set()`/`_read_input_assembly()`；需要原子性的兩處（Config Assembly 回退、`set_channel` 寫入+驗證）刻意保留單次持鎖寫法並加註解 |
 
 **⚠️ 尚未實機驗證**：以上皆通過 mock driver 測試與 `--demo` 模式 API smoke test，接實機後需確認批次設定、連線探測快取、通道開關三條路徑。
+
+---
+
+## 🌐 Web「IP 設定」側邊欄分頁 ✅ 已完成（2026-08-27，分支 fix/web-cip-concurrency）
+
+> **背景**：`src/caparoc_ip_config.py` 是一支純互動式 CLI——每個函式都綁死 `input()` / `print(end='\r')`，
+> web 層完全無法呼叫，導致設備 IP 設定能力至今只存在於終端機。使用者得離開 web UI、
+> 另開終端機、記住 IP 才能改設備網路設定。
+>
+> **本次範圍**：側邊欄新增獨立一項「🌐 IP 設定」，涵蓋兩項能力——
+> **(A) 網段搜尋設備**（List Identity 廣播 + ARP 後援）、**(B) 已連線設備的 IP 設定**（讀取／改靜態 IP／切 DHCP）。
+>
+> **明確不含**：「全新設備配置精靈」（迷你 DHCP server + MAC 偵測）——需管理員權限與 Npcap、
+> 單次流程最長約 6 分鐘、需進度串流與取消機制，留在 CLI。列為未來項目（見本節末）。
+
+### 實作步驟
+
+| Step | 檔案 | 內容 | 狀態 |
+|---|---|---|---|
+| 1a | `src/caparoc_ip_core.py`（新檔） | 抽出**不含 `input()`/`print()`** 的核心層：`is_valid_ip`／`same_subnet`／`parse_list_identity`／`get_broadcast_addresses`／`eip_port_open`／`probe_eip_hosts`／`discover_devices`／`discover_by_arp`／`wait_for_device`（改用 `on_progress` callback），外加組合函式 `discover()` 統一 EIP→ARP fallback | ✅ 已完成 |
+| 1b | `src/caparoc_ip_config.py` | 改具名 import 核心層、**刪除已搬走的函式本體**（9 個函式 + 重複常數）、呼叫點去底線前綴、新增 `_wait_for_device()` CLI 包裝補回進度與結果訊息、`run_discovery()` 改用 `core.discover(on_stage=...)` | ✅ 已完成 |
+| 2 | `src/caparoc_backend.py` | `_cip_get`/`_cip_set` 加 `driver=None` 參數；三個 0xF5 方法（`read_device_network_config`/`set_device_ip`/`set_device_dhcp`）改走 wrapper，補上 `_cip_lock`；`set_device_ip` 新增 `ctrl_written` 欄位 | ✅ 已完成 |
+| 3 | `web/app.py` | 新增 `GET /api/ipconfig/current`、`POST /api/ipconfig/discover`（含 `_discover_lock` 防並發，409）、`POST /api/ipconfig/static`（含伺服器端自動重連）、`POST /api/ipconfig/dhcp`；四支都有 `_DEMO_MODE` 分支 | ✅ 已完成 |
+| 4 | `app.js` / `index.html` / `?v=` | `navItems` 加一項、新增 `currentPage === 'ip-config'` 三面板 + 確認 modal、`refreshIpCurrent()` 併入 `_cipReadInFlight` 旗標、同網段警示、兩處版號 bump 至 `?v=4.3.0`。**零新增 CSS**（19 個類別全部沿用既有樣式） | ✅ 已完成 |
+| 5 | `docs/` | CHANGELOG 新增 2026-08-27 條目；`WEB_UI_FEATURE_REFERENCE.md` 頁面表改正（原本用的 `#dashboard` 錨點實際不存在）並補 `ip-config` 列與兩支端點的分工說明 | ✅ 已完成 |
+
+**設計決策**：
+- 改 IP 後的**自動重連放在伺服器端**（`POST /api/ipconfig/static` 內：寫入 → `disconnect()` → 換 `device_ip` → `wait_for_device()` 驗證 → `connect()`），
+  比讓瀏覽器各自輪詢重連可靠，且 WebSocket 1 Hz 推送會自然把新狀態廣播到所有分頁。
+- **已評估並否決**：讓 CLI 改用 `backend.connect()` 以移除 `driver=` 參數。理由是 `connect()` 很重——會
+  `_activate_connection_state`、啟動 heartbeat、跑 `_probe_all_modules()`（**探測時會暫時改寫設備額定電流**），
+  對一台剛開機、只想改 IP 的設備做這些事既不必要也有風險。
+
+---
+
+### 🔍 Step 2 附帶發現：`_cip_lock` 覆蓋率盤點（修正先前敘述）
+
+規劃時記載「三個 0xF5 方法是全專案**唯三**未上鎖的 `generic_message` 呼叫」——**這個說法不正確**。
+實際盤點 `caparoc_backend.py` 全部 14 處 `generic_message` 後，結果是：
+
+| 類別 | 位置 | 判定 |
+|---|---|---|
+| ✅ 已上鎖 | `_cip_get`、`_cip_set`、`_heartbeat_worker`、`_write_nominal_current`（×2）、`set_channel`（×2）、`_read_current_status` | 正常 |
+| ✅ **本次修復** | `read_device_network_config`、`set_device_ip`、`set_device_dhcp` | 改走 `_cip_get`/`_cip_set`，已驗證呼叫期間 `_cip_lock.locked() == True` |
+| 🟢 未上鎖但安全 | `check_device_connection`、`_sync_output_from_device`、`_activate_connection_state` | 三者**只在 `connect()` 內執行，且都排在 `_start_heartbeat()` 之前**；WebSocket 讀取又以 `is_connected`（需 `_connected=True`，在 `connect()` 最後一行才設定）為前提。故此期間沒有任何其他執行緒會碰 driver |
+| ⚪ 未上鎖但無呼叫者 | `update_config_parameter`、`_wait_for_config_processing` | 全 repo 搜尋確認**無任何呼叫端**，等同 dead code |
+
+**正確的結論**：三個 0xF5 方法是唯三「**web 執行期可達且未上鎖**」的路徑，本次已補齊。
+其餘未上鎖處要不是 connect() 期間的單執行緒區段，就是無人呼叫的死碼。
+
+⚠️ **但「connect() 期間安全」是一個沒被寫下來的隱性不變式**——它依賴「heartbeat 尚未啟動」+
+「`_connected` 尚未設為 True」兩件事同時成立。日後若有人調動 `connect()` 內的步驟順序
+（例如把 `_start_heartbeat()` 提前），這三處會立刻變成真正的競態且極難察覺。
+
+- [ ] **建議後續處理**：在 `connect()` 內這三個呼叫點加註解說明此不變式；或索性把它們也改走
+      `_cip_get`/`_cip_set`（此時無競爭，取鎖成本為零，卻能讓規則變成無例外）。
+- [ ] **建議後續處理**：確認 `update_config_parameter` / `_wait_for_config_processing` 是否真的可刪。
+
+---
+
+### 🐛 Step 3 附帶發現：`read_device_network_config()` 是**壞的**（既有 bug，非本次造成）
+
+實機測試 `GET /api/ipconfig/current` 時發現它回 `success: false` / `error: "Attr 5 無回應"`。
+直接對設備 192.168.50.111 逐一測試三種讀法後確認：
+
+| 讀法 | Attr1 | Attr3 | Attr5 |
+|---|---|---|---|
+| `connected=False, unconnected_send=False` | ❌ `Too much data` | ❌ | ❌ |
+| `connected=False`（pycomm3 預設） | ❌ `Too much data` | ❌ | ❌ |
+| `connected=True` | ✅ 4 bytes | ✅ 4 bytes | ✅ 22 bytes |
+
+**本設備三個 0xF5 屬性都只接受 `connected=True`**（它不支援 Unconnected Send 0x52，
+這點本專案早有記載，見本檔「IP 設定功能」節）。而 `read_device_network_config()`
+從 2026-08-11 寫成以來**一直是寫死 `connected=False`**，也就是說：
+
+> **這個方法自誕生起在這台設備上就從未成功過。**
+> 之所以沒被發現，是因為它**在本次之前沒有任何呼叫端**——
+> CLI 的 `read_config()` 走的是自己的 `_read_attr()`，那支有 `connected=False → True` 的退回機制。
+
+- [x] **已修復**：`read_device_network_config()` 內新增 `_read_f5(attr)`，比照 CLI `_read_attr()`
+      做兩段式嘗試（先 False 再 True）。不寫死 `True` 是為了相容其他韌體/型號。
+- [x] **實機驗證通過**：讀回 `ip=192.168.50.111 / subnet=255.255.254.0 / gateway=192.168.50.1 /
+      config_control_str=Static IP`，IP 與連線位址相符。
+
+💡 **順帶佐證**：實機遮罩是 `255.255.254.0`（**/23**），正好對應 `caparoc_ip_config.py` 中
+`DHCP_LIMITED_BROADCAST` 那段註解描述的真實情境（網卡 /24、設備回報 /23），該註解所述並非假設性問題。
+
+---
+
+### ⚠️ 目前改動後的問題清單
+
+#### A. 本次改動新產生的問題 — ✅ 已於 Step 1b 全數收掉
+
+| # | 嚴重度 | 問題 | 結果 |
+|---|---|---|---|
+| 1 | 🔴 高 | **邏輯一度出現兩份複本**：核心層建立後、Step 1b 執行前，`caparoc_ip_config.py` 內 9 個同名函式本體仍存在 | ✅ 已刪除全部重複本體，`grep` 確認全 repo 無殘留舊名（`_is_valid_ip`／`_discover_devices` 等） |
+| 2 | 🟡 中 | 兩份複本行為不一致（core 的 `discover_by_arp()` 多包 `except FileNotFoundError`；`wait_for_device()` 不再自行 print） | ✅ 舊本體已刪，只剩一份。CLI 新增 `_wait_for_device()` 包裝補回 `⏳ 剩餘 Ns` 進度與 ✅/⚠️ 結果訊息，輸出與改動前一致 |
+| 3 | 🟢 低 | 核心層一度無任何呼叫者（dead code） | ✅ CLI 已改為呼叫核心層；web（Step 3）尚未接上，但已非孤兒 |
+
+**Step 1b 額外設計決策**：`core.discover()` 新增 `on_stage` callback。原本 CLI 會在**開始 ARP 掃描前**印
+「List Identity 無回應，改用 ARP table...」，但 fallback 邏輯移進核心層後就印不出來了——ARP 掃描可能耗時數秒，
+等結束才提示會讓使用者對著空畫面等待。改用 callback 讓核心層在每個階段**開始前**通知呼叫端，
+維持 CLI 輸出時序不變，web 則可直接忽略此參數。
+
+**Step 1 驗收結果**（`python src/caparoc_ip_config.py`，conda `sv` env）：
+- ✅ 無參數 → 主選單正常，`[0]` 離開正常
+- ✅ `999.1.1.1` → 印格式錯誤 + docstring
+- ✅ `[1]` 探索 → 廣播訊息 → ARP fallback 訊息（順序正確）→ 找到實機 `192.168.50.111`，列表格式與改動前一致
+- ⚠️ 已知既有現象（非本次造成）：輸出被導向 pipe 時，emoji 在 cp950 下會 `UnicodeEncodeError`；
+  正常終端機或 `PYTHONIOENCODING=utf-8` 下無此問題
+
+#### B. 本次**確認存在但不在範圍內**的既有問題（記錄備查，不在本分支修）
+
+| # | 位置 | 問題 | 判斷 |
+|---|---|---|---|
+| 4 | `caparoc_ip_config.py:418`、`:467` | **把 BOOTP `op` 欄位當成 DHCP message type**：`if data[0] != DHCP_DISCOVER`。`data[0]` 是 `op`（1 = BOOTREQUEST），不是 Option 53。因為 `DHCP_DISCOVER == 1 == BOOTREQUEST` 湊巧能動，但它會**匹配任何 client→server 的 BOOTP 訊息**（REQUEST／RELEASE／INFORM），使 `_detect_mac_via_socket()` 可能回報一台正在「續約」而非「首次探索」的設備 MAC。同檔的 `_detect_mac_via_scapy():509` 與 `_serve_dhcp():628` 則是**正確**地走 Option 迴圈解析 | 在 provisioning 路徑上，本次範圍外。但若日後把配置精靈搬上 web、要在 UI 顯示「已偵測到設備 MAC」這種確認步驟，**必須先修這個** |
+| 5 | `caparoc_backend.py:2089` | `set_device_dhcp()` 把**任何例外都回報成 `success=True`**。原意是「IP 一變連線就死、拿不到回應屬正常」，但這讓真失敗與預期斷線無法區分 | **刻意不改**——改動它有把「本來會動」變成「回報失敗」的風險。改由寫入後的**實際驗證**補償：靜態 IP 走 `wait_for_device()` 給出確定答案，DHCP 走「搜尋設備找回新 IP」。⚠️ 維護者需知道：**這裡的真相來源是驗證步驟，不是回傳值** |
+| 6 | `caparoc_ip_core.py:discover_by_arp()` | 依賴 `arp -a` 輸出的**語系文字**（`'動態'` / `'dynamic'`）判斷動態項目。非 zh-TW／英文語系下會找不到任何項目 | 已知限制，搬移時原樣保留並補了註解。ARP 只是 List Identity 失敗時的後援，影響有限 |
+| 7 | `caparoc_ip_core.py:get_broadcast_addresses()` | 用 `socket.getaddrinfo(gethostname())` 推導網卡，並**硬編 `.255`（假設 /24）**。多網卡環境下 hostname 解析不到的網卡會被漏掉；非 /24 網段（如 /23）算出的廣播位址是錯的 | 已知限制，原樣保留。受限廣播 `255.255.255.255` 一律會送，多數情況仍能命中 |
+
+#### C. 本次會**新欠下**的技術債（已評估，接受）
+
+| # | 債務 | 影響 | 處置 |
+|---|---|---|---|
+| 8 | `app.js` 的單一巨型 `setup()` 會從 751 行漲到約 870 行，`return {}` 再多約 17 個鍵 | 全案最大長期債，本次讓它更肥 | **不在本次償還**（引入 build step / SFC 是另一層級改動）。折衷：IP 設定的 state 與函式集中在**單一 banner 註解區塊**、`return {}` 也集中成一個群組，讓日後抽 composable 時是「一刀切」而非大海撈針 |
+| 9 | `/api/device/network`（`get_network_info`，MAC/hostname）與 `/api/ipconfig/current`（`read_device_network_config`，0xF5 Attr1/3/5 含 Static/DHCP 模式）**語意重疊** | 日後易搞混、或在錯的端點加欄位 | 不合併（新頁面**必須**有 `config_control`，舊端點沒有）。改為兩者 docstring 互相指路 + `WEB_UI_FEATURE_REFERENCE.md` 表格明列差異 |
+| 10 | 每個新端點都要手寫 `_DEMO_MODE` 分支 | 漏寫 → `--demo` 在該頁靜默壞掉，且無測試會抓到 | 既有慣例的固定稅，無法迴避。列入驗證清單逐項點過 |
+| 11 | `?v=` 版號在 `index.html:8` 與 `:553` **兩處手動更新** | 漏改 → 使用者拿到舊 JS，回報「新功能沒出現」，除錯成本高 | 本次照舊手動改。未來可改由 `/` 路由注入單一版號常數——但那要把 `FileResponse` 換成模板渲染，超出本次範圍 |
+
+---
+
+### 建議順手做的低成本保險（選配）
+
+核心層抽出後，`is_valid_ip` / `same_subnet` / `parse_list_identity` / `get_broadcast_addresses`
+成了本專案**第一批無副作用、可無痛單元測試的純函式**。建議加 `tests/test_ip_core.py`（約 30 行，
+含 `parse_list_identity` 對固定 bytes 的解析斷言），成本極低卻能給日後動探索邏輯的人一張安全網。
+不做也不影響本節其餘部分。
+
+### 未來項目
+
+- [ ] **全新設備配置精靈上 web**（迷你 DHCP server + MAC 偵測）。前置條件：先修問題 #4；
+      並需設計進度串流（現有進度是 `print(end='\r')`，web 完全看不到）與取消機制。
 
 ---
 

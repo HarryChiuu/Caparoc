@@ -2,6 +2,97 @@
 
 ---
 
+## [2026-08-27] Web 新增「IP 設定」分頁 + 0xF5 讀寫補鎖（fix/web-cip-concurrency）
+
+> 把 `src/caparoc_ip_config.py` 的設備探索與 IP 設定能力搬上 Web UI，側邊欄新增獨立一項「🌐 IP 設定」。
+> 不含「全新設備配置精靈」（迷你 DHCP server + MAC 偵測）——該路徑需管理員權限與 Npcap、
+> 單次流程最長約 6 分鐘，仍留在 CLI。
+
+### 🏗️ 架構：抽出非互動核心層 `src/caparoc_ip_core.py`
+
+- **根因**：`caparoc_ip_config.py` 每個函式都綁死 `input()` / `print(end='\r')`，web 層完全無法呼叫，
+  導致設備 IP 設定至今只能在終端機操作
+- **修正**：新增 `src/caparoc_ip_core.py`，收納 9 個不含互動 I/O 的函式
+  （`is_valid_ip` / `same_subnet` / `parse_list_identity` / `get_broadcast_addresses` /
+  `eip_port_open` / `probe_eip_hosts` / `discover_devices` / `discover_by_arp` / `wait_for_device`），
+  另加組合函式 `discover()` 統一「List Identity 廣播 → ARP 後援」的退回邏輯。
+  CLI 與 `web/app.py` **共用同一份實作**，日後修改探索行為只需改一個檔案
+- **CLI 行為完全不變**：新增 `_wait_for_device()` 包裝補回 `⏳ 剩餘 Ns` 進度與 ✅/⚠️ 結果訊息；
+  `discover()` 加 `on_stage` callback，讓 CLI 仍能在**開始 ARP 掃描前**就印出「改用 ARP table...」
+  （ARP 掃描可能數秒，等結束才提示會讓使用者對著空畫面等）
+- `discover_by_arp()` 補 `except (FileNotFoundError, OSError) → []`（原本在無 `arp.exe` 的系統會拋例外）
+
+### 🐛 `read_device_network_config()` 自誕生起就是壞的（既有 bug）
+
+- **根因**：該方法寫死 `connected=False`，但本設備（CAPAROC PM EIP）**三個 0xF5 屬性都只接受
+  `connected=True`**，`connected=False` 一律回 `Too much data`（設備不支援 Unconnected Send 0x52）。
+  實測 Attr1/3/5 三者皆然
+- **為何沒被發現**：它在本次之前**沒有任何呼叫端**。CLI 的 `read_config()` 走自己的 `_read_attr()`，
+  那支本來就有 `connected=False → True` 的退回機制
+- **修正**：內部新增 `_read_f5(attr)`，比照 CLI 做兩段式嘗試。不寫死 `True` 是為了相容其他韌體/型號
+- **實機驗證**：讀回 `ip=192.168.50.111 / subnet=255.255.254.0 / gateway=192.168.50.1 / Static IP`
+
+### 🔒 三個 0xF5 方法補上 `_cip_lock`
+
+- **根因**：`read_device_network_config` / `set_device_ip` / `set_device_dhcp` 直接呼叫
+  `driver.generic_message()` 而未取 `_cip_lock`。CLI 單執行緒沒事，但 web 有 1 Hz WebSocket
+  狀態讀取執行緒，共用 driver 會撞爛 pycomm3 的 TCP 串流
+- **修正**：`_cip_get()` / `_cip_set()` 新增 `driver=None` 參數（None = 用 `self.driver`；
+  CLI 可傳入自建的短命 driver），三個方法全部改走 wrapper。
+  維持既有契約「呼叫端不必也不該自行 `with self._cip_lock`」
+- **未採用的替代方案**：讓 CLI 改用 `backend.connect()` 以移除 `driver` 參數——`connect()` 會
+  `_activate_connection_state`、啟動 heartbeat、並跑 `_probe_all_modules()`（**探測會暫時改寫設備額定電流**），
+  對一台只想改 IP 的設備做這些事既不必要也有風險
+- `set_device_ip()` 新增 `ctrl_written` 欄位（Attr3 切 Static 是否寫成功），僅供除錯，不影響 `success`
+
+**附帶盤點**：全檔 14 處 `generic_message` 逐一確認後，其餘未上鎖處分兩類——
+`check_device_connection` / `_sync_output_from_device` / `_activate_connection_state` 只在
+`connect()` 內、且都排在 `_start_heartbeat()` 之前執行（此時無其他執行緒碰 driver）；
+`update_config_parameter` / `_wait_for_config_processing` 則是全 repo 無呼叫者的死碼。
+⚠️ 前者的安全性依賴一個沒寫下來的隱性不變式，已記入 `docs/TODO.md`。
+
+### 🌐 Web：新增 4 支 `/api/ipconfig/*` 路由
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| `GET` | `/api/ipconfig/current` | 讀 0xF5 Attr1/3/5，**含 Static/BOOTP/DHCP 取得方式** |
+| `POST` | `/api/ipconfig/discover` | 網段掃描；**刻意不檢查連線**（掃描的用途正是在未連線時找設備）。以 `_discover_lock` 防並發，第二個併發請求回 **409** |
+| `POST` | `/api/ipconfig/static` | 設靜態 IP，並在伺服器端完成「寫入 → 斷線 → 換 IP → 等待上線 → 重連」 |
+| `POST` | `/api/ipconfig/dhcp` | 切 DHCP；新 IP 無法預知，回傳提示改用掃描找回 |
+
+- **自動重連放在伺服器端**：狀態機只有一份，結果透過既有 1 Hz WebSocket 自然同步到所有分頁；
+  若放前端會變成「每個分頁各自輪詢重連」的競態溫床
+- `wait_for_device()` 是純 TCP 44818 探測，**不碰 `_cip_lock`**，等待 30 秒期間不會卡住 WebSocket
+- 與既有 `/api/device/network` 的分工已寫入雙方 docstring：後者走 `get_network_info()`
+  提供 MAC/hostname，但**沒有** `config_control`，故 IP 設定頁必須走前者
+
+### 🖥️ 前端：側邊欄新增「🌐 IP 設定」
+
+- `navItems` 新增一項；新增 `currentPage === 'ip-config'` 分頁，含三個面板：
+  **搜尋設備**（結果每列可「連線」或「帶入」表單）、**目前網路設定**（↻ 手動重讀）、**變更設備 IP**
+- 靜態/DHCP 以 radio 切換；送出前跳 `.modal-overlay` 確認框，列出「目前 IP → 變更為」對照
+- **同網段檢查**：新 IP 與設備現網段不同時顯示警告，但**只警告不擋**（比照 CLI `same_subnet` 語意）
+- `refreshIpCurrent()` 併入既有的 `_cipReadInFlight` 旗標，不會與 `refreshNetworkInfo` /
+  `refreshDeviceInfo` 並發觸發 CIP 讀取
+- **零新增 CSS**：19 個用到的類別全部沿用 `style.css` 既有樣式
+- `index.html` 的 CSS 與 JS 版號由 `?v=4.2.10d` 一併 bump 至 `?v=4.3.0`
+
+### ✅ 驗證
+
+- CLI 迴歸：主選單 / `[0]` 離開 / 非法 IP 參數 / `[1]` 探索（實機找到 192.168.50.111，
+  廣播訊息與 ARP 後援訊息順序正確）全部與改動前一致
+- Mock driver：三個 0xF5 方法回傳結構正確、`set_device_ip` 確認「先寫 Attr5 再寫 Attr3」、
+  並實測 `generic_message` 執行期間 `_cip_lock.locked() == True`
+- Demo 模式：4 支路由皆 200
+- **實機並發測試**（連線 192.168.50.111，3 模組）：WebSocket 推送期間連打 6 次
+  `/api/ipconfig/current`，讀取全部成功（0.03 秒）、**推送間隔穩定 1.01 秒、無中斷無逾時**；
+  並發掃描正確回 `[200, 409]`
+- 前端：`node --check` 語法通過；靜態掃描確認 template 用到的 21 個識別字全部存在於 `setup()` 的 return 物件
+- **實機驗證**：實際寫入新 IP →「寫入 → 斷線 → 換 device_ip → 等待上線 → 重連」伺服器端流程 →
+  WebSocket 於新 IP 上恢復推送，完整跑通
+
+---
+
 ## [2026-08-27] `python web/app.py` 監聽埠可設定 + 自動避讓（fix/web-cip-concurrency）
 
 - **根因**：`PORT` 寫死 8000，而 NVIDIA Overlay 會間歇性 `bind()` 0.0.0.0:8000（overlay/遊戲啟動時），造成 `python web/app.py` 偶發 `[Errno 10048] 一次只能用一個通訊端位址`

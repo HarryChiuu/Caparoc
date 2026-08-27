@@ -14,6 +14,7 @@ createApp({
             { page: 'logs', icon: '📋', label: '系統日誌' },
             { page: 'system-status', icon: '🖧', label: '系統狀態' },
             { page: 'connection', icon: '🔧', label: '連線設定' },
+            { page: 'ip-config', icon: '🌐', label: 'IP 設定' },
         ];
 
         function navigate(page) {
@@ -244,6 +245,174 @@ createApp({
             if (!ok) deviceInfo.value = prev;  // 失敗時恢復，不讓頁面一片空白
             deviceInfoRefreshing.value = false;
             _cipReadInFlight = false;
+        }
+
+        // ==================== IP 設定頁 ====================
+        // 本區塊的 state 與函式刻意集中在一起，日後若要抽成 composable 可整段搬走。
+
+        const ipCurrent = ref(null);            // 設備目前網路設定（0xF5 Attr1/3/5）
+        const ipCurrentRefreshing = ref(false);
+        const ipScanBusy = ref(false);
+        const ipScanResult = ref(null);         // { devices, via, broadcasts }
+        const ipScanError = ref('');
+        const ipMode = ref('static');           // 'static' | 'dhcp'
+        const ipForm = reactive({ ip: '', subnet: '255.255.255.0', gateway: '' });
+        const ipApplyBusy = ref(false);
+        const ipApplyFeedback = ref({ ok: false, msg: '' });
+        const ipConfirmOpen = ref(false);
+
+        async function fetchIpCurrent() {
+            try {
+                const r = await fetch('/api/ipconfig/current');
+                if (!r.ok) return false;
+                const data = await r.json();
+                ipCurrent.value = data;
+                // 表單預填設備現值，讓使用者只需改動想改的欄位
+                if (data.ip) ipForm.ip = data.ip;
+                if (data.subnet) ipForm.subnet = data.subnet;
+                if (data.gateway && data.gateway !== '0.0.0.0') ipForm.gateway = data.gateway;
+                return true;
+            } catch (_) { }
+            return false;
+        }
+
+        async function refreshIpCurrent() {
+            // 併入全域 CIP 讀取旗標，避免與 refreshNetworkInfo/refreshDeviceInfo 並發
+            if (!state.connected || ipCurrentRefreshing.value || _cipReadInFlight) return;
+            _cipReadInFlight = true;
+            ipCurrentRefreshing.value = true;
+            const prev = ipCurrent.value;
+            ipCurrent.value = null;
+            const ok = await fetchIpCurrent();
+            if (!ok) ipCurrent.value = prev;   // 失敗時恢復舊值，不留空白畫面
+            ipCurrentRefreshing.value = false;
+            _cipReadInFlight = false;
+        }
+
+        async function scanDevices() {
+            if (ipScanBusy.value) return;
+            ipScanBusy.value = true;
+            ipScanError.value = '';
+            try {
+                const r = await fetch('/api/ipconfig/discover', { method: 'POST' });
+                const body = await r.json().catch(() => ({}));
+                if (r.ok) {
+                    ipScanResult.value = body;
+                } else {
+                    ipScanError.value = body.detail ?? ('掃描失敗 (HTTP ' + r.status + ')');
+                }
+            } catch (e) {
+                ipScanError.value = '無法連線至伺服器';
+            } finally {
+                ipScanBusy.value = false;
+            }
+        }
+
+        function useFoundIp(ip) {
+            ipForm.ip = ip;
+            ipMode.value = 'static';
+        }
+
+        async function connectToFound(ip) {
+            ipInput.value = ip;
+            await doConnect();
+            if (state.connected) refreshIpCurrent();
+        }
+
+        // IPv4 字串 → 32 位元整數；格式不合回傳 null
+        function _ip2int(str) {
+            const parts = String(str).split('.');
+            if (parts.length !== 4) return null;
+            let v = 0;
+            for (const x of parts) {
+                if (!/^\d{1,3}$/.test(x)) return null;
+                const n = Number(x);
+                if (n < 0 || n > 255) return null;
+                v = (v * 256) + n;
+            }
+            return v;
+        }
+
+        function _isValidIpStr(str) {
+            return _ip2int(str) !== null;
+        }
+
+        // 新 IP 是否與設備目前網段相同；不同只警告不擋（比照 CLI same_subnet 的語意）
+        const ipSubnetWarning = computed(() => {
+            const cur = ipCurrent.value;
+            if (!cur || !cur.ip || !ipForm.ip || ipMode.value !== 'static') return '';
+            const mask = ipForm.subnet || cur.subnet;
+            if (!mask) return '';
+            const a = _ip2int(ipForm.ip), b = _ip2int(cur.ip), m = _ip2int(mask);
+            if (a === null || b === null || m === null) return '';
+            if (((a & m) >>> 0) !== ((b & m) >>> 0))
+                return '⚠ 新 IP 與設備目前網段（' + cur.ip + ' / ' + mask + '）不同，套用後可能無法從本機連線';
+            return '';
+        });
+
+        function openIpConfirm() {
+            ipApplyFeedback.value = { ok: false, msg: '' };
+            if (ipMode.value === 'static') {
+                if (!_isValidIpStr(ipForm.ip)) {
+                    ipApplyFeedback.value = { ok: false, msg: 'IP 格式不正確（需為 x.x.x.x）' };
+                    return;
+                }
+                if (!_isValidIpStr(ipForm.subnet)) {
+                    ipApplyFeedback.value = { ok: false, msg: '子網路遮罩格式不正確' };
+                    return;
+                }
+                if (ipForm.gateway && !_isValidIpStr(ipForm.gateway)) {
+                    ipApplyFeedback.value = { ok: false, msg: '預設閘道格式不正確' };
+                    return;
+                }
+            }
+            ipConfirmOpen.value = true;
+        }
+
+        async function applyIpChange() {
+            ipConfirmOpen.value = false;
+            if (ipApplyBusy.value) return;
+            ipApplyBusy.value = true;
+            const isStatic = ipMode.value === 'static';
+            ipApplyFeedback.value = {
+                ok: true,
+                msg: isStatic ? '寫入中…設備將重啟網路，請稍候（最長 30 秒）' : '切換中…',
+            };
+            try {
+                const url = isStatic ? '/api/ipconfig/static' : '/api/ipconfig/dhcp';
+                const opts = isStatic
+                    ? {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            ip: ipForm.ip, subnet: ipForm.subnet, gateway: ipForm.gateway,
+                        }),
+                    }
+                    : { method: 'POST' };
+                const r = await fetch(url, opts);
+                const body = await r.json().catch(() => ({}));
+                if (!r.ok) {
+                    ipApplyFeedback.value = { ok: false, msg: body.detail ?? ('失敗 (HTTP ' + r.status + ')') };
+                    return;
+                }
+                if (isStatic) {
+                    if (body.reconnected) {
+                        ipApplyFeedback.value = { ok: true, msg: '✓ 已設定為 ' + body.new_ip + ' 並自動重新連線' };
+                        refreshIpCurrent();
+                    } else if (body.online) {
+                        ipApplyFeedback.value = { ok: false, msg: 'IP 已改為 ' + body.new_ip + '，設備已上線但自動重連失敗，請至「連線設定」手動連線' };
+                    } else {
+                        ipApplyFeedback.value = { ok: false, msg: 'IP 已寫入 ' + body.new_ip + '，但 30 秒內未偵測到設備上線；請確認本機與新 IP 同網段後手動連線' };
+                    }
+                } else {
+                    ipApplyFeedback.value = { ok: true, msg: body.note ?? '已切換為 DHCP' };
+                    ipCurrent.value = null;
+                }
+            } catch (e) {
+                ipApplyFeedback.value = { ok: false, msg: '無法連線至伺服器' };
+            } finally {
+                ipApplyBusy.value = false;
+            }
         }
 
         // 通道開關：進行中旗標（防止連續點擊）與失敗提示（短暫顯示於卡片上）
@@ -690,6 +859,8 @@ createApp({
             if (page === 'system-status' && state.connected) refreshDeviceInfo();
             // 進入連線設定頁且已連線 → 自動重新讀取網路資訊
             if (page === 'connection' && state.connected) refreshNetworkInfo();
+            // 進入 IP 設定頁且已連線 → 自動讀取目前網路設定
+            if (page === 'ip-config' && state.connected) refreshIpCurrent();
         });
 
         // 自動更新開關
@@ -746,6 +917,12 @@ createApp({
             activeModules, channelsByModule,
             setChartWindow, toggleChartPause, toggleChannelVisible, jumpToLive,
             doCloseTab, isShuttingDown,
+            // IP 設定頁
+            ipCurrent, ipCurrentRefreshing, ipScanBusy, ipScanResult, ipScanError,
+            ipMode, ipForm, ipApplyBusy, ipApplyFeedback, ipConfirmOpen,
+            ipSubnetWarning,
+            refreshIpCurrent, scanDevices, useFoundIp, connectToFound,
+            openIpConfirm, applyIpChange,
         };
     }
 }).mount('#app');

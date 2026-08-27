@@ -42,6 +42,11 @@ _ROOT_DIR = _WEB_DIR.parent
 sys.path.insert(0, str(_ROOT_DIR / "src"))
 
 from caparoc_backend import CaparocBackend  # noqa: E402
+# 設備探索／IP 格式判斷的共用實作（與 src/caparoc_ip_config.py CLI 同一份）
+from caparoc_ip_core import discover, is_valid_ip, wait_for_device  # noqa: E402
+
+# 同時只允許一次網段掃描：掃描會開 32 條探測執行緒，兩個分頁同時按會互相干擾
+_discover_lock = threading.Lock()
 
 # ==================== Log 攔截器 ====================
 import re as _re
@@ -426,6 +431,133 @@ async def set_nominal_batch(req: NominalBatchRequest):
     ]
     return {"ok": outcome["ok"], "fail": outcome["fail"], "nominal_amps": amps_int,
             "skipped": skipped, "results": results}
+
+
+# ==================== IP 設定 ====================
+# 與 /api/device/network 的分工：
+#   /api/device/network  → get_network_info()：MAC / hostname（含 0xF6 Ethernet Link）
+#   /api/ipconfig/current → read_device_network_config()：0xF5 Attr1/3/5，**含 Static/DHCP 取得方式**
+# 「IP 設定」頁需要判斷目前是靜態還是 DHCP，故走後者。兩者用途不同，勿混用。
+
+class StaticIpRequest(BaseModel):
+    """設定設備靜態 IP 的請求主體。"""
+    ip:      str
+    subnet:  str = "255.255.255.0"
+    gateway: str = ""
+
+
+@app.get("/api/ipconfig/current")
+async def api_ipconfig_current():
+    """讀取設備目前的網路設定（CIP 0xF5 Attr1/3/5，含 IP 取得方式）。"""
+    if _DEMO_MODE:
+        return {"success": True, "ip": "192.168.2.111", "subnet": "255.255.255.0",
+                "gateway": "192.168.2.1", "config_control": 0,
+                "config_control_str": "Static IP", "status": 0x35, "error": None}
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="設備未連線")
+    return await asyncio.to_thread(backend.read_device_network_config)
+
+
+@app.post("/api/ipconfig/discover")
+async def api_ipconfig_discover(timeout: float = Query(default=2.0, ge=0.5, le=10.0)):
+    """
+    掃描網段尋找 CAPAROC 設備（EtherNet/IP List Identity 廣播，無回應時退回 ARP table）。
+
+    刻意**不檢查連線狀態**——掃描的用途正是在還沒連上任何設備時找出設備 IP。
+    """
+    if _DEMO_MODE:
+        return {"devices": [
+                    {"ip": "192.168.2.111", "name": "CAPAROC-PM-EIP [DEMO]",
+                     "serial": "DEMO0001", "revision": "1.0", "vendor_id": 1},
+                    {"ip": "192.168.2.112", "name": "CAPAROC-PM-EIP [DEMO2]",
+                     "serial": "DEMO0002", "revision": "1.0", "vendor_id": 1}],
+                "via": "EIP", "broadcasts": ["192.168.2.255", "255.255.255.255"]}
+
+    if not _discover_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="掃描進行中，請稍候")
+    try:
+        result = await asyncio.to_thread(discover, timeout)
+    finally:
+        _discover_lock.release()
+    _WEB_LOGGER.log(_SYSTEM_LEVEL,
+                    f"網段掃描完成：找到 {len(result['devices'])} 台設備"
+                    f"（方式 {result['via'] or '無'}）",
+                    extra={'log_module': 'WEB'})
+    return result
+
+
+@app.post("/api/ipconfig/static")
+async def api_ipconfig_static(req: StaticIpRequest):
+    """
+    將設備設為靜態 IP，並在寫入後自動重連新 IP。
+
+    寫入成功後舊連線必然中斷（設備 IP 立即改變），因此本路由承擔完整的
+    「寫入 → 斷線 → 換 IP → 等待上線 → 重連」流程：放在伺服器端只有一份狀態機，
+    且結果會透過既有的 1 Hz WebSocket 推送自然同步到所有開啟的分頁。
+    """
+    if _DEMO_MODE:
+        return {"success": True, "new_ip": req.ip, "online": True, "reconnected": True}
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="設備未連線")
+
+    if not is_valid_ip(req.ip):
+        raise HTTPException(status_code=422, detail=f"「{req.ip}」不是合法的 IP 格式")
+    if not is_valid_ip(req.subnet):
+        raise HTTPException(status_code=422, detail=f"「{req.subnet}」不是合法的子網路遮罩")
+    if req.gateway and not is_valid_ip(req.gateway):
+        raise HTTPException(status_code=422, detail=f"「{req.gateway}」不是合法的閘道位址")
+
+    old_ip = backend.device_ip
+    result = await asyncio.to_thread(
+        backend.set_device_ip, None, req.ip, req.subnet, req.gateway)
+    if not result['success']:
+        _WEB_LOGGER.warning(f"設備 IP 寫入失敗 ({old_ip} → {req.ip}): {result['error']}",
+                            extra={'log_module': 'WEB'})
+        raise HTTPException(status_code=500, detail=f"寫入失敗: {result['error']}")
+
+    _WEB_LOGGER.log(_SYSTEM_LEVEL, f"設備 IP 已寫入：{old_ip} → {req.ip}，等待設備重新上線",
+                    extra={'log_module': 'WEB'})
+
+    # 舊連線已隨 IP 變更失效，先清乾淨再指向新位址
+    await asyncio.to_thread(backend.disconnect)
+    backend.device_ip = req.ip
+
+    # 純 TCP 44818 探測，不碰 _cip_lock，不會卡住 WebSocket 推送
+    online = await asyncio.to_thread(wait_for_device, req.ip, 30.0)
+    reconnected = False
+    if online:
+        reconnected = await asyncio.to_thread(backend.connect)
+
+    _WEB_LOGGER.log(_SYSTEM_LEVEL,
+                    f"IP 變更結果：new_ip={req.ip} online={online} reconnected={reconnected}",
+                    extra={'log_module': 'WEB'})
+    return {"success": True, "new_ip": req.ip,
+            "online": online, "reconnected": reconnected}
+
+
+@app.post("/api/ipconfig/dhcp")
+async def api_ipconfig_dhcp():
+    """
+    將設備切換為 DHCP 模式。
+
+    ⚠️ 切換後設備會向 DHCP server 重新取得 IP，新 IP 無法預知，
+    因此這裡只斷線並提示使用者用「搜尋設備」找回。
+    """
+    if _DEMO_MODE:
+        return {"success": True, "note": "[DEMO] 已切換為 DHCP"}
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="設備未連線")
+
+    old_ip = backend.device_ip
+    result = await asyncio.to_thread(backend.set_device_dhcp, None)
+    if not result['success']:
+        raise HTTPException(status_code=500, detail=f"寫入失敗: {result['error']}")
+
+    await asyncio.to_thread(backend.disconnect)
+    _WEB_LOGGER.log(_SYSTEM_LEVEL, f"設備已切換為 DHCP 模式（原 IP {old_ip}），連線已中斷",
+                    extra={'log_module': 'WEB'})
+    return {"success": True,
+            "note": "設備已切換為 DHCP，IP 由 DHCP server 重新指派；請用「搜尋設備」找回新 IP"}
 
 
 # ==================== Log API ====================

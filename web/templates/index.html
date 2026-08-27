@@ -5,7 +5,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CAPAROC 控制台</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=4.2.10d" />
+    <link rel="stylesheet" href="/static/css/style.css?v=4.3.0" />
 </head>
 
 <body>
@@ -540,6 +540,175 @@
                     </section>
                 </template>
 
+                <!-- IP 設定 -->
+                <template v-if="currentPage === 'ip-config'">
+
+                    <!-- 1. 搜尋設備（不需先連線） -->
+                    <section class="panel">
+                        <h2>搜尋設備</h2>
+                        <div class="hint-text">
+                            以 EtherNet/IP 廣播尋找網路上的 CAPAROC；無回應時自動改查 ARP 表。此功能不需先連線。
+                        </div>
+                        <div class="conn-form-block">
+                            <button class="btn" @click="scanDevices" :disabled="ipScanBusy">
+                                {{ ipScanBusy ? '掃描中…' : '🔍 掃描網段' }}
+                            </button>
+                            <span class="feedback-msg err" v-if="ipScanError">{{ ipScanError }}</span>
+                        </div>
+
+                        <div v-if="ipScanResult">
+                            <div class="hint-text" v-if="ipScanResult.broadcasts">
+                                廣播位址：{{ ipScanResult.broadcasts.join(', ') }}
+                                <span v-if="ipScanResult.via">｜ 命中方式：{{ ipScanResult.via }}</span>
+                            </div>
+                            <table class="net-info-table" v-if="ipScanResult.devices.length">
+                                <tr>
+                                    <td>IP 位址</td>
+                                    <td>名稱 / S｜N</td>
+                                    <td>操作</td>
+                                </tr>
+                                <tr v-for="d in ipScanResult.devices" :key="d.ip">
+                                    <td>{{ d.ip }}</td>
+                                    <td>
+                                        {{ d.name || '—' }}
+                                        <span v-if="d.serial">（S/N: {{ d.serial }}）</span>
+                                    </td>
+                                    <td>
+                                        <button class="btn btn-sm" @click="connectToFound(d.ip)"
+                                            :disabled="connecting">連線</button>
+                                        <button class="btn btn-sm btn-ghost" @click="useFoundIp(d.ip)"
+                                            title="填入下方「變更設備 IP」的目標欄位">帶入</button>
+                                    </td>
+                                </tr>
+                            </table>
+                            <div v-else class="placeholder">
+                                <div class="placeholder-icon">🔍</div>
+                                <div class="placeholder-title">未發現設備</div>
+                                <div class="placeholder-desc">請確認設備已上電且與本機在同一網段</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- 2. 目前網路設定（需連線） -->
+                    <section class="panel">
+                        <h2>
+                            目前網路設定
+                            <span v-if="!state.connected && ipCurrent" class="net-info-stale">（上次連線資訊）</span>
+                            <button v-if="state.connected" class="btn-refresh" @click="refreshIpCurrent"
+                                :disabled="ipCurrentRefreshing" title="重新從設備讀取">↻</button>
+                        </h2>
+                        <div v-if="!state.connected && !ipCurrent" class="placeholder">
+                            <div class="placeholder-icon">🌐</div>
+                            <div class="placeholder-title">尚未連線</div>
+                            <div class="placeholder-desc">請先連線至設備，或用上方「搜尋設備」找出設備 IP</div>
+                        </div>
+                        <template v-else>
+                            <div v-if="!state.connected" class="stale-banner">⚠ 資料已停止更新，顯示斷線前最後資料</div>
+                            <div v-if="!ipCurrent && state.connected" class="hint-text">讀取中...</div>
+                            <table v-else-if="ipCurrent" class="net-info-table">
+                                <tr>
+                                    <td>IP 取得方式</td>
+                                    <td>{{ ipCurrent.config_control_str || '—' }}</td>
+                                </tr>
+                                <tr>
+                                    <td>IP 位址</td>
+                                    <td>{{ ipCurrent.ip || '—' }}</td>
+                                </tr>
+                                <tr>
+                                    <td>子網路遮罩</td>
+                                    <td>{{ ipCurrent.subnet || '—' }}</td>
+                                </tr>
+                                <tr>
+                                    <td>預設閘道</td>
+                                    <td>{{ (ipCurrent.gateway && ipCurrent.gateway !== '0.0.0.0') ? ipCurrent.gateway : '—' }}</td>
+                                </tr>
+                            </table>
+                            <p class="err-msg" v-if="ipCurrent && ipCurrent.error">{{ ipCurrent.error }}</p>
+                        </template>
+                    </section>
+
+                    <!-- 3. 變更設備 IP（需連線） -->
+                    <section class="panel" v-if="state.connected">
+                        <h2>變更設備 IP</h2>
+                        <div class="conn-form-block">
+                            <label class="field-label">設定方式</label>
+                            <div class="conn-form">
+                                <label><input type="radio" value="static" v-model="ipMode" /> 靜態 IP</label>
+                                <label><input type="radio" value="dhcp" v-model="ipMode" /> DHCP</label>
+                            </div>
+                        </div>
+
+                        <template v-if="ipMode === 'static'">
+                            <div class="conn-form-block">
+                                <label class="field-label">IP 位址</label>
+                                <div class="conn-form">
+                                    <input v-model="ipForm.ip" placeholder="192.168.50.111" />
+                                </div>
+                            </div>
+                            <div class="conn-form-block">
+                                <label class="field-label">子網路遮罩</label>
+                                <div class="conn-form">
+                                    <input v-model="ipForm.subnet" placeholder="255.255.255.0" />
+                                </div>
+                            </div>
+                            <div class="conn-form-block">
+                                <label class="field-label">預設閘道（可留空）</label>
+                                <div class="conn-form">
+                                    <input v-model="ipForm.gateway" placeholder="0.0.0.0" />
+                                </div>
+                            </div>
+                            <div class="hint-text" v-if="ipSubnetWarning">{{ ipSubnetWarning }}</div>
+                        </template>
+
+                        <div class="hint-text" v-else>
+                            ⚠ 切換為 DHCP 後，設備 IP 由 DHCP server 重新指派，新 IP 無法預知；
+                            連線會中斷，需用上方「搜尋設備」找回設備。
+                        </div>
+
+                        <div class="conn-form-block">
+                            <button class="btn btn-danger" @click="openIpConfirm" :disabled="ipApplyBusy">
+                                {{ ipApplyBusy ? '處理中…' : (ipMode === 'static' ? '套用靜態 IP' : '切換為 DHCP') }}
+                            </button>
+                            <span class="feedback-msg" :class="ipApplyFeedback.ok ? 'ok' : 'err'"
+                                v-if="ipApplyFeedback.msg">{{ ipApplyFeedback.msg }}</span>
+                        </div>
+                    </section>
+
+                    <!-- 確認對話框 -->
+                    <div class="modal-overlay" v-if="ipConfirmOpen" @click.self="ipConfirmOpen = false">
+                        <div class="modal-box">
+                            <h3>確認變更設備 IP</h3>
+                            <table class="net-info-table">
+                                <tr>
+                                    <td>目前 IP</td>
+                                    <td>{{ (ipCurrent && ipCurrent.ip) || state.device_ip || '—' }}</td>
+                                </tr>
+                                <tr v-if="ipMode === 'static'">
+                                    <td>變更為</td>
+                                    <td>{{ ipForm.ip }} / {{ ipForm.subnet }}
+                                        <span v-if="ipForm.gateway">（GW {{ ipForm.gateway }}）</span>
+                                    </td>
+                                </tr>
+                                <tr v-else>
+                                    <td>變更為</td>
+                                    <td>DHCP（由 DHCP server 指派）</td>
+                                </tr>
+                            </table>
+                            <p class="hint-text" v-if="ipMode === 'static'">
+                                套用後設備連線會立即中斷，伺服器會自動等待設備上線並重新連線（最長 30 秒）。
+                            </p>
+                            <p class="hint-text" v-else>
+                                套用後連線會中斷，且新 IP 無法預知，需自行用「搜尋設備」找回。
+                            </p>
+                            <div class="hint-text" v-if="ipSubnetWarning">{{ ipSubnetWarning }}</div>
+                            <div class="conn-form">
+                                <button class="btn btn-danger" @click="applyIpChange">確認送出</button>
+                                <button class="btn btn-ghost" @click="ipConfirmOpen = false">取消</button>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
             </main>
         </div>
 
@@ -550,7 +719,7 @@
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="/static/js/app.js?v=4.2.10d"></script>
+    <script src="/static/js/app.js?v=4.3.0"></script>
 </body>
 
 </html>

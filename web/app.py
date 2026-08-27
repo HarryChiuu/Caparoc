@@ -604,12 +604,49 @@ async def ws_status(websocket: WebSocket):
 
 
 # ==================== 直接執行入口 ====================
+def _resolve_port() -> int:
+    """
+    決定監聽埠，優先序：
+      1. 命令列 --port N
+      2. 環境變數 CAPAROC_PORT
+      3. 預設 8001（避開 NVIDIA Overlay 間歇佔用的 8000）
+    選定埠若已被佔用，往上探 10 個埠取第一個可用的。
+    """
+    import socket
+
+    chosen = 8001
+    if "--port" in sys.argv:
+        try:
+            chosen = int(sys.argv[sys.argv.index("--port") + 1])
+        except (IndexError, ValueError):
+            print("[CAPAROC] --port 參數格式錯誤，改用預設")
+    elif os.environ.get("CAPAROC_PORT"):
+        try:
+            chosen = int(os.environ["CAPAROC_PORT"])
+        except ValueError:
+            print("[CAPAROC] CAPAROC_PORT 格式錯誤，改用預設")
+
+    for candidate in range(chosen, chosen + 10):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("0.0.0.0", candidate))
+            except OSError:
+                print(f"[CAPAROC] 埠 {candidate} 已被佔用，改試 {candidate + 1}")
+                continue
+        if candidate != chosen:
+            print(f"[CAPAROC] 改用埠 {candidate}")
+        return candidate
+
+    print(f"[CAPAROC] {chosen}~{chosen + 9} 全部無法綁定，仍嘗試 {chosen}")
+    return chosen
+
+
 if __name__ == "__main__":
     import threading
     import webbrowser
     import uvicorn
 
-    PORT = 8000
+    PORT = _resolve_port()
     URL = f"http://localhost:{PORT}"
 
     # 等伺服器就緒後再開瀏覽器（延遲 1.5 秒）

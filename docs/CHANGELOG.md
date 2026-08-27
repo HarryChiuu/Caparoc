@@ -2,6 +2,15 @@
 
 ---
 
+## [2026-08-27] `python web/app.py` 監聽埠可設定 + 自動避讓（fix/web-cip-concurrency）
+
+- **根因**：`PORT` 寫死 8000，而 NVIDIA Overlay 會間歇性 `bind()` 0.0.0.0:8000（overlay/遊戲啟動時），造成 `python web/app.py` 偶發 `[Errno 10048] 一次只能用一個通訊端位址`
+- **修正**：新增 `_resolve_port()`——預設改 8001（避開 NVIDIA Overlay），可用 `--port N` 或環境變數 `CAPAROC_PORT` 覆寫；選定埠若已被佔用，往上探 10 個埠取第一個可用的，並印出實際使用的埠讓瀏覽器開對 URL
+- **範圍**：僅影響 `python web/app.py` 直接執行入口；`uvicorn web.app:app` 仍需自帶 `--port`
+- TODO 4.3.1（config 合併）落地時可把此邏輯併入統一 config
+
+---
+
 ## [2026-08-26] Web CIP 並發修正後續 refactor（fix/web-cip-concurrency，TODO 項目 1–5）
 
 > 承接上一則的 `_cip_lock` 補齊工作，把複查時記錄在 `docs/TODO.md` 的 5 個後續項目一次做完。

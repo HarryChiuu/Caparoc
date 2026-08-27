@@ -2,6 +2,50 @@
 
 ---
 
+## [2026-08-26] Web CIP 並發修正後續 refactor（fix/web-cip-concurrency，TODO 項目 1–5）
+
+> 承接上一則的 `_cip_lock` 補齊工作，把複查時記錄在 `docs/TODO.md` 的 5 個後續項目一次做完。
+
+### ⚡ 效能與使用體感
+
+**批次設定額定電流：8 通道從最壞 24 秒縮短到約 3 秒（項目 1）**
+- **根因**：`app.js` 的 `setAllNominal()`/`setModuleNominal()` 用 `for` 迴圈逐一 `await` 單通道 API，每次呼叫後端都要跑 `sleep(0.5)×6` 的驗證迴圈，8 通道最壞 24 秒；期間每個請求都搶 `_cip_lock`，WebSocket 推送被排隊卡住，而畫面上完全沒有進度提示
+- **修正**：新增 `CaparocBackend.set_nominal_current_batch(targets)`——先把所有通道都寫入，最後才統一驗證，且驗證改用「單次 Input Assembly 讀取檢查全部通道」而非每通道各讀一次整份 assembly。8 通道的驗證讀取從 48 次降為最多 6 次
+- 新增 `POST /api/channels/nominal`（body: `channel_ids` + `current_amps`），前端兩個批次按鈕改呼叫此端點；後端會自動略過探測判定為 read-only 的模組並回報 `skipped`
+- **進度提示**：批次與單筆設定都加上進行中狀態（按鈕文字變「設定中…」、輸入框與按鈕停用、顯示「設定中… (N 個通道)」），完成後顯示成功/失敗/略過筆數
+
+### 🛡️ 設備安全
+
+**額定電流可寫性探測不再每次連線都改寫設備（項目 2）**
+- **根因**：`_probe_nominal_writable()` 用「寫入 nominal±1 → 等 0.8 秒 → 讀回驗證 → 還原」判斷模組是否支援遠端設定，而 `connect()` 每次都會跑一遍。每個模組至少 0.8 秒，且**會短暫改變真實設備的額定電流**；若中途斷線或崩潰，設備會被留在 probe 值
+- **修正 1（快取）**：探測結果以 Identity Object 序號為索引寫入 `config/nominal_probe_cache.json`（讀不到序號時退回 IP）。同一台設備只在「無快取紀錄」「模組數與快取不符」「明確要求重測」三種情況才重新探測，其餘連線完全不對設備寫入
+- **修正 2（還原保證）**：只要送出過 probe 寫入，就在 `finally` 還原原值——包含判定 read-only 與中途例外的情況；還原失敗會記 `ERROR` log
+- 新增 `POST /api/device/reprobe-nominal` 作為逃生口（更換模組但總數不變導致快取失準時使用）
+- `config/nominal_probe_cache.json` 加入 `.gitignore`（屬本機設備狀態）
+
+### 🧹 重構
+
+**CIP 存取抽出共用方法，消除「新增呼叫點忘記上鎖」的風險類別（項目 5）**
+- 新增 `_cip_get()` / `_cip_set()`：內建 `_cip_lock`，呼叫端不需要（也不應該）自行持鎖——正是上一則 `a1951c6` 要修的問題根源
+- 新增 `_read_input_assembly()`：一次讀取涵蓋所有模組/通道，供批次驗證使用
+- `get_network_info()` / `get_device_info()` 內重複的區域 `_rd()` 改為薄封裝；額定電流讀寫、探測、`_read_and_show_result` 全面改用共用方法
+- **刻意保留原始寫法的兩處**：Config Assembly 回退路徑與 `set_channel()` 的寫入＋驗證，兩者的「讀取→修改→寫入」必須在同一次持鎖內完成才具原子性，改用各自獨立上鎖的 helper 反而會破壞語意（已加註解說明）
+
+**合併重複的額定電流讀取方法（項目 3）**
+- `_read_nominal_current_silent()` 與 `_verify_nominal_current()` 邏輯完全相同，只差 debug print，且後者是唯一還沒補 `_cip_lock` 的讀取路徑
+- 合併為 `_read_nominal_current(module, channel, verbose=False)`（`driver` 參數移除，一律用 `self.driver`）；`caparoc_controller.py` 的 `verify` 指令改呼叫新方法
+
+**修正 `_read_and_show_result()` 位址錯誤，並讓 web 路徑跳過（項目 4）**
+- **根因**：用 `instance=0x101`（其他地方一致用 `self.input_instance`=0x65），偏移公式 `20+(channel-1)*2` 也跟 `get_channel_offset()` 對不上，讀出的是無意義的位元組；整段包在 try/except 裡只 `print()`，壞了沒人發現
+- **修正**：位址改用 `input_instance` + `get_channel_offset()`，電流取 Byte 2 ÷ 10（與 `_read_current_status` 一致）；簽章加入 `module` 參數
+- `set_channel()` 新增 `show_result=True` 參數，`web/app.py` 傳 `False`——web 使用者看不到終端機輸出，卻要為此多花 `sleep(0.5)` 與一次 CIP 往返，而 WebSocket 一秒內就會刷新真實狀態
+
+### ⚠️ 待驗證
+
+以上修正通過 mock driver 測試（模擬 2 模組 6 通道，驗證批次耗時、驗證讀取次數、快取命中時零寫入、probe 值還原、開關路徑電流讀取正確）與 `--demo` 模式的 API smoke test，**尚未接實機驗證**。
+
+---
+
 ## [2026-08-26] Web CIP 並發鎖補齊 + 通道開關錯誤回報（fix/web-cip-concurrency，a1951c6, f721f30, 20db324）
 
 ### 🐛 Bug 修正

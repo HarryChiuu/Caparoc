@@ -208,8 +208,10 @@
                             <div class="batch-bar">
                                 <span style="font-size:0.82rem;color:#7a8aaa;white-space:nowrap">全部套用</span>
                                 <input type="number" v-model="batchNominal" min="1" max="20" step="1" placeholder="A"
-                                    class="nominal-input" :disabled="!state.connected" />
-                                <button class="btn" @click="setAllNominal" :disabled="!state.connected">套用至全部通道</button>
+                                    class="nominal-input" :disabled="!state.connected || batchBusy" />
+                                <button class="btn" @click="setAllNominal" :disabled="!state.connected || batchBusy">
+                                    {{ batchBusy ? '設定中…' : '套用至全部通道' }}
+                                </button>
                                 <span class="feedback-msg" :class="batchStatus.ok ? 'ok' : 'err'"
                                     v-if="batchStatus.msg">{{ batchStatus.msg }}</span>
                             </div>
@@ -230,9 +232,11 @@
                                     <span style="font-size:0.82rem;color:#7a8aaa;white-space:nowrap">本模組套用</span>
                                     <input type="number" v-model="batchNominalByMod[mod]" min="1" max="20" step="1"
                                         placeholder="A" class="nominal-input"
-                                        :disabled="!state.connected || isModNominalReadOnly(mod)" />
+                                        :disabled="!state.connected || isModNominalReadOnly(mod) || batchBusyByMod[mod]" />
                                     <button class="btn btn-sm" @click="setModuleNominal(mod)"
-                                        :disabled="!state.connected || isModNominalReadOnly(mod)">套用</button>
+                                        :disabled="!state.connected || isModNominalReadOnly(mod) || batchBusyByMod[mod]">
+                                        {{ batchBusyByMod[mod] ? '設定中…' : '套用' }}
+                                    </button>
                                     <span class="feedback-msg" :class="batchStatusByMod[mod]?.ok ? 'ok' : 'err'"
                                         v-if="batchStatusByMod[mod]?.msg">{{ batchStatusByMod[mod].msg }}</span>
                                 </div>
@@ -254,11 +258,13 @@
                                             <td>
                                                 <input type="number" v-model="nominalInputs[ch.id]" min="1" max="20"
                                                     step="1" :placeholder="ch.nominal_amps" class="nominal-input"
-                                                    :disabled="!state.connected || isModNominalReadOnly(ch.module)" />
+                                                    :disabled="!state.connected || isModNominalReadOnly(ch.module) || nominalBusy[ch.id]" />
                                             </td>
                                             <td>
                                                 <button class="btn btn-sm" @click="setNominal(ch.id)"
-                                                    :disabled="!state.connected || isModNominalReadOnly(ch.module)">設定</button>
+                                                    :disabled="!state.connected || isModNominalReadOnly(ch.module) || nominalBusy[ch.id]">
+                                                    {{ nominalBusy[ch.id] ? '設定中…' : '設定' }}
+                                                </button>
                                                 <span class="feedback-msg"
                                                     :class="nominalFeedback[ch.id]?.ok ? 'ok' : 'err'"
                                                     v-if="nominalFeedback[ch.id]?.msg">

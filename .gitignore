@@ -46,6 +46,7 @@ logs/
 *.json
 !config/*.json
 config/device_config.json
+config/nominal_probe_cache.json
 *.xlsx
 output/*
 !output/.gitkeep

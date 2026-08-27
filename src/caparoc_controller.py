@@ -750,7 +750,7 @@ class CaparocController(CaparocBackend):
                                 ch = int(cmd.split()[1])
                                 if 1 <= ch <= self.get_total_channels():
                                     module, channel = self.get_module_and_channel(ch)
-                                    actual = self._verify_nominal_current(driver, module, channel)
+                                    actual = self._read_nominal_current(module, channel, verbose=True)
                                     if actual is not None:
                                         if self.module_count > 1:
                                             print(f"✅ M{module}.CH{channel} (#{ch}) 額定電流: {actual}A")

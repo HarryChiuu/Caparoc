@@ -34,6 +34,7 @@ from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 # ==================== 路徑設定 ====================
 _WEB_DIR = Path(__file__).parent
@@ -299,6 +300,24 @@ async def api_device_info():
     return info
 
 
+@app.post("/api/device/reprobe-nominal")
+async def api_reprobe_nominal():
+    """
+    強制重新探測各模組的額定電流可寫性，並覆寫快取。
+
+    正常情況不需呼叫——連線時會沿用 config/nominal_probe_cache.json 的結果。
+    只有更換模組（但模組總數不變）導致快取失準時才需要。
+    ⚠️ 探測會短暫改寫設備的額定電流再還原。
+    """
+    if _DEMO_MODE:
+        return {"success": True, "readonly_modules": []}
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="設備未連線")
+    await asyncio.to_thread(backend._probe_all_modules, True)
+    return {"success": True,
+            "readonly_modules": sorted(backend._nominal_readonly_modules)}
+
+
 @app.post("/api/shutdown")
 async def api_shutdown():
     """優雅關閉伺服器（斷線設備 + 停止程序）。"""
@@ -320,7 +339,8 @@ def channel_on(channel_id: int):
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="未連線")
     module, ch = backend.get_module_and_channel(channel_id)
-    ok = backend.set_channel(module, ch, True)
+    # show_result=False：終端機輸出前端看不到，WebSocket 一秒內就會推送真實狀態
+    ok = backend.set_channel(module, ch, True, show_result=False)
     if not ok:
         raise HTTPException(status_code=500, detail="開啟失敗，請確認設備連線")
     return {"success": True, "channel": channel_id, "state": "on"}
@@ -334,7 +354,7 @@ def channel_off(channel_id: int):
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="未連線")
     module, ch = backend.get_module_and_channel(channel_id)
-    ok = backend.set_channel(module, ch, False)
+    ok = backend.set_channel(module, ch, False, show_result=False)
     if not ok:
         raise HTTPException(status_code=500, detail="關閉失敗，請確認設備連線")
     return {"success": True, "channel": channel_id, "state": "off"}
@@ -355,6 +375,57 @@ def set_nominal(channel_id: int, current_amps: float = Query(...)):
     if not ok:
         raise HTTPException(status_code=500, detail="設定失敗，請確認設備連線")
     return {"success": True, "channel": channel_id, "nominal_amps": amps_int}
+
+
+class NominalBatchRequest(BaseModel):
+    """批次設定額定電流的請求主體。"""
+    channel_ids:  list[int]
+    current_amps: float
+
+
+@app.post("/api/channels/nominal")
+async def set_nominal_batch(req: NominalBatchRequest):
+    """
+    批次設定多個通道的額定電流。
+
+    後端會先寫入全部通道再統一驗證，總耗時約 3 秒；
+    若前端改用 for 迴圈逐一呼叫 /api/channel/{id}/nominal，
+    8 通道最壞情況要等 24 秒，期間 WebSocket 推送會被 _cip_lock 卡住。
+    """
+    amps_int = int(round(req.current_amps))
+    if amps_int < 1 or amps_int > 20:
+        raise HTTPException(status_code=422, detail="額定電流範圍 1–20 A")
+    if not req.channel_ids:
+        raise HTTPException(status_code=422, detail="未指定通道")
+    if _DEMO_MODE:
+        return {"ok": len(req.channel_ids), "fail": 0, "nominal_amps": amps_int,
+                "skipped": [],
+                "results": [{"channel": c, "ok": True} for c in req.channel_ids]}
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="未連線")
+
+    # 跳過探測確認無法遠端設定的模組，避免白跑一趟 CIP 寫入
+    targets, skipped = [], []
+    id_by_target = {}
+    for cid in req.channel_ids:
+        module, ch = backend.get_module_and_channel(cid)
+        if backend.is_module_nominal_readonly(module):
+            skipped.append(cid)
+            continue
+        targets.append((module, ch, amps_int))
+        id_by_target[(module, ch)] = cid
+
+    if not targets:
+        raise HTTPException(status_code=422, detail="所選通道的模組皆不支援遠端設定額定電流")
+
+    outcome = await asyncio.to_thread(backend.set_nominal_current_batch, targets)
+    results = [
+        {"channel": id_by_target.get((r["module"], r["channel"])),
+         "ok": r["ok"], "actual": r["actual"], "error": r["error"]}
+        for r in outcome["results"]
+    ]
+    return {"ok": outcome["ok"], "fail": outcome["fail"], "nominal_amps": amps_int,
+            "skipped": skipped, "results": results}
 
 
 # ==================== Log API ====================

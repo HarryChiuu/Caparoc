@@ -268,15 +268,21 @@ createApp({
         // -- 通道設定 --
         const nominalInputs = reactive({});
         const nominalFeedback = reactive({});
+        const nominalBusy = reactive({});      // {chId: true} 單通道設定進行中
         const batchNominal = ref('');
         const batchStatus = reactive({ ok: false, msg: '' });
+        const batchBusy = ref(false);          // 全域批次進行中
 
         async function setNominal(chId) {
+            if (nominalBusy[chId]) return;
             const val = Math.round(parseFloat(nominalInputs[chId]));
             if (isNaN(val) || val < 1 || val > 20) {
                 nominalFeedback[chId] = { ok: false, msg: '請輸入 1–20 A' };
                 return;
             }
+            // 後端寫入後最長等 3 秒驗證，期間給明確進度提示
+            nominalBusy[chId] = true;
+            nominalFeedback[chId] = { ok: true, msg: '設定中…' };
             try {
                 const r = await fetch(`/api/channel/${chId}/nominal?current_amps=${val}`, { method: 'POST' });
                 if (r.ok) {
@@ -289,31 +295,71 @@ createApp({
                 }
             } catch (e) {
                 nominalFeedback[chId] = { ok: false, msg: '無法連線' };
+            } finally {
+                nominalBusy[chId] = false;
             }
         }
 
+        // 批次設定：一次 POST 全部通道，後端寫完再統一驗證（總計約 3 秒）。
+        // 先前是前端 for 迴圈逐一 await，8 通道最壞要 24 秒，
+        // 期間每個請求都搶後端的 _cip_lock，WebSocket 推送會被排隊卡住。
+        async function postNominalBatch(channelIds, val) {
+            const r = await fetch('/api/channels/nominal', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ channel_ids: channelIds, current_amps: val }),
+            });
+            const body = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(body.detail ?? `設定失敗 (HTTP ${r.status})`);
+            return body;
+        }
+
+        function batchResultMsg(body) {
+            const parts = [
+                body.fail === 0 ? `✓ ${body.ok} 個通道設定完成`
+                                : `${body.ok} 成功，${body.fail} 失敗`,
+            ];
+            if (body.skipped?.length) parts.push(`${body.skipped.length} 個通道不支援遠端設定，已略過`);
+            return parts.join('；');
+        }
+
         async function setAllNominal() {
+            if (batchBusy.value) return;
             const val = Math.round(parseFloat(batchNominal.value));
             if (isNaN(val) || val < 1 || val > 20) {
                 batchStatus.ok = false;
                 batchStatus.msg = '請輸入 1–20 A';
                 return;
             }
-            let ok = 0, fail = 0;
-            for (const ch of state.channels) {
-                if (isModNominalReadOnly(ch.module)) continue;  // 跳過不支援遠端設定的模組
-                const r = await fetch(`/api/channel/${ch.id}/nominal?current_amps=${val}`, { method: 'POST' });
-                r.ok ? ok++ : fail++;
+            const ids = state.channels
+                .filter(ch => !isModNominalReadOnly(ch.module))
+                .map(ch => ch.id);
+            if (!ids.length) {
+                batchStatus.ok = false;
+                batchStatus.msg = '沒有可遠端設定的通道';
+                return;
             }
-            batchStatus.ok = fail === 0;
-            batchStatus.msg = fail === 0 ? `✓ 全部 ${ok} 個通道設定完成` : `${ok} 成功，${fail} 失敗`;
-            batchNominal.value = '';
-            setTimeout(() => { batchStatus.msg = ''; }, 4000);
+            batchBusy.value = true;
+            batchStatus.ok = true;
+            batchStatus.msg = `設定中… (${ids.length} 個通道)`;
+            try {
+                const body = await postNominalBatch(ids, val);
+                batchStatus.ok = body.fail === 0;
+                batchStatus.msg = batchResultMsg(body);
+                batchNominal.value = '';
+            } catch (e) {
+                batchStatus.ok = false;
+                batchStatus.msg = e.message || '設定失敗';
+            } finally {
+                batchBusy.value = false;
+                setTimeout(() => { batchStatus.msg = ''; }, 4000);
+            }
         }
 
         // Per-module 批次設定
         const batchNominalByMod = reactive({});
         const batchStatusByMod = reactive({});
+        const batchBusyByMod = reactive({});
 
         // 判斷模組的 nominal 是否為 read-only（從硬體探測結果）
         function isModNominalReadOnly(mod) {
@@ -324,23 +370,29 @@ createApp({
         const showNominalHelp = ref(false);
 
         async function setModuleNominal(mod) {
+            if (batchBusyByMod[mod]) return;
             const val = Math.round(parseFloat(batchNominalByMod[mod]));
             if (isNaN(val) || val < 1 || val > 20) {
                 batchStatusByMod[mod] = { ok: false, msg: '請輸入 1–20 A' };
                 return;
             }
-            const channels = channelsByModule.value[mod] || [];
-            let ok = 0, fail = 0;
-            for (const ch of channels) {
-                const r = await fetch(`/api/channel/${ch.id}/nominal?current_amps=${val}`, { method: 'POST' });
-                r.ok ? ok++ : fail++;
+            const ids = (channelsByModule.value[mod] || []).map(ch => ch.id);
+            if (!ids.length) {
+                batchStatusByMod[mod] = { ok: false, msg: '本模組無可設定通道' };
+                return;
             }
-            batchStatusByMod[mod] = {
-                ok: fail === 0,
-                msg: fail === 0 ? `✓ ${ok} 個通道完成` : `${ok} 成功，${fail} 失敗`,
-            };
-            batchNominalByMod[mod] = '';
-            setTimeout(() => { batchStatusByMod[mod] = { ok: false, msg: '' }; }, 3000);
+            batchBusyByMod[mod] = true;
+            batchStatusByMod[mod] = { ok: true, msg: `設定中… (${ids.length} 個通道)` };
+            try {
+                const body = await postNominalBatch(ids, val);
+                batchStatusByMod[mod] = { ok: body.fail === 0, msg: batchResultMsg(body) };
+                batchNominalByMod[mod] = '';
+            } catch (e) {
+                batchStatusByMod[mod] = { ok: false, msg: e.message || '設定失敗' };
+            } finally {
+                batchBusyByMod[mod] = false;
+                setTimeout(() => { batchStatusByMod[mod] = { ok: false, msg: '' }; }, 4000);
+            }
         }
 
 
@@ -681,9 +733,10 @@ createApp({
             doConnect, doDisconnect, toggleCh, channelToggling, channelToggleError,
             networkInfo, deviceInfo, deviceInfoRefreshing, networkInfoRefreshing,
             refreshDeviceInfo, refreshNetworkInfo,
-            nominalInputs, nominalFeedback, batchNominal, batchStatus,
+            nominalInputs, nominalFeedback, nominalBusy, batchNominal, batchStatus, batchBusy,
             setNominal, setAllNominal,
-            batchNominalByMod, batchStatusByMod, setModuleNominal, isModNominalReadOnly,
+            batchNominalByMod, batchStatusByMod, batchBusyByMod,
+            setModuleNominal, isModNominalReadOnly,
             showNominalHelp,
             logEntries, logTotal, logPage, logPageSize, logFilter,
             logAutoScroll, logTotalPages,

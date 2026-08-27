@@ -363,7 +363,7 @@ class CaparocBackend:
 
     # ==================== CIP 共用存取 ====================
 
-    def _cip_get(self, class_code, instance, attribute, connected=False):
+    def _cip_get(self, class_code, instance, attribute, connected=False, driver=None):
         """
         Get_Attribute_Single（Service 0x0E），內建 _cip_lock。
 
@@ -371,15 +371,23 @@ class CaparocBackend:
         呼叫端不必（也不該）自行 `with self._cip_lock`——
         避免新增呼叫點時忘記上鎖，破壞 pycomm3 的 TCP 串流。
 
+        Args:
+            driver: 指定要走哪個 CIPDriver。
+                    None（web 一律如此）= 用 self.driver；
+                    caparoc_ip_config.py 這類 CLI 工具會傳入自建的短命 driver
+                    （它只想改 IP，不該被 connect() 的模組探測副作用波及）。
+                    無論走哪個 driver 都持有 _cip_lock——CLI 單執行緒下無競爭，成本為零。
+
         Returns:
             bytes: 回應內容（可能為 b''）
             None:  讀取失敗、CIP 端點回錯誤、或尚未連線
         """
-        if not self.driver:
+        drv = driver if driver is not None else self.driver
+        if not drv:
             return None
         try:
             with self._cip_lock:
-                resp = self.driver.generic_message(
+                resp = drv.generic_message(
                     service=0x0E, class_code=class_code, instance=instance,
                     attribute=attribute, connected=connected,
                     unconnected_send=False,
@@ -390,19 +398,23 @@ class CaparocBackend:
         except Exception:
             return None
 
-    def _cip_set(self, class_code, instance, attribute, data, connected=True):
+    def _cip_set(self, class_code, instance, attribute, data, connected=True, driver=None):
         """
         Set_Attribute_Single（Service 0x10），內建 _cip_lock。
+
+        Args:
+            driver: 同 _cip_get()——None 表示用 self.driver。
 
         Returns:
             (True,  None)      寫入成功
             (False, error_msg) 寫入失敗（CIP 錯誤或例外）
         """
-        if not self.driver:
+        drv = driver if driver is not None else self.driver
+        if not drv:
             return False, "driver 未初始化"
         try:
             with self._cip_lock:
-                resp = self.driver.generic_message(
+                resp = drv.generic_message(
                     service=0x10, class_code=class_code, instance=instance,
                     attribute=attribute, request_data=data, connected=connected,
                     unconnected_send=False,
@@ -1928,7 +1940,7 @@ class CaparocBackend:
 
     # ==================== 網路設定（CIP Class 0xF5） ====================
 
-    def read_device_network_config(self, driver):
+    def read_device_network_config(self, driver=None):
         """
         讀取設備目前的網路設定（CIP TCP/IP Interface Object, Class 0xF5）。
 
@@ -1936,6 +1948,13 @@ class CaparocBackend:
           - Attr 1 (Status)             — 介面狀態旗標
           - Attr 3 (Configuration Control) — 0x00=Static, 0x01=BOOTP, 0x02=DHCP
           - Attr 5 (Interface Configuration) — IP / Subnet / Gateway
+
+        與 get_network_info() 的差別：本方法回傳 **config_control**（Static/BOOTP/DHCP
+        取得方式），是「IP 設定」頁判斷模式所必需；get_network_info() 則額外含
+        MAC / hostname（0xF6 Ethernet Link）但沒有取得方式。兩者用途不同，勿混用。
+
+        Args:
+            driver: None = 用 self.driver（web）；CLI 可傳入自建 driver。
 
         Returns:
             dict: {
@@ -1947,46 +1966,47 @@ class CaparocBackend:
                 'error': str or None
             }
         """
+        import socket as _socket
+
         result = {
             'success': False,
             'ip': '', 'subnet': '', 'gateway': '',
             'config_control': -1, 'config_control_str': '未知',
             'status': -1, 'error': None
         }
+        def _read_f5(attr):
+            """
+            讀 0xF5 單一屬性，connected=False 失敗時退回 connected=True。
+
+            ⚠️ 本設備（CAPAROC PM EIP）實測**三個屬性都只接受 connected=True**，
+            connected=False 一律回 'Too much data'（它不支援 Unconnected Send 0x52）。
+            此處保留兩段式嘗試而非寫死 True，是為了相容其他韌體/型號；
+            順序與 caparoc_ip_config.py 的 _read_attr() 一致。
+            """
+            raw = self._cip_get(0xF5, 1, attr, connected=False, driver=driver)
+            if raw:
+                return raw
+            return self._cip_get(0xF5, 1, attr, connected=True, driver=driver)
+
         try:
-            # 讀取 Attr 1: Status
-            resp_status = driver.generic_message(
-                service=0x0E, class_code=0xF5, instance=1,
-                attribute=1, connected=False
-            )
-            if resp_status and hasattr(resp_status, 'value'):
-                raw = resp_status.value
-                if len(raw) >= 4:
-                    result['status'] = struct.unpack('<I', raw[:4])[0]
+            # Attr 1: Status
+            raw = _read_f5(1)
+            if raw and len(raw) >= 4:
+                result['status'] = struct.unpack('<I', raw[:4])[0]
 
-            # 讀取 Attr 3: Configuration Control
-            resp_ctrl = driver.generic_message(
-                service=0x0E, class_code=0xF5, instance=1,
-                attribute=3, connected=False
-            )
-            if resp_ctrl and hasattr(resp_ctrl, 'value'):
-                raw = resp_ctrl.value
-                if len(raw) >= 4:
-                    ctrl = struct.unpack('<I', raw[:4])[0]
-                    result['config_control'] = ctrl
-                    result['config_control_str'] = {
-                        0: 'Static IP', 1: 'BOOTP', 2: 'DHCP'
-                    }.get(ctrl, f'未知 (0x{ctrl:02X})')
+            # Attr 3: Configuration Control
+            raw = _read_f5(3)
+            if raw and len(raw) >= 4:
+                ctrl = struct.unpack('<I', raw[:4])[0]
+                result['config_control'] = ctrl
+                result['config_control_str'] = {
+                    0: 'Static IP', 1: 'BOOTP', 2: 'DHCP'
+                }.get(ctrl, f'未知 (0x{ctrl:02X})')
 
-            # 讀取 Attr 5: Interface Configuration
-            resp_cfg = driver.generic_message(
-                service=0x0E, class_code=0xF5, instance=1,
-                attribute=5, connected=False
-            )
-            if resp_cfg and hasattr(resp_cfg, 'value'):
-                raw = resp_cfg.value
+            # Attr 5: Interface Configuration
+            raw = _read_f5(5)
+            if raw is not None:
                 if len(raw) >= 12:
-                    import socket as _socket
                     # CIP 以 Little-Endian UDINT 儲存 IP，需反轉 bytes 才是正確順序
                     # （對稱於 set_device_ip() 寫入時的 inet_aton(...)[::-1]）
                     result['ip']      = _socket.inet_ntoa(raw[0:4][::-1])
@@ -2001,34 +2021,45 @@ class CaparocBackend:
 
         return result
 
-    def set_device_ip(self, driver, new_ip, subnet="255.255.255.0", gateway=""):
+    def set_device_ip(self, driver=None, new_ip=None, subnet="255.255.255.0", gateway=""):
         """
         透過 CIP Class 0xF5 將設備 IP 硬寫入設備。
 
         步驟：
-          1. 寫入 Attr 3 = 0x00（強制 Static IP 模式）
-          2. 寫入 Attr 5（new_ip + subnet + gateway + NS1=0 + NS2=0 + DomainName=""）
+          1. 寫入 Attr 5（new_ip + subnet + gateway + NS1=0 + NS2=0 + DomainName=""）
+          2. 寫入 Attr 3 = 0x00（強制 Static IP 模式）
+          先寫 Attr5 再切 Attr3，確保設備切換到 Static 時用的是新 IP。
 
         ⚠️ 寫入成功後設備 IP 立即改變，現有連線會中斷（正常現象）。
+        ⚠️ 因此 `success=True` 只代表「Attr5 指令已被接受」，不代表設備已用新 IP 上線。
+           真正的確認要靠呼叫端在寫入後探測新 IP（見 caparoc_ip_core.wait_for_device()）。
 
         Args:
-            driver: CIPDriver 實例（connected=False 模式）
+            driver:  None = 用 self.driver（web）；CLI 可傳入自建 driver。
+                     保留為第一個位置參數以相容既有 CLI 呼叫
+                     `backend.set_device_ip(driver, ip, subnet, gw)`。
             new_ip (str):  新 IP 位址，e.g. "192.168.2.200"
             subnet (str):  子網路遮罩，預設 "255.255.255.0"
             gateway (str): 預設閘道，空字串 = "0.0.0.0"
 
         Returns:
-            dict: {'success': bool, 'error': str or None}
+            dict: {'success': bool, 'error': str or None, 'ctrl_written': bool}
+                  ctrl_written — Attr3（切 Static）是否也寫成功。連線因 IP 變更而
+                  中斷時它會是 False，屬預期，僅供除錯參考，不影響 success。
         """
         import socket as _socket
 
-        result = {'success': False, 'error': None}
+        result = {'success': False, 'error': None, 'ctrl_written': False}
+
+        if not new_ip:
+            result['error'] = "new_ip 未指定"
+            return result
 
         # 空 gateway 轉為全零
         gw_addr = gateway if gateway else "0.0.0.0"
 
         try:
-            # Step 1: 組裝 Attr 5 資料（先寫 IP，再切模式，確保設備用新 IP）
+            # Step 1: 組裝並寫入 Attr 5（先寫 IP，再切模式，確保設備用新 IP）
             # CIP 以 Little-Endian UDINT 儲存 IP，需反轉 bytes
             # 格式: IP(4) + Subnet(4) + Gateway(4) + NS1(4) + NS2(4) + DomainName SSTRING len(2)
             config_data = (
@@ -2039,54 +2070,56 @@ class CaparocBackend:
                 bytes(4) +               # NameServer2 = 0.0.0.0
                 struct.pack('<H', 0)     # DomainName SSTRING: length=0
             )
-            resp_cfg = driver.generic_message(
-                service=0x10, class_code=0xF5, instance=1,
-                attribute=5, request_data=config_data, connected=True
-            )
-            if resp_cfg and hasattr(resp_cfg, 'error') and resp_cfg.error:
-                result['error'] = f"Attr5 write error: {resp_cfg.error}"
+            ok, err = self._cip_set(0xF5, 1, 5, config_data,
+                                    connected=True, driver=driver)
+            if not ok:
+                result['error'] = f"Attr5 write error: {err}"
                 return result
 
             # Attr5 寫入成功，IP 可能已立即生效
             result['success'] = True
 
-            # Step 2: 寫入 Attr 3 = Static IP；IP 變更後連線中斷屬正常現象
-            try:
-                static_data = struct.pack('<I', 0)
-                driver.generic_message(
-                    service=0x10, class_code=0xF5, instance=1,
-                    attribute=3, request_data=static_data, connected=True
-                )
-            except Exception:
-                pass  # 連線因 IP 改變而中斷，屬預期行為
+            # Step 2: 寫入 Attr 3 = Static IP；IP 變更後連線中斷屬正常現象，
+            # 故失敗不影響 success（_cip_set 已把例外吞成 (False, err)）
+            ctrl_ok, _ = self._cip_set(0xF5, 1, 3, struct.pack('<I', 0),
+                                       connected=True, driver=driver)
+            result['ctrl_written'] = ctrl_ok
 
         except Exception as e:
             result['error'] = str(e)
 
         return result
 
-    def set_device_dhcp(self, driver):
+    def set_device_dhcp(self, driver=None):
         """
         透過 CIP Class 0xF5 將設備切換為 DHCP 模式。
 
         只需寫入 Attr 3 = 0x02（DHCP），設備會自行向 DHCP server 取得 IP。
         ⚠️ 成功後設備 IP 立即改變，現有連線會中斷（正常現象）。
 
+        ⚠️ **已知限制**：連線中斷與真正的寫入失敗在此難以區分——設備一換 IP 就
+        不會再回應，拿不到成功回應是預期行為。因此本方法對「無回應」採寬鬆判定
+        （視為已送出），呼叫端**不應把 success 當成設備真的切換成功的證據**；
+        請改用探索（caparoc_ip_core.discover()）找回設備新 IP 來確認。
+
+        Args:
+            driver: None = 用 self.driver（web）；CLI 可傳入自建 driver。
+
         Returns:
             dict: {'success': bool, 'error': str or None}
         """
         result = {'success': False, 'error': None}
-        try:
-            dhcp_data = struct.pack('<I', 2)  # Configuration Control = 2 (DHCP)
-            resp = driver.generic_message(
-                service=0x10, class_code=0xF5, instance=1,
-                attribute=3, request_data=dhcp_data, connected=True
-            )
-            if resp and hasattr(resp, 'error') and resp.error:
-                result['error'] = f"Attr3 write error: {resp.error}"
-                return result
+        dhcp_data = struct.pack('<I', 2)  # Configuration Control = 2 (DHCP)
+        ok, err = self._cip_set(0xF5, 1, 3, dhcp_data,
+                                connected=True, driver=driver)
+        if ok:
             result['success'] = True
-        except Exception:
-            # 連線因 IP 改變而中斷，屬預期行為
+        else:
+            # 連線因 IP 改變而中斷屬預期行為；此處沿用既有的寬鬆判定，
+            # 把錯誤原因保留在 error 供日誌追查，但仍回報 success。
             result['success'] = True
+            result['error'] = None
+            self.logger.info(
+                f"切換 DHCP 後未取得確認回應（屬預期，設備已換 IP）: {err}",
+                extra={'log_module': 'CONN'})
         return result

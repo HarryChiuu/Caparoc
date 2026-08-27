@@ -22,9 +22,7 @@ import sys
 import struct
 import socket
 import time
-import ipaddress
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -32,18 +30,15 @@ sys.path.insert(0, str(Path(__file__).parent))
 from pycomm3 import CIPDriver
 from caparoc_backend import CaparocBackend
 
-# ── CIP 0xF5 常數 ────────────────────────────────────────────
-CLASS_TCPIP = 0xF5
-INST        = 1
-SVC_GET     = 0x0E
-SVC_SET     = 0x10
-ATTR_CTRL   = 3   # Configuration Control: 0=Static, 2=DHCP
-ATTR_IFACE  = 5   # Interface Configuration (IP/Subnet/Gateway/DNS)
+# 探索與 IP 格式判斷等不含互動 I/O 的邏輯統一放在 caparoc_ip_core，
+# 與 web/app.py 共用同一份實作——修改探索行為只需改那一個檔案。
+from caparoc_ip_core import (
+    CLASS_TCPIP, INST, SVC_GET, SVC_SET, ATTR_CTRL, ATTR_IFACE, CTRL_NAMES,
+    EIP_PORT, DEVICE_ONLINE_MAX_WAIT, _le2ip,
+    is_valid_ip, same_subnet, discover, wait_for_device,
+)
 
-CTRL_NAMES = {0: "Static IP", 1: "BOOTP", 2: "DHCP"}
-
-# ── 網路常數 ─────────────────────────────────────────────────
-EIP_PORT         = 44818   # EtherNet/IP 明文 TCP/UDP 埠
+# ── DHCP 常數（僅新裝置配置流程使用，故留在本檔）─────────────
 DHCP_SERVER_PORT = 67
 DHCP_CLIENT_PORT = 68
 DHCP_MAGIC       = b'\x63\x82\x53\x63'
@@ -57,31 +52,9 @@ DHCP_LIMITED_BROADCAST = '255.255.255.255'
 # DHCP 訊息型別（Option 53）
 DHCP_DISCOVER, DHCP_OFFER, DHCP_REQUEST, DHCP_ACK = 1, 2, 3, 5
 
-# 等待／逾時（秒）
-DEVICE_ONLINE_MAX_WAIT = 30.0   # 寫入 IP 後等設備重新上線的上限
+# 等待／逾時（秒）；DEVICE_ONLINE_MAX_WAIT 由 caparoc_ip_core 提供
 MAC_DETECT_TIMEOUT     = 30.0   # 偵測設備 MAC 的總上限（三種方法共用）
 DHCP_SERVE_TIMEOUT     = 300.0  # mini DHCP server 自動結束時間
-
-_le2ip = lambda b, off: socket.inet_ntoa(b[off:off+4][::-1])
-_ip2le = lambda ip: socket.inet_aton(ip)[::-1]
-
-
-def _is_valid_ip(ip: str) -> bool:
-    """檢查是否為合法的 IPv4 位址（四段 0~255，格式如 192.168.50.10）"""
-    try:
-        ipaddress.IPv4Address(ip)
-        return True
-    except ValueError:
-        return False
-
-
-def _same_subnet(ip: str, ref_ip: str, mask: str) -> bool:
-    """ip 是否與 ref_ip 位於同一網段。遮罩無法解析時回傳 True（只警告不擋）"""
-    try:
-        net = ipaddress.IPv4Network(f"{ref_ip}/{mask}", strict=False)
-        return ipaddress.IPv4Address(ip) in net
-    except ValueError:
-        return True
 
 
 def _prompt_ip(prompt: str, allow_cancel_values: tuple[str, ...] = ()) -> str | None:
@@ -92,129 +65,41 @@ def _prompt_ip(prompt: str, allow_cancel_values: tuple[str, ...] = ()) -> str | 
             return None
         if not value:
             return value  # 允許空字串代表「使用預設值/略過」，由呼叫端判斷
-        if _is_valid_ip(value):
+        if is_valid_ip(value):
             return value
         print(f"  ⚠️  「{value}」不是合法的 IP 格式（需為 x.x.x.x，例如 192.168.50.10），請重新輸入")
 
-# ── 設備探索（EtherNet/IP List Identity + ARP fallback）──────
 
-def _parse_list_identity(data: bytes, src_ip: str) -> dict | None:
-    try:
-        if len(data) < 30 or struct.unpack_from('<H', data, 0)[0] != 0x0063:
-            return None
-        off = 32
-        if off + 16 > len(data):
-            return None
-        ip = socket.inet_ntoa(data[off+4:off+8])
-        off += 16
-        if off + 12 > len(data):
-            return None
-        vendor_id = struct.unpack_from('<H', data, off)[0]; off += 2
-        off += 4  # device_type, product_code
-        rev_major = data[off]; rev_minor = data[off+1]; off += 2
-        off += 2  # status
-        serial = struct.unpack_from('<I', data, off)[0]; off += 4
-        name_len = data[off]; off += 1
-        name = data[off:off+name_len].decode('ascii', errors='replace')
-        return {'ip': ip, 'vendor_id': vendor_id, 'name': name,
-                'revision': f"{rev_major}.{rev_minor}", 'serial': f"{serial:08X}"}
-    except Exception:
-        return None
+def _wait_for_device(ip: str, max_wait: float = DEVICE_ONLINE_MAX_WAIT) -> bool:
+    """
+    core.wait_for_device() 的 CLI 包裝：補回原地進度更新與結果訊息。
+
+    核心層不做任何輸出（web 也要用），所以畫面呈現留在這一層。
+    """
+    ok = wait_for_device(
+        ip, max_wait=max_wait,
+        on_progress=lambda remain: print(
+            f"  ⏳ 等待設備上線...（剩餘 {remain}s）", end='\r', flush=True),
+    )
+    if ok:
+        print(f"\n  ✅ 設備已上線：{ip}")
+    else:
+        print(f"\n  ⚠️  {int(max_wait)}s 內未偵測到設備上線")
+    return ok
 
 
-def _get_broadcast_addresses() -> list[str]:
-    broadcasts = {'255.255.255.255'}
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            ip = info[4][0]
-            if ip.startswith('127.'):
-                continue
-            parts = ip.split('.')
-            if ip.startswith('169.254.'):
-                broadcasts.add('169.254.255.255')
-            else:
-                broadcasts.add('.'.join(parts[:3]) + '.255')
-    except Exception:
-        pass
-    return list(broadcasts)
+# ── 設備探索（畫面呈現；探索邏輯在 caparoc_ip_core）────────
 
-
-def _eip_port_open(ip: str, timeout: float = 0.5) -> bool:
-    try:
-        with socket.create_connection((ip, EIP_PORT), timeout=timeout):
-            return True
-    except OSError:
-        return False
-
-
-def _wait_for_device(ip: str, max_wait: float = DEVICE_ONLINE_MAX_WAIT, poll: float = 1.0) -> bool:
-    """輪詢 EtherNet/IP 埠直到設備上線或逾時，過程中原地更新剩餘秒數"""
-    deadline = time.time() + max_wait
-    while time.time() < deadline:
-        remain = max(0, int(deadline - time.time()))
-        print(f"  ⏳ 等待設備上線...（剩餘 {remain}s）", end='\r', flush=True)
-        if _eip_port_open(ip, timeout=poll):
-            print(f"\n  ✅ 設備已上線：{ip}")
-            return True
-    print(f"\n  ⚠️  {int(max_wait)}s 內未偵測到設備上線")
-    return False
-
-
-def _probe_eip_hosts(ips: list[str], timeout: float = 0.5, workers: int = 32) -> set[str]:
-    """並行探測多個 IP 的 EtherNet/IP TCP 埠，回傳有回應的 IP 集合"""
-    if not ips:
-        return set()
-    with ThreadPoolExecutor(max_workers=min(workers, len(ips))) as ex:
-        results = ex.map(lambda ip: _eip_port_open(ip, timeout), ips)
-    return {ip for ip, ok in zip(ips, results) if ok}
-
-
-def _discover_devices(timeout: float = 2.0) -> list[dict]:
-    pkt = (struct.pack('<H', 0x0063) + struct.pack('<H', 0) +
-           struct.pack('<I', 0) + struct.pack('<I', 0) +
-           b'\x00' * 8 + struct.pack('<I', 0))
-    devices, seen_ips = [], set()
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    sock.settimeout(0.3)
-    try:
-        for bcast in _get_broadcast_addresses():
-            sock.sendto(pkt, (bcast, EIP_PORT))
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            try:
-                data, addr = sock.recvfrom(1024)
-                if addr[0] not in seen_ips:
-                    seen_ips.add(addr[0])
-                    dev = _parse_list_identity(data, addr[0])
-                    if dev:
-                        devices.append(dev)
-            except socket.timeout:
-                pass
-    finally:
-        sock.close()
-    return devices
-
-
-def _discover_by_arp() -> list[dict]:
-    result = subprocess.run(['arp', '-a'], capture_output=True, text=True)
-    ordered_pairs: list[tuple[str, str]] = []  # (mac, ip)，保留 arp -a 原始順序
-    for line in result.stdout.splitlines():
-        parts = line.split()
-        if len(parts) >= 3 and parts[2] in ('動態', 'dynamic'):
-            ordered_pairs.append((parts[1], parts[0]))
-    reachable = _probe_eip_hosts([ip for _, ip in ordered_pairs])
-    return [{'ip': ip, 'mac': mac, 'name': f'MAC {mac}', 'via': 'ARP'}
-            for mac, ip in ordered_pairs if ip in reachable]
+def _print_discover_stage(stage: str, info: dict) -> None:
+    """core.discover() 的階段回呼：在每個階段開始前印出提示"""
+    if stage == 'eip':
+        print(f"\n探索設備（廣播：{', '.join(info['broadcasts'])}）...")
+    elif stage == 'arp':
+        print("  List Identity 無回應，改用 ARP table...")
 
 
 def run_discovery() -> str | None:
-    broadcasts = _get_broadcast_addresses()
-    print(f"\n探索設備（廣播：{', '.join(broadcasts)}）...")
-    devices = _discover_devices(timeout=2.0)
-    if not devices:
-        print("  List Identity 無回應，改用 ARP table...")
-        devices = _discover_by_arp()
+    devices = discover(timeout=2.0, on_stage=_print_discover_stage)['devices']
     if not devices:
         print("  ❕ 未發現設備。可手動指定：python src/caparoc_ip_config.py <IP>")
         return None
@@ -698,7 +583,7 @@ def _provision_new_device():
         if assign_ip == server_ip:
             print(f"  ❌ 目標 IP 與本機網卡 IP 相同（{server_ip}），請重新執行並輸入不同的 IP")
             return
-        if not _same_subnet(assign_ip, server_ip, subnet):
+        if not same_subnet(assign_ip, server_ip, subnet):
             print(f"  ⚠️  目標 IP {assign_ip} 與本機網卡 {server_ip}（遮罩 {subnet}）不同網段，")
             print(f"     DHCP 分配可能『看似成功』但設備上線後仍連不上。")
             if input("  仍要繼續？ [Y/N]: ").strip().upper() != 'Y':
@@ -787,7 +672,7 @@ def main():
     # 已知 IP：略過主選單，直接進入連線設定選單（維持既有用法）
     if len(sys.argv) > 1:
         ip_arg = sys.argv[1]
-        if not _is_valid_ip(ip_arg):
+        if not is_valid_ip(ip_arg):
             print(f"❌ 「{ip_arg}」不是合法的 IP 格式")
             print(__doc__)
             return

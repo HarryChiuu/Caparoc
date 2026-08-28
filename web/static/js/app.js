@@ -26,6 +26,27 @@ createApp({
             sidebarCollapsed.value = !sidebarCollapsed.value;
         }
 
+        // -- 主題（夜間 / 白天）--
+        const theme = ref('dark');
+        try {
+            theme.value = localStorage.getItem('caparoc_theme') || 'dark';
+        } catch (_) { /* 私密模式等情境讀不到，維持預設 */ }
+
+        function applyTheme(t) {
+            document.documentElement.setAttribute('data-theme', t);
+        }
+        applyTheme(theme.value);
+
+        function toggleTheme() {
+            theme.value = theme.value === 'dark' ? 'light' : 'dark';
+            applyTheme(theme.value);
+            try { localStorage.setItem('caparoc_theme', theme.value); } catch (_) { }
+            // 圖表色是建立時寫死的，切主題要重建才會套用新色
+            if (currentPage.value === 'charts' && (state.connected || wasEverConnected.value)) {
+                nextTick(_initCharts);
+            }
+        }
+
         // -- 設備狀態 --
         const state = reactive({
             connected: false,
@@ -754,6 +775,16 @@ createApp({
             };
         }
 
+        // 圖表的格線/刻度/圖例色隨主題切換（曲線本身的語意色兩種主題都適用）
+        function _chartTheme() {
+            const light = document.documentElement.dataset.theme === 'light';
+            return {
+                grid: light ? 'rgba(0,0,0,0.09)' : 'rgba(255,255,255,0.05)',
+                tick: light ? '#5d6a85' : '#9aaac4',
+                legend: light ? '#2b3547' : '#c5d0e6',
+            };
+        }
+
         function _destroyCharts() {
             if (_globalChart) { _globalChart.destroy(); _globalChart = null; }
             for (const mod of Object.keys(_moduleCharts)) {
@@ -795,6 +826,7 @@ createApp({
                 },
             };
             const slice = _getChartSlice();
+            const t = _chartTheme();
 
             _globalChart = new Chart(gcEl.getContext('2d'), {
                 type: 'line',
@@ -820,7 +852,7 @@ createApp({
                         yV: {
                             type: 'linear', position: 'left',
                             title: { display: true, text: '電壓 (V)', color: '#3b82f6' },
-                            grid: { color: 'rgba(255,255,255,0.05)' },
+                            grid: { color: t.grid },
                             ticks: { color: '#3b82f6', callback: v => Number(v).toFixed(2) }
                         },
                         yA: {
@@ -829,12 +861,12 @@ createApp({
                             grid: { drawOnChartArea: false }, ticks: { color: '#f97316' }
                         },
                         x: {
-                            grid: { color: 'rgba(255,255,255,0.05)' },
-                            ticks: { maxTicksLimit: 6, color: '#9aaac4', maxRotation: 0 }
+                            grid: { color: t.grid },
+                            ticks: { maxTicksLimit: 6, color: t.tick, maxRotation: 0 }
                         },
                     },
                     plugins: {
-                        legend: { labels: { color: '#c5d0e6', usePointStyle: true } },
+                        legend: { labels: { color: t.legend, usePointStyle: true } },
                         tooltip: {
                             callbacks: {
                                 label: ctx => {
@@ -873,16 +905,16 @@ createApp({
                         scales: {
                             y: {
                                 min: 0,
-                                title: { display: true, text: '電流 (A)', color: '#9aaac4' },
-                                grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9aaac4' }
+                                title: { display: true, text: '電流 (A)', color: t.tick },
+                                grid: { color: t.grid }, ticks: { color: t.tick }
                             },
                             x: {
-                                grid: { color: 'rgba(255,255,255,0.05)' },
-                                ticks: { maxTicksLimit: 6, color: '#9aaac4', maxRotation: 0 }
+                                grid: { color: t.grid },
+                                ticks: { maxTicksLimit: 6, color: t.tick, maxRotation: 0 }
                             },
                         },
                         plugins: {
-                            legend: { labels: { color: '#c5d0e6', usePointStyle: true } },
+                            legend: { labels: { color: t.legend, usePointStyle: true } },
                             zoom: zoomCfg,
                         },
                     },
@@ -1013,6 +1045,7 @@ createApp({
             state, ipInput, wasEverConnected,
             currentPage, sidebarCollapsed, navItems,
             navigate, toggleSidebar,
+            theme, toggleTheme,
             fmt, barPct, cardClass, barClass,
             connecting,
             doConnect, doDisconnect, toggleCh, channelToggling, channelToggleError,

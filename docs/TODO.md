@@ -1,6 +1,6 @@
 # CAPAROC 控制器 - 待實作功能清單
 
-更新日期: 2026-08-27
+更新日期: 2026-08-28
 
 ## ✅ 已完成功能
 
@@ -54,6 +54,75 @@
 **⚠️ 尚未實機驗證**：以上皆通過 mock driver 測試與 `--demo` 模式 API smoke test，接實機後需確認批次設定、連線探測快取、通道開關三條路徑。
 
 ---
+
+---
+
+---
+
+## 🚑 Web DHCP 失聯救援 ✅ 已完成（2026-08-28，分支 fix/web-cip-concurrency）
+
+> 使用者回報「切換成 DHCP 以後，掃描網段還是找不到 MAC」。查明後發現不是顯示問題——
+> 設備切成 DHCP 但網段無 DHCP server 時整台掃不到（無 IP → 無 EIP 回應、不進 ARP 表）。
+> 唯一能發現它的方法是監聽 UDP/67 的 DHCP Discover，這正是 CLI 有、web 沒有的能力。
+
+| 項目 | 內容 |
+|---|---|
+| 新端點 | `POST /api/ipconfig/detect-mac`（監聽 DHCP Discover 取得 MAC）、`POST /api/ipconfig/assign`（指派 IP + 固化靜態 + 重連） |
+| core 下沉 | `open_dhcp_socket` / `detect_dhcp_macs` / `build_dhcp_reply` / `serve_dhcp` / `dhcp_msg_type` / `normalize_mac` / `iface_mac_for`，print 改 callback，CLI 只留薄包裝 |
+| 既有 bug 修正 | DHCP 訊息型別原本誤用 BOOTP `op` 欄位判斷（`data[0]`），會把 REQUEST/RELEASE 誤判成 Discover；改為正確解析 Option 53 |
+| 互斥 | 新增 `_dhcp_lock`（UDP/67 獨佔），並發時回 409 |
+| 偵測逾時 | 預設 30 秒改為 **90 秒**（實測設備約每 60 秒才送一次 Discover） |
+| 手動中斷 | `POST /api/ipconfig/dhcp-cancel` + core 的 `should_stop` callable；前端「✕ 中斷」鈕。**必須是伺服器端取消**——只在前端 abort fetch 的話，執行緒仍佔著 UDP/67 到逾時，使用者只會一直拿到 409 |
+| 救援參數 | 救援面板提供獨立的子網路遮罩／閘道欄位，不再沿用下方面板的值 |
+| 實機驗證 | 對真正失聯的設備完整走完救援：偵測到 MAC（61 秒）→ 指派 + 固化 + 重連（51 秒）→ 恢復為 192.168.50.111 / Static / 已連線 |
+
+**至此 web 與 CLI 的 IP 設定功能已對等**：設備探索（含網卡選擇與 MAC）、讀取網路設定、
+設定靜態 IP、切換 DHCP、失聯救援（迷你 DHCP server）五項齊備。
+
+## 🔧 IP 設定頁實機測試修正 ✅ 已完成（2026-08-28，分支 fix/web-cip-concurrency）
+
+> 使用者實機操作回報 4 項問題，全數重現並修正，細節見 `docs/CHANGELOG.md`。
+
+| # | 問題 | 根因 | 處理 |
+|---|---|---|---|
+| 1 | 可以切換成 DHCP | —（本來就正常） | 無需處理 |
+| 2 | 掃描不到 MAC、無法選網卡 | List Identity 回應不含 MAC；多網卡未綁定 socket 導致廣播送錯介面 | ✅ 新增 `arp_mac_map()` 補 MAC、`list_interfaces()` + `GET /api/ipconfig/interfaces`、`discover(iface_ip=)` 綁定 socket；前端加網卡下拉與 MAC 欄 |
+| 3 | 靜態 IP 時頁面顯示成 DHCP | 一半是問題 4 的結果（模式真的沒切成功）；另一半是 `ipMode` 單選不反映設備實際模式 | ✅ 讀取後依 `config_control` 同步 `ipMode` |
+| 4 | 無法變更靜態 IP | **`set_device_ip()` 寫入順序反了**——DHCP 模式下設備拒絕寫 Attr5（`Object state conflict`），必須先寫 Attr3 切 Static | ✅ 改為 Attr3 → Attr5；新增 `_cip_set_detail()` 分辨「CIP 拒絕」與「連線中斷」 |
+
+### ⚠️ 實測踩到的風險：切 DHCP 會讓設備失聯
+
+192.168.50.x 是**電腦直連網段、沒有 DHCP server**。測試時把設備切成 DHCP 後，
+設備完全失聯（廣播/ARP/直接探測舊位址全無回應），最後用專案自帶的迷你 DHCP server
+指派位址才救回。
+
+- [x] UI 的 DHCP 警告已改為顯眼樣式，寫明失聯風險、救援指令與「先記下 MAC」
+- [x] **把「迷你 DHCP server 救援」做進 web**（2026-08-28 完成）——
+      新增 `POST /api/ipconfig/detect-mac` 與 `POST /api/ipconfig/assign`，
+      前端「找不到設備？（DHCP 失聯救援）」面板。**已用它實際救回失聯的設備**
+- [ ] **後續可考慮**：切 DHCP 前先偵測網段上是否存在 DHCP server（送一個 Discover 看有無 Offer），
+      沒有就擋下或要求二次確認——比事後救援可靠得多
+
+### 📌 設備行為備忘（實機實測，CAPAROC PM EIP v1.1）
+
+| 行為 | 實測結果 |
+|---|---|
+| 0xF5 讀取（Attr 1/3/5） | **只接受 `connected=True`**；`connected=False` 一律回 `Too much data` |
+| DHCP 模式下寫 Attr5 | 拒絕，回 `Object state conflict` |
+| 寫入順序 | 必須 Attr3（模式）→ Attr5（位址） |
+| 改 IP 後恢復時間 | 約 2 秒即可重新連線（`wait_for_device` 30 秒上限相當寬裕） |
+| 切 DHCP 但無 DHCP server | 不會退回舊靜態 IP，直接失聯 |
+| 失聯後的 DHCP Discover 間隔 | 約 **60 秒**一次（重試間隔逐次拉長）；MAC 偵測至少要等 90 秒 |
+| 失聯狀態下的唯一發現方式 | 監聽 UDP/67 的 DHCP Discover（EIP 廣播與 ARP 都無效） |
+
+### ⚠️ 踩過的坑：`is_valid_ip()` 曾被改成 `return false`（小寫）
+
+工作區中一度出現小寫 `false`，使**所有格式驗證失敗的路徑**改拋 `NameError` → HTTP 500，
+而不是預期的 422。合法輸入走 `return True` 完全正常，所以只有「使用者輸入錯誤」時才會炸——
+這種只在錯誤分支發作的 bug 特別容易漏測。已修正，並全檔掃描確認無其他小寫 `true`/`false`。
+
+- [ ] **建議**：專案沒有 linter/型別檢查。`ruff` 或 `pyflakes` 掃一次就能抓到這類 NameError，
+      成本極低（`caparoc_ip_core.py` 是純函式，最適合當第一個納管對象）
 
 ## 🌐 Web「IP 設定」側邊欄分頁 ✅ 已完成（2026-08-27，分支 fix/web-cip-concurrency）
 

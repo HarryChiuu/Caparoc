@@ -409,9 +409,27 @@ class CaparocBackend:
             (True,  None)      寫入成功
             (False, error_msg) 寫入失敗（CIP 錯誤或例外）
         """
+        ok, err, _ = self._cip_set_detail(class_code, instance, attribute, data,
+                                          connected=connected, driver=driver)
+        return ok, err
+
+    def _cip_set_detail(self, class_code, instance, attribute, data,
+                        connected=True, driver=None):
+        """
+        與 _cip_set() 相同，但多回傳 was_exception 旗標。
+
+        寫入 0xF5 這類「成功後設備立刻換 IP、連線隨即中斷」的屬性時，必須分辨：
+          - 設備**明確回 CIP 錯誤**（例如 DHCP 模式下寫 Attr5 會回 Object state
+            conflict）→ 真失敗，要往上報
+          - 送出後**拿不到回應而拋例外** → 極可能是成功了，只是連線已斷
+        兩者若都當成失敗，改 IP 永遠會被誤報為失敗。
+
+        Returns:
+            (ok: bool, err: str|None, was_exception: bool)
+        """
         drv = driver if driver is not None else self.driver
         if not drv:
-            return False, "driver 未初始化"
+            return False, "driver 未初始化", False
         try:
             with self._cip_lock:
                 resp = drv.generic_message(
@@ -421,10 +439,10 @@ class CaparocBackend:
                 )
             err = getattr(resp, 'error', None) if resp else "無回應"
             if err:
-                return False, str(err)
-            return True, None
+                return False, str(err), False
+            return True, None, False
         except Exception as e:
-            return False, f"{type(e).__name__}: {e}"
+            return False, f"{type(e).__name__}: {e}", True
 
     def _read_input_assembly(self, connected=False):
         """
@@ -2025,10 +2043,14 @@ class CaparocBackend:
         """
         透過 CIP Class 0xF5 將設備 IP 硬寫入設備。
 
-        步驟：
-          1. 寫入 Attr 5（new_ip + subnet + gateway + NS1=0 + NS2=0 + DomainName=""）
-          2. 寫入 Attr 3 = 0x00（強制 Static IP 模式）
-          先寫 Attr5 再切 Attr3，確保設備切換到 Static 時用的是新 IP。
+        步驟（順序很重要）：
+          1. 寫入 Attr 3 = 0x00（切為 Static IP 模式）
+          2. 寫入 Attr 5（new_ip + subnet + gateway + NS1=0 + NS2=0 + DomainName=""）
+
+        ⚠️ **必須先 Attr3 再 Attr5**。設備處於 DHCP 模式時會拒絕寫入 Attr5，
+        回 CIP 錯誤 `Object state conflict`（介面設定由 DHCP 掌控，不接受手動改）。
+        舊版寫成「先 Attr5 再 Attr3」，導致從 DHCP 切回靜態 IP 永遠失敗。
+        兩個屬性都要寫——只寫 Attr3 的話設備會沿用舊的 Attr5 值，而不是使用者輸入的新 IP。
 
         ⚠️ 寫入成功後設備 IP 立即改變，現有連線會中斷（正常現象）。
         ⚠️ 因此 `success=True` 只代表「Attr5 指令已被接受」，不代表設備已用新 IP 上線。
@@ -2043,13 +2065,16 @@ class CaparocBackend:
             gateway (str): 預設閘道，空字串 = "0.0.0.0"
 
         Returns:
-            dict: {'success': bool, 'error': str or None, 'ctrl_written': bool}
-                  ctrl_written — Attr3（切 Static）是否也寫成功。連線因 IP 變更而
-                  中斷時它會是 False，屬預期，僅供除錯參考，不影響 success。
+            dict: {'success': bool, 'error': str or None,
+                   'ctrl_written': bool, 'unverified': bool}
+                  ctrl_written — Attr3（切 Static）是否寫成功。
+                  unverified   — Attr5 送出後連線即中斷、拿不到確認回應。
+                                 這在 IP 真的改變時屬正常，呼叫端應改以探測新 IP 確認。
         """
         import socket as _socket
 
-        result = {'success': False, 'error': None, 'ctrl_written': False}
+        result = {'success': False, 'error': None,
+                  'ctrl_written': False, 'unverified': False}
 
         if not new_ip:
             result['error'] = "new_ip 未指定"
@@ -2059,7 +2084,16 @@ class CaparocBackend:
         gw_addr = gateway if gateway else "0.0.0.0"
 
         try:
-            # Step 1: 組裝並寫入 Attr 5（先寫 IP，再切模式，確保設備用新 IP）
+            # Step 1: 先切為 Static。DHCP 模式下不先切，Attr5 會被拒（Object state conflict）
+            ctrl_ok, ctrl_err, ctrl_exc = self._cip_set_detail(
+                0xF5, 1, 3, struct.pack('<I', 0), connected=True, driver=driver)
+            result['ctrl_written'] = ctrl_ok
+            if not ctrl_ok and not ctrl_exc:
+                # 設備明確拒絕切模式 —— 這是真失敗，繼續寫 Attr5 也不會成功
+                result['error'] = f"Attr3 write error: {ctrl_err}"
+                return result
+
+            # Step 2: 寫入 Attr 5
             # CIP 以 Little-Endian UDINT 儲存 IP，需反轉 bytes
             # 格式: IP(4) + Subnet(4) + Gateway(4) + NS1(4) + NS2(4) + DomainName SSTRING len(2)
             config_data = (
@@ -2070,20 +2104,17 @@ class CaparocBackend:
                 bytes(4) +               # NameServer2 = 0.0.0.0
                 struct.pack('<H', 0)     # DomainName SSTRING: length=0
             )
-            ok, err = self._cip_set(0xF5, 1, 5, config_data,
-                                    connected=True, driver=driver)
-            if not ok:
+            ok, err, was_exc = self._cip_set_detail(
+                0xF5, 1, 5, config_data, connected=True, driver=driver)
+            if ok:
+                result['success'] = True
+            elif was_exc:
+                # 送出後連線中斷：IP 一改變本來就收不到回應，視為已送出，
+                # 由呼叫端探測新 IP 來確認（見 caparoc_ip_core.wait_for_device()）
+                result['success'] = True
+                result['unverified'] = True
+            else:
                 result['error'] = f"Attr5 write error: {err}"
-                return result
-
-            # Attr5 寫入成功，IP 可能已立即生效
-            result['success'] = True
-
-            # Step 2: 寫入 Attr 3 = Static IP；IP 變更後連線中斷屬正常現象，
-            # 故失敗不影響 success（_cip_set 已把例外吞成 (False, err)）
-            ctrl_ok, _ = self._cip_set(0xF5, 1, 3, struct.pack('<I', 0),
-                                       connected=True, driver=driver)
-            result['ctrl_written'] = ctrl_ok
 
         except Exception as e:
             result['error'] = str(e)

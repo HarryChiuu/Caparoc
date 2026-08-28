@@ -5,7 +5,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CAPAROC 控制台</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=4.3.0" />
+    <link rel="stylesheet" href="/static/css/style.css?v=4.5.0" />
 </head>
 
 <body>
@@ -550,6 +550,22 @@
                             以 EtherNet/IP 廣播尋找網路上的 CAPAROC；無回應時自動改查 ARP 表。此功能不需先連線。
                         </div>
                         <div class="conn-form-block">
+                            <label class="field-label">掃描網卡</label>
+                            <div class="conn-form">
+                                <select v-model="ipIfaceSel">
+                                    <option value="">全部網卡</option>
+                                    <option v-for="itf in ipIfaces" :key="itf.ip" :value="itf.ip">
+                                        {{ itf.ip }} — {{ itf.description }}
+                                    </option>
+                                </select>
+                                <button class="btn btn-sm btn-ghost" @click="fetchIfaces"
+                                    title="重新列舉網卡">↻</button>
+                            </div>
+                            <div class="hint-text">
+                                多網卡環境請指定設備所在的網卡；選「全部網卡」時由作業系統決定廣播送往哪個介面，可能掃不到。
+                            </div>
+                        </div>
+                        <div class="conn-form-block">
                             <button class="btn" @click="scanDevices" :disabled="ipScanBusy">
                                 {{ ipScanBusy ? '掃描中…' : '🔍 掃描網段' }}
                             </button>
@@ -564,11 +580,13 @@
                             <table class="net-info-table" v-if="ipScanResult.devices.length">
                                 <tr>
                                     <td>IP 位址</td>
+                                    <td>MAC 位址</td>
                                     <td>名稱 / S｜N</td>
                                     <td>操作</td>
                                 </tr>
                                 <tr v-for="d in ipScanResult.devices" :key="d.ip">
                                     <td>{{ d.ip }}</td>
+                                    <td class="net-mac">{{ d.mac || '—' }}</td>
                                     <td>
                                         {{ d.name || '—' }}
                                         <span v-if="d.serial">（S/N: {{ d.serial }}）</span>
@@ -587,6 +605,78 @@
                                 <div class="placeholder-desc">請確認設備已上電且與本機在同一網段</div>
                             </div>
                         </div>
+                    </section>
+
+                    <!-- 1b. 失聯設備救援 -->
+                    <section class="panel">
+                        <h2>找不到設備？（DHCP 失聯救援）</h2>
+                        <div class="hint-text">
+                            設備切成 DHCP、但網段上沒有 DHCP server 時，它拿不到位址，
+                            掃描與 ARP 都找不到它 —— 但它會持續送出 DHCP Discover 廣播。
+                            這裡監聽該廣播取得設備 MAC，再指派一個 IP 給它並固化為靜態 IP。
+                            （等同 CLI 的「[2] 新裝置初始設定」）
+                        </div>
+
+                        <div class="conn-form-block">
+                            <button class="btn" @click="detectMac" :disabled="macBusy">
+                                {{ macBusy ? '監聽中…最長 90 秒' : '📡 偵測 DHCP 廣播中的設備' }}
+                            </button>
+                            <button class="btn btn-ghost" v-if="macBusy" @click="cancelDhcpOp"
+                                :disabled="dhcpCancelBusy">✕ 中斷</button>
+                            <span class="feedback-msg err" v-if="macError">{{ macError }}</span>
+                        </div>
+
+                        <div v-if="macList">
+                            <table class="net-info-table" v-if="macList.length">
+                                <tr>
+                                    <td>選擇</td>
+                                    <td>MAC 位址</td>
+                                    <td>Discover 次數</td>
+                                </tr>
+                                <tr v-for="m in macList" :key="m.mac">
+                                    <td><input type="radio" :value="m.mac" v-model="rescueMac" /></td>
+                                    <td class="net-mac">{{ m.mac }}</td>
+                                    <td>{{ m.count }}</td>
+                                </tr>
+                            </table>
+                            <div v-else class="hint-text">
+                                未偵測到任何 DHCP 廣播。設備的重試間隔會逐次拉長（實測約每 60 秒一次），可再按一次；
+                                也請確認網路線已接上、網卡選對，或重插設備網路線強制它立刻重試。
+                            </div>
+                        </div>
+
+                        <template v-if="rescueMac">
+                            <div class="conn-form-block">
+                                <label class="field-label">指派給 {{ rescueMac }} 的 IP</label>
+                                <div class="conn-form">
+                                    <input v-model="rescueIp" placeholder="192.168.50.111" />
+                                </div>
+                            </div>
+                            <div class="conn-form-block">
+                                <label class="field-label">子網路遮罩</label>
+                                <div class="conn-form">
+                                    <input v-model="rescueSubnet" placeholder="255.255.255.0" />
+                                </div>
+                            </div>
+                            <div class="conn-form-block">
+                                <label class="field-label">預設閘道（可留空）</label>
+                                <div class="conn-form">
+                                    <input v-model="rescueGateway" placeholder="0.0.0.0" />
+                                </div>
+                            </div>
+                            <div class="conn-form-block">
+                                <button class="btn btn-danger" @click="rescueDevice" :disabled="rescueBusy">
+                                    {{ rescueBusy ? '救援中…' : '指派並固化為靜態 IP' }}
+                                </button>
+                                <button class="btn btn-ghost" v-if="rescueBusy" @click="cancelDhcpOp"
+                                    :disabled="dhcpCancelBusy">✕ 中斷</button>
+                            </div>
+                            <div class="hint-text">
+                                按下後最長等 2 分鐘讓設備送出 DHCP 請求。
+                            </div>
+                            <span class="feedback-msg" :class="rescueFeedback.ok ? 'ok' : 'err'"
+                                v-if="rescueFeedback.msg">{{ rescueFeedback.msg }}</span>
+                        </template>
                     </section>
 
                     <!-- 2. 目前網路設定（需連線） -->
@@ -660,9 +750,12 @@
                             <div class="hint-text" v-if="ipSubnetWarning">{{ ipSubnetWarning }}</div>
                         </template>
 
-                        <div class="hint-text" v-else>
-                            ⚠ 切換為 DHCP 後，設備 IP 由 DHCP server 重新指派，新 IP 無法預知；
-                            連線會中斷，需用上方「搜尋設備」找回設備。
+                        <div class="stale-banner" v-else>
+                            ⚠ 切換為 DHCP 前請先確認：<b>這個網段上真的有 DHCP server</b>。
+                            若設備直連電腦或網段沒有 DHCP server，設備會拿不到位址而<b>完全失聯</b>，
+                            屆時只能用 CLI 的迷你 DHCP server 救回：
+                            <code>python src/caparoc_ip_config.py</code> → [2] 新裝置初始設定（需設備 MAC）。
+                            <br />建議先記下設備 MAC（見上方掃描結果）再切換。
                         </div>
 
                         <div class="conn-form-block">
@@ -699,6 +792,7 @@
                             </p>
                             <p class="hint-text" v-else>
                                 套用後連線會中斷，且新 IP 無法預知，需自行用「搜尋設備」找回。
+                                <b>若此網段沒有 DHCP server，設備將失聯</b>，需以 CLI 的迷你 DHCP server 救回。
                             </p>
                             <div class="hint-text" v-if="ipSubnetWarning">{{ ipSubnetWarning }}</div>
                             <div class="conn-form">
@@ -719,7 +813,7 @@
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="/static/js/app.js?v=4.3.0"></script>
+    <script src="/static/js/app.js?v=4.5.0"></script>
 </body>
 
 </html>

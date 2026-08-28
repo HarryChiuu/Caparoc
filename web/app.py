@@ -43,10 +43,19 @@ sys.path.insert(0, str(_ROOT_DIR / "src"))
 
 from caparoc_backend import CaparocBackend  # noqa: E402
 # 設備探索／IP 格式判斷的共用實作（與 src/caparoc_ip_config.py CLI 同一份）
-from caparoc_ip_core import discover, is_valid_ip, wait_for_device  # noqa: E402
+from caparoc_ip_core import (  # noqa: E402
+    discover, is_valid_ip, wait_for_device, list_interfaces,
+    open_dhcp_socket, detect_dhcp_macs, serve_dhcp, iface_mac_for, normalize_mac,
+)
 
 # 同時只允許一次網段掃描：掃描會開 32 條探測執行緒，兩個分頁同時按會互相干擾
 _discover_lock = threading.Lock()
+# UDP port 67 是獨佔資源，MAC 偵測與迷你 DHCP server 都要用，必須互斥
+_dhcp_lock = threading.Lock()
+# 手動中斷旗標：DHCP 監聽／服務都是長時間阻塞作業，只讓前端放棄請求是不夠的——
+# 伺服器執行緒會繼續佔著 UDP/67 與 _dhcp_lock 直到逾時，使用者無法重試。
+# 每次作業開始前 clear()，由 POST /api/ipconfig/dhcp-cancel 設定。
+_dhcp_cancel = threading.Event()
 
 # ==================== Log 攔截器 ====================
 import re as _re
@@ -458,25 +467,50 @@ async def api_ipconfig_current():
     return await asyncio.to_thread(backend.read_device_network_config)
 
 
+@app.get("/api/ipconfig/interfaces")
+async def api_ipconfig_interfaces():
+    """
+    列出本機可用網卡，供前端選擇要從哪張網卡掃描（對應 CLI 的 _pick_iface()）。
+
+    多網卡機器上這是必要的：不指定網卡時，OS 會依路由表決定導向廣播從哪個介面送出，
+    很可能送錯網卡而掃不到設備。
+    """
+    if _DEMO_MODE:
+        return {"interfaces": [
+            {"name": "demo0", "description": "Demo Ethernet Adapter",
+             "ip": "192.168.2.10", "mac": "00:11:22:33:44:55",
+             "broadcast": "192.168.2.255"}]}
+    return {"interfaces": await asyncio.to_thread(list_interfaces)}
+
+
 @app.post("/api/ipconfig/discover")
-async def api_ipconfig_discover(timeout: float = Query(default=2.0, ge=0.5, le=10.0)):
+async def api_ipconfig_discover(timeout: float = Query(default=2.0, ge=0.5, le=10.0),
+                                iface_ip: str = Query(default=None)):
     """
     掃描網段尋找 CAPAROC 設備（EtherNet/IP List Identity 廣播，無回應時退回 ARP table）。
 
     刻意**不檢查連線狀態**——掃描的用途正是在還沒連上任何設備時找出設備 IP。
+
+    Args:
+        iface_ip: 指定從哪張網卡掃描（傳網卡自己的 IP）；未指定 = 全部網卡。
     """
     if _DEMO_MODE:
         return {"devices": [
                     {"ip": "192.168.2.111", "name": "CAPAROC-PM-EIP [DEMO]",
-                     "serial": "DEMO0001", "revision": "1.0", "vendor_id": 1},
+                     "serial": "DEMO0001", "revision": "1.0", "vendor_id": 1,
+                     "mac": "00:a0:45:de:m0:01"},
                     {"ip": "192.168.2.112", "name": "CAPAROC-PM-EIP [DEMO2]",
-                     "serial": "DEMO0002", "revision": "1.0", "vendor_id": 1}],
+                     "serial": "DEMO0002", "revision": "1.0", "vendor_id": 1,
+                     "mac": "00:a0:45:de:m0:02"}],
                 "via": "EIP", "broadcasts": ["192.168.2.255", "255.255.255.255"]}
+
+    if iface_ip and not is_valid_ip(iface_ip):
+        raise HTTPException(status_code=422, detail=f"「{iface_ip}」不是合法的網卡 IP")
 
     if not _discover_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="掃描進行中，請稍候")
     try:
-        result = await asyncio.to_thread(discover, timeout)
+        result = await asyncio.to_thread(discover, timeout, None, iface_ip)
     finally:
         _discover_lock.release()
     _WEB_LOGGER.log(_SYSTEM_LEVEL,
@@ -558,6 +592,160 @@ async def api_ipconfig_dhcp():
                     extra={'log_module': 'WEB'})
     return {"success": True,
             "note": "設備已切換為 DHCP，IP 由 DHCP server 重新指派；請用「搜尋設備」找回新 IP"}
+
+
+class DhcpAssignRequest(BaseModel):
+    """把 IP 指派給失聯設備的請求主體。"""
+    iface_ip: str                        # 要在哪張網卡上開 DHCP server
+    mac:      str                        # 目標設備 MAC
+    ip:       str                        # 要指派並固化的 IP
+    subnet:   str = "255.255.255.0"
+    gateway:  str = ""
+    timeout:  float = 120.0              # 等設備送出 DHCP Discover 的上限
+
+
+@app.post("/api/ipconfig/detect-mac")
+async def api_ipconfig_detect_mac(
+    iface_ip: str = Query(...),
+    timeout: float = Query(default=90.0, ge=5.0, le=180.0),
+):
+    """
+    監聽 UDP/67 的 DHCP Discover，找出正在請求位址的設備 MAC。
+
+    這是設備「切成 DHCP 但網段沒有 DHCP server」而失聯時**唯一**能發現它的方法：
+    此時設備沒有 IP，EIP 廣播與 ARP 都查不到，但它會持續送出 DHCP Discover，
+    封包裡帶著自己的 MAC。對應 CLI 的 _detect_mac_via_socket()。
+
+    綁定 port 67 在 Windows 上不需要管理員權限，但該埠是獨佔的
+    （BootP-DHCP Tool 等程式若開著會搶走）。
+
+    ⚠️ 預設等 90 秒：DHCP client 的重試間隔會逐次拉長，實機實測設備約每 60 秒
+    才送一次 Discover，等太短會誤以為偵測不到。
+    """
+    if _DEMO_MODE:
+        return {"macs": [{"mac": "cc:cc:ea:9f:c9:72", "count": 3}],
+                "iface_ip": iface_ip}
+    if not is_valid_ip(iface_ip):
+        raise HTTPException(status_code=422, detail=f"「{iface_ip}」不是合法的網卡 IP")
+    if not _dhcp_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="另一項 DHCP 作業進行中，請稍候")
+    try:
+        _dhcp_cancel.clear()
+        sock, err = await asyncio.to_thread(open_dhcp_socket, iface_ip)
+        if sock is None:
+            raise HTTPException(status_code=503, detail=err)
+        try:
+            own_mac = await asyncio.to_thread(iface_mac_for, iface_ip)
+            seen = await asyncio.to_thread(
+                detect_dhcp_macs, sock, own_mac, timeout, 2.0, None,
+                _dhcp_cancel.is_set)
+        finally:
+            sock.close()
+    finally:
+        _dhcp_lock.release()
+
+    cancelled = _dhcp_cancel.is_set()
+    macs = [{"mac": m, "count": n} for m, n in sorted(seen.items())]
+    _WEB_LOGGER.log(_SYSTEM_LEVEL,
+                    f"DHCP MAC 偵測{'（已中斷）' if cancelled else '完成'}"
+                    f"（{iface_ip}）：找到 {len(macs)} 個",
+                    extra={'log_module': 'WEB'})
+    return {"macs": macs, "iface_ip": iface_ip, "cancelled": cancelled}
+
+
+@app.post("/api/ipconfig/dhcp-cancel")
+async def api_ipconfig_dhcp_cancel():
+    """
+    中斷進行中的 DHCP 監聽／指派作業。
+
+    設定共用的中斷旗標，讓佔著 UDP/67 的背景執行緒在下一輪（監聽約 0.25 秒、
+    指派約 1 秒）自行結束並釋放鎖。若只在前端 abort fetch，伺服器端仍會跑到逾時。
+    """
+    if _DEMO_MODE:
+        return {"success": True, "was_running": False}
+    was_running = _dhcp_lock.locked()
+    _dhcp_cancel.set()
+    if was_running:
+        _WEB_LOGGER.log(_SYSTEM_LEVEL, "收到 DHCP 作業中斷要求",
+                        extra={'log_module': 'WEB'})
+    return {"success": True, "was_running": was_running}
+
+
+@app.post("/api/ipconfig/assign")
+async def api_ipconfig_assign(req: DhcpAssignRequest):
+    """
+    救回失聯設備：開迷你 DHCP server 指派 IP 給指定 MAC，再把該 IP 固化為靜態。
+
+    對應 CLI 的「[2] 新裝置初始設定」。流程：
+      1. 綁 UDP/67，等目標 MAC 送出 Discover → 回 Offer → 收 Request → 回 ACK
+      2. 等設備以新 IP 上線
+      3. 連上去，把 IP 寫成靜態（Attr3 切 Static 再寫 Attr5），避免下次又靠 DHCP
+    """
+    if _DEMO_MODE:
+        return {"success": True, "assigned": True, "online": True,
+                "static_set": True, "ip": req.ip, "connected": True}
+
+    for label, value in (("網卡 IP", req.iface_ip), ("指派 IP", req.ip),
+                         ("子網路遮罩", req.subnet)):
+        if not is_valid_ip(value):
+            raise HTTPException(status_code=422, detail=f"{label}「{value}」格式不正確")
+    if req.gateway and not is_valid_ip(req.gateway):
+        raise HTTPException(status_code=422, detail=f"閘道「{req.gateway}」格式不正確")
+    mac = normalize_mac(req.mac)
+    if len(mac.split(':')) != 6:
+        raise HTTPException(status_code=422, detail=f"MAC「{req.mac}」格式不正確")
+
+    if not _dhcp_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="另一項 DHCP 作業進行中，請稍候")
+    try:
+        _dhcp_cancel.clear()
+        # 設備可能還連著舊 session，先斷開以免占用
+        if backend.is_connected:
+            await asyncio.to_thread(backend.disconnect)
+
+        sock, err = await asyncio.to_thread(open_dhcp_socket, req.iface_ip)
+        if sock is None:
+            raise HTTPException(status_code=503, detail=err)
+        try:
+            _WEB_LOGGER.log(_SYSTEM_LEVEL,
+                            f"迷你 DHCP server 啟動（{req.iface_ip}）：指派 {req.ip} 給 {mac}",
+                            extra={'log_module': 'WEB'})
+            assigned = await asyncio.to_thread(
+                serve_dhcp, sock, req.iface_ip, mac, req.ip, req.subnet,
+                req.timeout, None, None, _dhcp_cancel.is_set)
+        finally:
+            sock.close()
+    finally:
+        _dhcp_lock.release()
+
+    if not assigned:
+        if _dhcp_cancel.is_set():
+            raise HTTPException(status_code=499, detail="已手動中斷")
+        raise HTTPException(
+            status_code=504,
+            detail=f"{int(req.timeout)} 秒內未收到 {mac} 的 DHCP 請求；"
+                   f"請確認網路線已接上、網卡選對，必要時重插設備網路線強制重試")
+
+    online = await asyncio.to_thread(wait_for_device, req.ip, 40.0)
+    static_set, connected = False, False
+    if online:
+        backend.device_ip = req.ip
+        connected = await asyncio.to_thread(backend.connect)
+        if connected:
+            result = await asyncio.to_thread(
+                backend.set_device_ip, None, req.ip, req.subnet, req.gateway)
+            static_set = bool(result.get('success'))
+            # 固化靜態後連線通常會斷，重連一次
+            await asyncio.to_thread(backend.disconnect)
+            if await asyncio.to_thread(wait_for_device, req.ip, 30.0):
+                connected = await asyncio.to_thread(backend.connect)
+
+    _WEB_LOGGER.log(_SYSTEM_LEVEL,
+                    f"設備救援結果：ip={req.ip} assigned={assigned} online={online} "
+                    f"static_set={static_set} connected={connected}",
+                    extra={'log_module': 'WEB'})
+    return {"success": True, "assigned": assigned, "online": online,
+            "static_set": static_set, "connected": connected, "ip": req.ip}
 
 
 # ==================== Log API ====================

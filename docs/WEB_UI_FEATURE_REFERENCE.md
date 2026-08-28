@@ -323,7 +323,7 @@ set_nominal_current(1, 2, 4, verify=True)   # 模組1 通道2 設為 4A
 | 系統日誌 | `logs` | `GET /api/logs` | 等級篩選、顏色編碼、分頁、自動更新 |
 | 系統狀態 | `system-status` | `GET /api/device/info` | Identity Object + Class 0x0F |
 | 連線設定 | `connection` | `GET /api/device/network` / `POST /api/connect` | IP 連線表單 + 網路資訊面板（MAC / hostname） |
-| IP 設定 | `ip-config` | `GET /api/ipconfig/current`、`POST /api/ipconfig/{discover,static,dhcp}` | 網段搜尋設備、讀取/變更設備 IP、切換 DHCP |
+| IP 設定 | `ip-config` | `GET /api/ipconfig/{current,interfaces}`、`POST /api/ipconfig/{discover,static,dhcp,detect-mac,assign}` | 網卡選擇 + 網段搜尋（含 MAC）、讀取/變更設備 IP、切換 DHCP、DHCP 失聯救援 |
 
 > ⚠️ **`/api/device/network` 與 `/api/ipconfig/current` 容易混淆**：
 > 前者走 `get_network_info()`（0xF5 + 0xF6），提供 **MAC / hostname**，但**沒有** IP 取得方式；

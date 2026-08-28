@@ -255,6 +255,20 @@ createApp({
         const ipScanBusy = ref(false);
         const ipScanResult = ref(null);         // { devices, via, broadcasts }
         const ipScanError = ref('');
+        const ipIfaces = ref([]);               // 本機網卡清單
+        const ipIfaceSel = ref('');             // 選定網卡的 IP；'' = 全部網卡
+
+        // -- 失聯設備救援（設備切成 DHCP 但網段沒有 DHCP server）--
+        const macBusy = ref(false);
+        const macList = ref(null);              // [{mac, count}]
+        const macError = ref('');
+        const rescueMac = ref('');
+        const rescueIp = ref('');
+        const rescueSubnet = ref('255.255.255.0');
+        const rescueGateway = ref('');
+        const rescueBusy = ref(false);
+        const rescueFeedback = ref({ ok: false, msg: '' });
+        const dhcpCancelBusy = ref(false);   // 中斷鈕本身送出中，避免連點
         const ipMode = ref('static');           // 'static' | 'dhcp'
         const ipForm = reactive({ ip: '', subnet: '255.255.255.0', gateway: '' });
         const ipApplyBusy = ref(false);
@@ -271,6 +285,10 @@ createApp({
                 if (data.ip) ipForm.ip = data.ip;
                 if (data.subnet) ipForm.subnet = data.subnet;
                 if (data.gateway && data.gateway !== '0.0.0.0') ipForm.gateway = data.gateway;
+                // 讓「設定方式」單選反映設備目前實際模式，避免畫面自相矛盾
+                // （資訊表顯示 DHCP，下方 radio 卻停在靜態 IP）
+                if (data.config_control === 2) ipMode.value = 'dhcp';
+                else if (data.config_control === 0) ipMode.value = 'static';
                 return true;
             } catch (_) { }
             return false;
@@ -289,12 +307,23 @@ createApp({
             _cipReadInFlight = false;
         }
 
+        async function fetchIfaces() {
+            try {
+                const r = await fetch('/api/ipconfig/interfaces');
+                if (!r.ok) return;
+                const body = await r.json();
+                ipIfaces.value = body.interfaces ?? [];
+            } catch (_) { }
+        }
+
         async function scanDevices() {
             if (ipScanBusy.value) return;
             ipScanBusy.value = true;
             ipScanError.value = '';
             try {
-                const r = await fetch('/api/ipconfig/discover', { method: 'POST' });
+                const q = ipIfaceSel.value
+                    ? ('?iface_ip=' + encodeURIComponent(ipIfaceSel.value)) : '';
+                const r = await fetch('/api/ipconfig/discover' + q, { method: 'POST' });
                 const body = await r.json().catch(() => ({}));
                 if (r.ok) {
                     ipScanResult.value = body;
@@ -305,6 +334,88 @@ createApp({
                 ipScanError.value = '無法連線至伺服器';
             } finally {
                 ipScanBusy.value = false;
+            }
+        }
+
+        async function cancelDhcpOp() {
+            // 只中止伺服器端的背景作業；前端的 fetch 會在對方回應後自然結束，
+            // 不需要（也不該）在這裡 abort() ——那樣伺服器執行緒仍會占著 UDP/67 直到逾時。
+            if (dhcpCancelBusy.value) return;
+            dhcpCancelBusy.value = true;
+            try {
+                await fetch('/api/ipconfig/dhcp-cancel', { method: 'POST' });
+            } catch (_) { }
+            finally {
+                dhcpCancelBusy.value = false;
+            }
+        }
+
+        async function detectMac() {
+            if (macBusy.value) return;
+            if (!ipIfaceSel.value) {
+                macError.value = '請先在上方選擇設備所在的網卡（不能用「全部網卡」）';
+                return;
+            }
+            macBusy.value = true;
+            macError.value = '';
+            macList.value = null;
+            try {
+                const r = await fetch('/api/ipconfig/detect-mac?iface_ip='
+                    + encodeURIComponent(ipIfaceSel.value) + '&timeout=90',
+                    { method: 'POST' });
+                const body = await r.json().catch(() => ({}));
+                if (!r.ok) {
+                    macError.value = body.detail ?? ('偵測失敗 (HTTP ' + r.status + ')');
+                    return;
+                }
+                macList.value = body.macs ?? [];
+                if (body.cancelled) macError.value = '已手動中斷';
+                if (macList.value.length === 1) rescueMac.value = macList.value[0].mac;
+            } catch (e) {
+                macError.value = '無法連線至伺服器';
+            } finally {
+                macBusy.value = false;
+            }
+        }
+
+        async function rescueDevice() {
+            if (rescueBusy.value) return;
+            if (!rescueMac.value || !_isValidIpStr(rescueIp.value)) {
+                rescueFeedback.value = { ok: false, msg: '請選擇 MAC 並填入合法的指派 IP' };
+                return;
+            }
+            rescueBusy.value = true;
+            rescueFeedback.value = { ok: true, msg: '等待設備送出 DHCP 請求…最長 2 分鐘（可重插設備網路線強制重試）' };
+            try {
+                const r = await fetch('/api/ipconfig/assign', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        iface_ip: ipIfaceSel.value,
+                        mac: rescueMac.value,
+                        ip: rescueIp.value,
+                        subnet: rescueSubnet.value || '255.255.255.0',
+                        gateway: rescueGateway.value || '',
+                        timeout: 120,
+                    }),
+                });
+                const body = await r.json().catch(() => ({}));
+                if (!r.ok) {
+                    rescueFeedback.value = { ok: false, msg: body.detail ?? ('救援失敗 (HTTP ' + r.status + ')') };
+                    return;
+                }
+                if (body.static_set && body.connected) {
+                    rescueFeedback.value = { ok: true, msg: '✓ 設備已取得 ' + body.ip + '，已固化為靜態 IP 並重新連線' };
+                    refreshIpCurrent();
+                } else if (body.online) {
+                    rescueFeedback.value = { ok: false, msg: '設備已取得 ' + body.ip + ' 並上線，但固化靜態或重連未完成，請至「連線設定」手動連線' };
+                } else {
+                    rescueFeedback.value = { ok: false, msg: '已送出 DHCP ACK，但設備未在時限內上線，請稍後用掃描確認' };
+                }
+            } catch (e) {
+                rescueFeedback.value = { ok: false, msg: '無法連線至伺服器' };
+            } finally {
+                rescueBusy.value = false;
             }
         }
 
@@ -860,7 +971,10 @@ createApp({
             // 進入連線設定頁且已連線 → 自動重新讀取網路資訊
             if (page === 'connection' && state.connected) refreshNetworkInfo();
             // 進入 IP 設定頁且已連線 → 自動讀取目前網路設定
-            if (page === 'ip-config' && state.connected) refreshIpCurrent();
+            if (page === 'ip-config') {
+                if (!ipIfaces.value.length) fetchIfaces();   // 網卡列舉不需連線
+                if (state.connected) refreshIpCurrent();
+            }
         });
 
         // 自動更新開關
@@ -919,6 +1033,11 @@ createApp({
             doCloseTab, isShuttingDown,
             // IP 設定頁
             ipCurrent, ipCurrentRefreshing, ipScanBusy, ipScanResult, ipScanError,
+            ipIfaces, ipIfaceSel, fetchIfaces,
+            macBusy, macList, macError, rescueMac, rescueIp,
+            rescueSubnet, rescueGateway, rescueBusy, rescueFeedback,
+            dhcpCancelBusy, cancelDhcpOp,
+            detectMac, rescueDevice,
             ipMode, ipForm, ipApplyBusy, ipApplyFeedback, ipConfirmOpen,
             ipSubnetWarning,
             refreshIpCurrent, scanDevices, useFoundIp, connectToFound,

@@ -2,6 +2,178 @@
 
 ---
 
+## [2026-08-28] IP 設定：DHCP 作業可手動中斷、救援可自訂遮罩與閘道（fix/web-cip-concurrency）
+
+### ✨ DHCP 監聽／救援可手動中斷
+
+- **問題**：MAC 偵測最長 90 秒、指派最長 2 分鐘，中途沒有退出的方法。
+  **只在前端 abort fetch 是不夠的**——伺服器執行緒仍會佔著 UDP/67 與 `_dhcp_lock`
+  跑到逾時，使用者按什麼都只會拿到 409，等於卡死
+- **修正**：伺服器端真正的取消。`detect_dhcp_macs()` / `serve_dhcp()` 新增
+  `should_stop` callable，迴圈每輪（監聽約 0.25 秒、指派約 1 秒）檢查一次；
+  新增 `POST /api/ipconfig/dhcp-cancel` 設定共用的 `_dhcp_cancel` 事件旗標
+- 前端在作業進行中顯示「✕ 中斷」按鈕；偵測回應新增 `cancelled` 欄位，
+  指派被中斷時回 HTTP 499「已手動中斷」
+- **實測**：90 秒監聽在送出中斷後 **5.1 秒**結束、標記 `cancelled: true`，
+  且鎖立即釋放（隨後的偵測請求回 200 而非 409）；指派中斷同樣回 499 並釋放鎖
+
+### ✨ 救援面板可自訂子網路遮罩與閘道
+
+原本指派 IP 時遮罩／閘道是沿用下方「變更設備 IP」面板的欄位，隱晦且容易搞錯。
+改為在救援面板中提供獨立的「子網路遮罩」「預設閘道」輸入框，
+`POST /api/ipconfig/assign` 本來就接受這兩個參數，現在前端有對應 UI。
+
+### 🐛 `is_valid_ip()` 寫成 `return false`（小寫）
+
+- **現象**：任何格式錯誤的 IP／遮罩／閘道都會回 **HTTP 500**，而不是預期的 422
+- **根因**：`caparoc_ip_core.py` 的 `is_valid_ip()` 例外分支寫成小寫 `false`
+  （Python 沒有這個名字）→ 拋 `NameError`。
+  合法 IP 走 `return True` 不受影響，所以只有「輸入錯誤」時才會炸，容易漏測
+- **影響範圍**：`/api/ipconfig/static`、`/api/ipconfig/assign`、
+  `/api/ipconfig/discover?iface_ip=` 的所有驗證路徑
+- **修正**：改回 `False`，並全檔掃描確認無其他小寫 `true`/`false`。
+  修正後五條驗證路徑全部正確回 422 並附中文訊息
+
+### 🐛 補回 CLI 的 Ctrl+C 行為（前次重構的回歸）
+
+DHCP 原語下沉到 core 時，漏掉了原本 `_detect_mac_via_socket()` 內的
+`except KeyboardInterrupt: pass`，導致 CLI 在 MAC 偵測階段按 Ctrl+C 會拋出 traceback
+而非回傳已收集到的部分結果。已在 `detect_dhcp_macs()` 補回。
+
+---
+
+## [2026-08-28] IP 設定頁：DHCP 失聯救援（MAC 偵測 + 指派 IP）（fix/web-cip-concurrency）
+
+> 承上一則。使用者回報「切換成 DHCP 以後，掃描網段還是找不到 MAC」，
+> 補上 web 相對於 CLI 缺的最後一塊：**設備失聯時的發現與救援**。
+
+### 🐛 為什麼切成 DHCP 後就「找不到 MAC」
+
+不是 MAC 顯示的問題——是**整台設備都掃不到**。設備切成 DHCP 但網段上沒有 DHCP server 時：
+
+- 它拿不到 IP → EIP List Identity 廣播收不到回應
+- 它沒有 IP → 不會出現在本機 ARP 表，ARP 後援也查不到
+- 上一版的 MAC 補齊機制靠的正是 ARP 表，所以一樣是空的
+
+**但設備並沒有死**：它會持續送出 DHCP Discover 廣播，封包裡就帶著自己的 MAC。
+監聽 UDP/67 是這種狀態下**唯一**能發現設備的方法——CLI 的 `_detect_mac_via_socket()`
+一直都做得到，web 卻沒有，這才是功能落差所在。
+
+### ✨ 新增：DHCP 失聯救援（等同 CLI 的「[2] 新裝置初始設定」）
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| `POST` | `/api/ipconfig/detect-mac` | 監聽 UDP/67 的 DHCP Discover，回傳偵測到的 MAC 清單 |
+| `POST` | `/api/ipconfig/assign` | 開迷你 DHCP server 指派 IP 給指定 MAC，設備上線後再固化為靜態 IP 並自動重連 |
+
+- 前端新增「找不到設備？（DHCP 失聯救援）」面板：偵測 MAC → 單選要救的 MAC →
+  填入要指派的 IP → 一鍵完成「指派 + 固化靜態 + 重新連線」
+- 新增 `_dhcp_lock`：UDP/67 是獨佔資源，MAC 偵測與迷你 DHCP server 必須互斥（並發回 409）
+- 綁定 port 67 在 Windows 上**不需要管理員權限**；被 BootP-DHCP Tool 之類占用時回 503 並指出占用行程
+
+### 🏗️ DHCP 原語下沉到 core，CLI 與 web 共用
+
+`open_dhcp_socket` / `detect_dhcp_macs` / `build_dhcp_reply` / `serve_dhcp` /
+`dhcp_msg_type` / `normalize_mac` / `iface_mac_for` 移入 `caparoc_ip_core.py`，
+print 一律改為 callback（`on_found` / `on_progress` / `on_event`）。
+`caparoc_ip_config.py` 只留印畫面的薄包裝，CLI 輸出逐字不變（`caparoc_ip_config.py` 少約 90 行）。
+
+### 🐛 順手修掉：DHCP 訊息型別判斷錯誤（既有 bug）
+
+- **根因**：`_detect_mac_via_socket()` 用 `data[0] != DHCP_DISCOVER` 判斷訊息型別，
+  但 `data[0]` 是 BOOTP 的 `op` 欄位（1 = BOOTREQUEST），**不是 Option 53**。
+  因為 `DHCP_DISCOVER` 剛好也等於 1 才「看起來能動」，實際上會把
+  REQUEST / RELEASE / INFORM 全部誤判成 Discover
+- **修正**：新增 `dhcp_msg_type()` 正確走 Option 迴圈解析，偵測與 serve 兩條路徑統一使用。
+  單元驗證：`op=1 + Option53=3(REQUEST)` 現在正確回傳 3（舊碼會回報成 Discover）
+- 這在 web 上更要緊——UI 會把「偵測到設備 MAC」當成確認步驟顯示給使用者
+
+### ⏱️ 偵測預設時間 30 秒 → 90 秒
+
+實機實測設備約**每 60 秒**才送一次 DHCP Discover（重試間隔會逐次拉長），
+30 秒會誤以為偵測不到。預設改 90 秒、上限 180 秒，UI 也說明可再按一次或重插網路線。
+
+### ✅ 實機驗證（用新功能救回真的失聯的設備）
+
+測試期間設備確實處於「DHCP 模式 + 無 DHCP server」的失聯狀態，
+掃描、ARP、舊位址探測全部無回應。完整走過 web 救援流程：
+
+| 步驟 | 結果 |
+|---|---|
+| 掃描 | `devices: []`（重現使用者回報的現象） |
+| `POST /api/ipconfig/detect-mac`（90 秒） | 偵測到 `cc:cc:ea:9f:c9:72`，約 61 秒 |
+| `POST /api/ipconfig/assign` | `assigned/online/static_set/connected` 全為 true，耗時 51 秒 |
+| 事後確認 | `192.168.50.111 / 255.255.255.0 / Static IP`，已連線，3 模組 24.24V |
+| 事後掃描 | EIP 掃到設備且帶 MAC |
+| CLI 迴歸 | 探索路徑與 [2] 新裝置設定選單輸出皆與改動前一致 |
+
+---
+
+## [2026-08-28] IP 設定頁實機測試修正：4 項問題（fix/web-cip-concurrency）
+
+> 使用者實機操作後回報 4 項問題，逐一重現並修正。全部已在實機（CAPAROC PM EIP，
+> 192.168.50.111，S/N 522F0E7A）驗證通過。
+
+### 🐛 無法變更靜態 IP —— 寫入順序反了（最嚴重）
+
+- **現象**：Web 按下「套用靜態 IP」永遠失敗；連帶「目前網路設定」一直顯示 DHCP
+  （因為模式根本沒切成功，畫面顯示的其實是事實）
+- **根因**：`set_device_ip()` 的順序是「先寫 Attr5（IP）再寫 Attr3（模式）」。
+  但設備處於 DHCP 模式時**會拒絕寫入 Attr5**，回 CIP 錯誤 `Object state conflict`
+  ——介面設定由 DHCP 掌控，不接受手動改。實機用相同值測試 Attr5 寫入即可穩定重現
+- **修正**：改為 **先 Attr3 = 0（切 Static）、再 Attr5（寫 IP/遮罩/閘道）**。
+  兩者仍都要寫——只寫 Attr3 的話設備會沿用舊的 Attr5 值而非使用者輸入的新 IP
+- **附帶修正**：新增 `_cip_set_detail()`，回傳 `was_exception` 旗標以分辨
+  「設備明確回 CIP 錯誤」（真失敗）與「送出後拿不到回應」（IP 已變、連線中斷，屬正常）。
+  舊寫法把兩者都當失敗，導致改 IP 即使成功也會被誤報為失敗
+- `set_device_ip()` 回傳新增 `unverified` 欄位，標示「已送出但未取得確認」
+
+### 🐛 掃描不到 MAC、無法選擇網卡
+
+- **根因 1（MAC）**：List Identity 回應**本身不含 MAC**（只有 IP/廠商/序號/產品名），
+  只有 ARP 後援路徑才有 MAC；且前端表格根本沒有 MAC 欄位
+- **修正 1**：新增 `arp_table()` / `arp_mac_map()`，EIP 探索完成後以 ARP 表補齊 MAC
+  （設備剛回應過廣播，本機 ARP 表必然有它），讓兩條探索路徑欄位一致；前端表格加 MAC 欄
+- **根因 2（網卡）**：CLI 的 `_pick_iface()` 只用在新裝置配置流程，探索路徑沒有網卡選擇；
+  而多網卡機器上不綁定介面時，OS 會依路由表決定導向廣播從哪張網卡送出，很容易送錯而掃不到。
+  實測：本機有 5 張網卡，指定 `192.168.50.255` 但不綁定 socket 時掃不到設備
+- **修正 2**：新增 `list_interfaces()`（scapy `conf.ifaces`，含友善描述與 MAC）與
+  `GET /api/ipconfig/interfaces`；`discover(iface_ip=...)` 會**把 socket 綁到該網卡 IP**
+  並同時送導向廣播與受限廣播。前端新增「掃描網卡」下拉選單
+- 實測：指定設備所在網卡（192.168.50.1 / Realtek USB GbE）可穩定以 EIP 掃到並帶 MAC
+
+### 🐛 靜態 IP 時「設定方式」單選停在錯誤選項
+
+- **根因**：`ipMode` 單選是獨立 ref，固定預設 `static`，不反映設備實際模式，
+  造成上方資訊表顯示 DHCP、下方單選卻停在靜態 IP 的自相矛盾畫面
+- **修正**：讀取設定後依 `config_control` 同步 `ipMode`（0→static、2→dhcp）
+
+### ⚠️ 切換 DHCP 的風險警告（實測踩到）
+
+測試過程中把設備切成 DHCP，而 192.168.50.x 是**電腦直連網段、沒有 DHCP server**，
+設備隨即完全失聯（廣播、ARP、直接探測舊位址全部無回應）。
+最後是用專案自帶的迷你 DHCP server 救回（`_open_dhcp_socket` + `_serve_dhcp`，
+指派 192.168.50.111 給 MAC cc:cc:ea:9f:c9:72），設備才重新上線。
+
+- **修正**：UI 的 DHCP 選項警告從一行 `hint-text` 改為顯眼的 `stale-banner`，
+  明確寫出「若網段沒有 DHCP server，設備會**完全失聯**」，並附上救援指令
+  （`python src/caparoc_ip_config.py` → [2] 新裝置初始設定）與「先記下 MAC」的提醒；
+  確認對話框內同步強化
+
+### ✅ 實機驗證
+
+| 項目 | 結果 |
+|---|---|
+| 網卡列舉 | 5 張網卡，含 IP/MAC/友善描述 |
+| 指定網卡掃描 + MAC | EIP 掃到 192.168.50.111，MAC `cc-cc-ea-9f-c9-72` |
+| 目前設定顯示 | `config_control=0` → Static IP，與設備一致 |
+| 變更靜態 IP `.111 → .112` | 成功，含自動重連，耗時 2.2 秒 |
+| 還原 `.112 → .111` | 成功，含自動重連，耗時 2.2 秒 |
+| **DHCP → 靜態 IP**（原本失敗的路徑） | **成功**，`config_control` 2 → 0 |
+| CLI 迴歸（探索） | 輸出與改動前一致 |
+
+---
+
 ## [2026-08-27] Web 新增「IP 設定」分頁 + 0xF5 讀寫補鎖（fix/web-cip-concurrency）
 
 > 把 `src/caparoc_ip_config.py` 的設備探索與 IP 設定能力搬上 Web UI，側邊欄新增獨立一項「🌐 IP 設定」。

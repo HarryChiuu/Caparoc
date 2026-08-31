@@ -48,6 +48,13 @@
     --warn: #ff9800;
     --amber: #f0b429;
     --dot-off: #555;
+    /* 實體 LED 指示燈專用：不沿用 --ok/--err/--amber（那組在白天模式為了文字對比被刻意加深，
+       當成小圓點會顯得灰暗）。這裡兩個主題都用飽和、明亮的「發光」色。 */
+    --led-green: #3ddc63;
+    --led-red: #ff4d40;
+    --led-yellow: #ffca28;
+    --led-off-bg: transparent;
+    --led-off-border: var(--border-strong);
 
     --tint-ok-bg: #12201a;
     --tint-ok-border: #4caf50aa;
@@ -106,6 +113,12 @@
     --warn: #b35f00;
     --amber: #8f6200;
     --dot-off: #aeb6c3;
+    /* 白天模式的 LED：仍要飽和明亮，但比夜間稍微加深一點點才不會在白底上發虛 */
+    --led-green: #16b34a;
+    --led-red: #f0392b;
+    --led-yellow: #f5b301;
+    --led-off-bg: #cdd4df;
+    --led-off-border: #9aa4b4;
 
     --tint-ok-bg: #e7f5ec;
     --tint-ok-border: #59b96a;
@@ -1282,6 +1295,115 @@ input:disabled {
 }
 .btn-refresh:hover:not(:disabled) { color: var(--text-bright); border-color: var(--accent); }
 .btn-refresh:disabled { opacity: 0.4; cursor: default; }
+
+/* ── 原廠 Web 介面（webif）面板 ─────────────
+   系統狀態頁下半部三個面板共用。資料源與 CIP 不同，樣式刻意沿用既有
+   .panel / .net-info-table，只補這裡真正缺的：子標題、LED 燈點、事件標籤。 */
+.webif-sub {
+    font-size: 0.85rem; font-weight: 600; color: var(--text-dim);
+    letter-spacing: 0.3px; margin: 16px 0 8px;
+}
+.webif-sub:first-of-type { margin-top: 4px; }
+/* 面板開頭的資料來源說明：比一般 hint 再淡一階，不與內容爭視線 */
+.webif-src-note { color: var(--text-faint); }
+.webif-stale-warn { color: var(--warn); }
+/* 表格內的補充說明（例如「與 CIP Identity 不同」），不換行撐開欄位 */
+.webif-hint-inline { color: var(--text-fainter); font-size: 0.78rem; margin-left: 6px; }
+.webif-led-name { font-weight: 600; letter-spacing: 0.05em; }
+.webif-mod-block + .webif-mod-block { margin-top: 18px; }
+.webif-fault-events {
+    display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px;
+    font-size: 0.85rem; margin-bottom: 10px;
+}
+.webif-label { color: var(--text-dim); }
+.webif-none  { color: var(--text-faint); }
+.webif-fault-tag {
+    padding: 2px 8px; border-radius: 4px; font-size: 0.8rem;
+    background: var(--bg-inset); border: 1px solid var(--border-soft); color: var(--err);
+}
+.webif-err  { color: var(--err); font-weight: 600; }
+.webif-warn { color: var(--warn); font-weight: 600; }
+
+/* LED 狀態欄只畫燈點不寫文字（顏色語意集中在「ℹ️ 燈號說明」視窗）。
+   欄位收窄到剛好容納「狀態」二字，表頭與燈點都置中 → 落在同一條垂直線上。
+   關鍵在下方 .led-status-table 把「說明」欄設為 width:100% 吸走所有多餘寬度，
+   否則 auto-layout 會把剩餘寬度平均分給前兩欄，燈點就會浮在寬欄中央、遠離「狀態」。 */
+.th-led { width: 1%; white-space: nowrap; }
+/* 需帶 .net-info-table 前綴才壓得過 `.net-info-table th { text-align: left }`（同為 0,1,1），
+   否則表頭「LED」／「狀態」會靠左，與置中的燈點對不齊 */
+.net-info-table th.th-led,
+.net-info-table td.td-led { text-align: center; }
+
+.led-status-table th:first-child,
+.led-status-table td:first-child { width: 1%; white-space: nowrap; }
+.led-status-table th:last-child,
+.led-status-table td:last-child { width: 100%; }
+
+/* 故障事件記憶：每模組一張表，用 fixed layout + colgroup 鎖死欄寬，
+   M1／M2 兩張表才會欄位對齊；LED 欄固定寬 + 置中，燈點落在「LED」表頭正下方 */
+.webif-ch-table { table-layout: fixed; }
+.webif-ch-table .wc-ch  { width: 72px; }
+.webif-ch-table .wc-led { width: 60px; }
+.webif-ch-table .wc-err { width: auto; }
+.webif-ch-table .wc-cnt { width: 96px; }
+.webif-ch-table .wc-amp { width: 140px; }
+.webif-ch-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* LED 燈點：色值直接對應原廠回傳的 color 字串（off/red/green/yellow/blinking-*） */
+.led-dot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    margin-right: 6px; vertical-align: middle;
+    background: var(--text-fainter); border: 1px solid var(--border-strong);
+}
+/* 單獨呈現（無文字並列）時放大，並取消右邊距 */
+.led-dot.led-lg { width: 15px; height: 15px; margin-right: 0; }
+.led-off    { background: var(--led-off-bg); border-color: var(--led-off-border); }
+.led-red    { background: var(--led-red);    border-color: var(--led-red);    box-shadow: 0 0 4px 0 var(--led-red); }
+.led-green  { background: var(--led-green);  border-color: var(--led-green);  box-shadow: 0 0 4px 0 var(--led-green); }
+.led-yellow { background: var(--led-yellow); border-color: var(--led-yellow); box-shadow: 0 0 4px 0 var(--led-yellow); }
+.led-blinking-red    { background: var(--led-red);    border-color: var(--led-red);    box-shadow: 0 0 4px 0 var(--led-red);    animation: led-blink 1s step-end infinite; }
+.led-blinking-green  { background: var(--led-green);  border-color: var(--led-green);  box-shadow: 0 0 4px 0 var(--led-green);  animation: led-blink 1s step-end infinite; }
+.led-blinking-yellow { background: var(--led-yellow); border-color: var(--led-yellow); box-shadow: 0 0 4px 0 var(--led-yellow); animation: led-blink 1s step-end infinite; }
+
+@keyframes led-blink {
+    50% { opacity: 0.15; }
+}
+
+/* 面板標題列的說明按鈕（沿用 .btn-refresh 的低調外觀，但要容納文字） */
+.btn-help {
+    margin-left: 10px; padding: 2px 9px; font-size: 0.78rem; font-weight: 400;
+    background: transparent; border: 1px solid var(--border-strong); border-radius: 4px;
+    color: var(--text-dim); cursor: pointer; vertical-align: middle;
+    transition: color 0.15s, border-color 0.15s;
+}
+.btn-help:hover { color: var(--text-bright); border-color: var(--accent); }
+
+/* 燈號說明視窗的子標題與圖例表 */
+.modal-sub {
+    font-size: 0.85rem; font-weight: 600; color: var(--accent);
+    margin: 18px 0 8px;
+}
+.modal-sub:first-child { margin-top: 0; }
+.led-legend { margin-bottom: 4px; }
+/* 圖例三欄：燈點 / 狀態名 / 說明。
+   選擇器刻意帶滿 .net-info-table.led-legend，才壓得過上方
+   `.net-info-table:not(.data-table) td:first-child` 的鍵值表規則（同為 0,3,1）。 */
+.net-info-table.led-legend td:first-child {
+    width: 28px; text-align: left; padding-right: 0;
+}
+.net-info-table.led-legend td:nth-child(2) {
+    width: 1%; white-space: nowrap; color: var(--text); padding-right: 18px;
+}
+.net-info-table.led-legend td:last-child {
+    color: var(--text-dim); font-size: 0.85rem;
+}
+
+/* 偏好減少動態效果時不閃爍（改為半透明區別於恆亮） */
+@media (prefers-reduced-motion: reduce) {
+    .led-blinking-red,
+    .led-blinking-green,
+    .led-blinking-yellow { animation: none; opacity: 0.55; }
+}
 
 /* ── 圖表監控頁 ─────────────────────────── */
 .chart-header {

@@ -78,6 +78,13 @@ createApp({
                 return s ? JSON.parse(s) : null;
             } catch (_) { return null; }
         })());
+        // 原廠 Web 介面資訊（HTTP/80，與 CIP 獨立）：從 localStorage 恢復
+        const webifInfo = ref((() => {
+            try {
+                const s = localStorage.getItem('caparoc_webif_info');
+                return s ? JSON.parse(s) : null;
+            } catch (_) { return null; }
+        })());
         let ws = null;
         let wsRetryTimer = null;
         let _wasConnected = false;  // 連線狀態變化偵測
@@ -267,6 +274,46 @@ createApp({
             deviceInfoRefreshing.value = false;
             _cipReadInFlight = false;
         }
+
+        // ---- 原廠 Web 介面（webif）----------------------------------------
+        // 走 HTTP/80，與 CIP 完全獨立：刻意不看 state.connected、不佔 _cipReadInFlight。
+        // CIP 斷線時仍可讀，故障事件記憶在那個時候最有用。
+        const webifInfoRefreshing = ref(false);
+        // 讀過一次但設備無回應（用來區分「還沒讀」與「讀了沒有」）
+        const webifUnavailable = ref(false);
+        // 燈號說明視窗開關（表格只畫燈點，顏色語意集中在此視窗）
+        const showLedHelp = ref(false);
+
+        async function fetchWebifInfo() {
+            try {
+                const r = await fetch('/api/device/webif');
+                if (r.ok) {
+                    const data = await r.json();
+                    if (data.available) {
+                        webifInfo.value = data;
+                        webifUnavailable.value = false;
+                        try { localStorage.setItem('caparoc_webif_info', JSON.stringify(data)); } catch (_) { }
+                        return true;
+                    }
+                }
+            } catch (_) { }
+            webifUnavailable.value = true;
+            return false;
+        }
+
+        async function refreshWebifInfo() {
+            if (webifInfoRefreshing.value) return;
+            webifInfoRefreshing.value = true;
+            await fetchWebifInfo();   // 失敗時保留舊值（快取），由 webifUnavailable 標示
+            webifInfoRefreshing.value = false;
+        }
+
+        // webif 的模組故障記憶／通道錯誤是否有任何一筆（決定故障面板顯示「無紀錄」與否）
+        const webifHasFaults = computed(() => {
+            const mods = webifInfo.value?.modules || [];
+            return mods.some(m => (m.fault_events || []).length > 0
+                || (m.channels_data || []).some(c => c.errorid || c.errorcounter));
+        });
 
         // ==================== IP 設定頁 ====================
         // 本區塊的 state 與函式刻意集中在一起，日後若要抽成 composable 可整段搬走。
@@ -999,7 +1046,11 @@ createApp({
             if (page === 'charts') { nextTick(_initCharts); }
             if (prevPage === 'charts') { _destroyCharts(); }
             // 進入系統狀態頁且已連線 → 自動重新讀取最新設定
-            if (page === 'system-status' && state.connected) refreshDeviceInfo();
+            // webif 走 HTTP/80 與 CIP 無關，未連線也讀（此時故障事件記憶最有價值）
+            if (page === 'system-status') {
+                if (state.connected) refreshDeviceInfo();
+                refreshWebifInfo();
+            }
             // 進入連線設定頁且已連線 → 自動重新讀取網路資訊
             if (page === 'connection' && state.connected) refreshNetworkInfo();
             // 進入 IP 設定頁且已連線 → 自動讀取目前網路設定
@@ -1051,6 +1102,8 @@ createApp({
             doConnect, doDisconnect, toggleCh, channelToggling, channelToggleError,
             networkInfo, deviceInfo, deviceInfoRefreshing, networkInfoRefreshing,
             refreshDeviceInfo, refreshNetworkInfo,
+            webifInfo, webifInfoRefreshing, webifUnavailable, webifHasFaults, refreshWebifInfo,
+            showLedHelp,
             nominalInputs, nominalFeedback, nominalBusy, batchNominal, batchStatus, batchBusy,
             setNominal, setAllNominal,
             batchNominalByMod, batchStatusByMod, batchBusyByMod,

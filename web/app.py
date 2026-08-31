@@ -47,6 +47,9 @@ from caparoc_ip_core import (  # noqa: E402
     discover, is_valid_ip, wait_for_device, list_interfaces,
     open_dhcp_socket, detect_dhcp_macs, serve_dhcp, iface_mac_for, normalize_mac,
 )
+# 原廠 Web 介面（HTTP/80，與 CIP 完全獨立）的補充唯讀資訊：硬體清單 / 韌體版本 /
+# LED 狀態 / 每模組故障事件記憶。純函式，任何失敗回 None，不 raise。
+import caparoc_http  # noqa: E402
 
 # 同時只允許一次網段掃描：掃描會開 32 條探測執行緒，兩個分頁同時按會互相干擾
 _discover_lock = threading.Lock()
@@ -312,6 +315,73 @@ async def api_device_info():
         raise HTTPException(status_code=503, detail="設備未連線")
     info = await asyncio.to_thread(backend.get_device_info)
     return info
+
+
+def _demo_webif_info() -> dict:
+    """--demo 模式的原廠 Web 介面假資料（走 merge_http_info 產生，結構與實機一致）。"""
+    si = {
+        "powermodule": {
+            "generaldata": {
+                "name": "CAPAROC PM EIP", "orderid": "1393553",
+                "serialnumber": "DEMO-0000", "hwversion": 0, "fwversion": "1.0.0",
+            },
+            "networkinfo": {
+                "dnsname": "caparoc-demo", "ip": "192.168.2.111",
+                "subnetmask": "255.255.255.0", "defaultgateway": "192.168.2.1",
+                "mac": "00:A0:45:DE:MO:01",
+            },
+            "leds": [
+                {"name": "PWR", "color": "green", "en": "Operating voltage present"},
+                {"name": "NET", "color": "green", "en": "Connected"},
+                {"name": "MOD", "color": "green", "en": "Device operational"},
+                {"name": "RDY", "color": "blinking-green", "en": "Device is ready for operation"},
+            ],
+        },
+        "cbmodules": [
+            {"name": "CAPAROC E4 12-24DC/1-4A", "serialnumber": "DEMO-M1",
+             "hwversion": 1, "fwversion": "1.0.2", "channels": 4,
+             "errorevents": [6, 2, 0, 0, 0, 0, 0, 0, 0, 0]},
+            {"name": "CAPAROC E4 12-24DC/1-4A", "serialnumber": "DEMO-M2",
+             "hwversion": 1, "fwversion": "1.0.2", "channels": 4,
+             "errorevents": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]},
+        ],
+    }
+    pd = {
+        "powermodule": {
+            "voltage": 2410, "totalcurrent": 78,
+            "cumulativeerror": "off", "80percenterror": "on", "totalcurrenterror": "off",
+        },
+        "cbmodules": [
+            [{"nominalcurrent": 4, "current": 5, "led": "green", "errorid": 0, "errorcounter": 0},
+             {"nominalcurrent": 4, "current": 34, "led": "yellow", "errorid": 0, "errorcounter": 1},
+             {"nominalcurrent": 4, "current": 46, "led": "red", "errorid": 2, "errorcounter": 3},
+             {"nominalcurrent": 4, "current": 255, "led": "blinking-red", "errorid": 1, "errorcounter": 7}],
+            [{"nominalcurrent": 4, "current": 0, "led": "off", "errorid": 4, "errorcounter": 2},
+             {"nominalcurrent": 4, "current": 0, "led": "off", "errorid": 0, "errorcounter": 0},
+             {"nominalcurrent": 2, "current": 0, "led": "off", "errorid": 0, "errorcounter": 0},
+             {"nominalcurrent": 4, "current": 12, "led": "green", "errorid": 0, "errorcounter": 0}],
+        ],
+    }
+    return caparoc_http.merge_http_info(si, pd)
+
+
+@app.get("/api/device/webif")
+async def api_device_webif():
+    """
+    原廠 Web 介面（GET /webif/systeminfo + /webif/processdata）的補充唯讀資訊。
+
+    與 CIP 完全獨立：走 HTTP/80、無 session、免認證，只要 backend.device_ip 可達即可，
+    刻意不檢查 backend.is_connected——CIP session 斷了但設備還在時這裡仍讀得到，
+    且每模組的故障事件記憶正是此時最有價值。
+
+    抓不到一律回 {"available": false}（HTTP 200），不丟 503——這是補充資料而非關鍵路徑。
+    """
+    if _DEMO_MODE:
+        return {"available": True, **_demo_webif_info()}
+    data = await asyncio.to_thread(caparoc_http.fetch_http_info, backend.device_ip)
+    if data is None:
+        return {"available": False}
+    return {"available": True, **data}
 
 
 @app.post("/api/device/reprobe-nominal")

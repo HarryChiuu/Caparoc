@@ -1087,14 +1087,13 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-#### 4.9 原廠 Web 介面資料整合（`caparoc_http.py`）🔧 部分完成（客戶端已就緒，尚未接上）
+#### 4.9 原廠 Web 介面資料整合（`caparoc_http.py`）✅ 已接上 web（2026-08-31，尚待實機驗證）
 
 > **目的**：設備除了 EtherNet/IP CIP，還有一個未公開的原廠 Web 介面
 > （`GET http://<ip>/webif/systeminfo`、`GET http://<ip>/webif/processdata`，皆無需認證），
 > 能拿到 CIP 讀不到的資訊：硬體清單、韌體版本、LED 狀態、故障事件記憶（每模組最近 10 筆）。
-> **狀態**：`src/caparoc_http.py`（244 行）+ `tests/test_caparoc_http.py`（193 行，8 個測試）
-> 已存在於工作目錄且測試全過，但**目前沒有任何地方 import 它**——尚未接進 `web/app.py`，
-> 對使用者而言等於不存在。`requirements.txt` 已加 `requests>=2.32.0` 依賴。
+> **狀態**：客戶端（`src/caparoc_http.py` 244 行 + 8 個測試）已於 `8085134` 提交；
+> 本輪接上 web 層——新增 `GET /api/device/webif` 與系統狀態頁三個「原廠介面」面板。
 
 **已完成（`caparoc_http.py`，純函式，無 class，任何失敗一律回 `None`/部分資料，不 raise）**：
 - [x] `fetch_systeminfo(ip)` / `fetch_processdata(ip)` — 各打一支端點，回傳 `data` 區塊或 `None`
@@ -1106,16 +1105,45 @@ def _show_monitor_status(self, status, changes):
       per-channel current /10、nominalcurrent 為整數安培不除）
 - [x] `tests/test_caparoc_http.py`：8 個測試全過（含 fixtures，無網路依賴）
 
-**待做（接上 web 層）**：
-- [ ] `web/app.py`：決定資料流——是併入現有 `/api/device/info` 或 `/api/device/network`，
-      還是新開 `GET /api/device/webif` 端點（後者較不會混淆既有欄位語意，比照本檔
-      「🌐 Web「IP 設定」」節記取的 `/api/device/network` vs `/api/ipconfig/current`
-      分工教訓：新資料源用新端點，不要塞進語意不合的舊端點）
-- [ ] 補 `_DEMO_MODE` 分支（本專案每個端點的固定稅）
-- [ ] 前端：系統狀態頁或設備識別面板顯示 LED 狀態、故障事件記憶
-- [ ] 決定輪詢頻率／是否併入 WebSocket 推送（原廠 API 逾時設 2.5 秒，不適合每秒打一次；
-      建議比照 `/api/device/info` 走「進頁面才手動/自動讀一次」的既有慣例，而非併入 1 Hz 推送）
-- [ ] `docs/CHANGELOG.md` 待實際接上、通過 demo 與實機驗證後再補條目
+**已完成（接上 web 層，2026-08-31）**：
+- [x] `web/app.py`：**新開 `GET /api/device/webif`**，不併入 `/api/device/info` 或 `/api/device/network`
+      （比照本檔「🌐 Web「IP 設定」」節記取的 `/api/device/network` vs `/api/ipconfig/current`
+      分工教訓：新資料源用新端點）
+- [x] `_DEMO_MODE` 分支：`_demo_webif_info()` 走 `merge_http_info()` 產生，結構與實機一致，
+      並刻意涵蓋 80% 警告 / 過載 / 短路 / 硬體故障 / 非空 `fault_events` / 非零 `errorcounter`
+- [x] 前端：系統狀態頁下半部三個面板——硬體與韌體、LED 狀態、故障事件記憶
+- [x] LED 呈現：狀態欄只畫燈點不寫顏色字（`green`/`blinking-green`…只留 `title`），
+      顏色語意集中到「ℹ️ 燈號說明」modal（顏色通則 + NET/MOD/通道燈各自的判讀，
+      沿用 `channel-settings` 頁那套 `.modal-*`）；`.webif-ch-table` 用 `table-layout: fixed`
+      + `<colgroup>` 鎖欄寬，M1／M2 兩張表對齊、燈點落在「LED」表頭正下方
+- [x] LED 配色：拉獨立 token `--led-green`/`--led-red`/`--led-yellow`（不沿用 `--ok`/`--err`/`--amber`
+      ——那組在白天模式為文字對比被刻意加深，當小圓點會發灰），兩主題都用飽和發光色 +
+      `box-shadow` 柔光暈；熄滅燈在白天模式改為淺灰底（原本全透明幾乎看不到）
+- [x] 輪詢頻率：比照 `/api/device/info` 走「進頁面讀一次 + 手動 ↻」，**不併入 1 Hz WebSocket 推送**
+      （原廠 API 兩支端點各 2.5 秒逾時，設備不可達時單次最長約 5 秒）
+- [x] `?v=4.8.0 → 4.9.0`（`index.html` 兩處）
+- [x] `WEB_UI_FEATURE_REFERENCE.md`：端點表、CIP vs webif 對照、NET LED 判讀、回應範例
+- [ ] `docs/CHANGELOG.md` 待實機驗證後再補條目
+
+**關鍵設計決策：`/api/device/webif` 不檢查 `is_connected`**
+
+webif 走 HTTP/80、無 session、免認證，與 CIP（44818、有 session、`_cip_lock` 互斥）是兩條獨立傳輸。
+CIP session 掉了但設備還活著時這裡仍讀得到，而**每模組的故障事件記憶正是那個時候最有價值**。
+因此本端點只要 `backend.device_ip` 有值就試，且**一律回 HTTP 200**——
+抓不到回 `{"available": false}`，不丟 503（這是補充資料，不是關鍵路徑）。
+前端 `fetchWebifInfo()` 對應地不看 `state.connected`、不佔 `_cipReadInFlight`。
+
+**NET LED 判讀備忘**（實機已確認）：綠色恆亮＝至少一條 CIP 連線在線；綠色閃爍＝已上線但無 CIP 連線；
+紅閃＝連線逾時；紅恆亮＝IP 衝突。⚠️ 反映的是**任何 client** 的連線（PLC / 其他工具也算），
+**不可拿來取代 `backend.is_connected`** 判斷本程式的連線狀態。
+
+**⚠️ 尚未實機驗證**：demo 模式已通過（端點回 200、三面板渲染、靜態資源版號正確、
+不可達 IP 回 `{"available": false}` 不 raise）。接實機 192.168.50.111 後需確認：
+webif 讀回的 voltage/current 與同刻 `/api/status` 的 CIP 值一致、模組清單與實體相符、
+LED 顏色與面板實況相符、CIP 斷線狀態下此頁仍讀得到。
+
+**不在本次範圍**（另立項目）：用 webif 的 `nominal_min`/`nominal_max` 去驅動 4.3.5
+通道設定頁的輸入範圍與反灰。本次三個面板皆為唯讀顯示。
 
 ---
 

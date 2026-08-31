@@ -311,14 +311,31 @@ set_nominal_current(1, 2, 4, verify=True)   # 模組1 通道2 設為 4A
 
 ## 4. Web UI 頁面一覽（Phase 4.2）
 
-| 頁面 | 路徑 | 對應後端 | 說明 |
-|------|------|----------|------|
-| 儀表板 | `#dashboard` | `_read_current_status()` / WebSocket | 通道卡片、開關按鈕、即時電流 |
-| 通道設定 | `#channel-config` | `set_nominal_current()` / `GET /api/status` | 額定電流表格（可編輯） |
-| 圖表監控 | `#chart` | `GET /api/history?minutes=N` | 雙 Y 軸、模組分圖、zoom、30 分鐘歷史 |
-| 系統日誌 | `#logs` | `GET /api/logs` | 等級篩選、顏色編碼、預載今日 .log |
-| 系統狀態 | `#device-status` | `GET /api/device/info` | Identity Object + Class 0x0F |
-| 連線設定 | `#connection` | `GET /api/device/network` / `POST /api/connect` | IP 表單 + 網路資訊面板 |
+> **導覽機制**：SPA 式 `v-if` 分頁切換，由 `app.js` 的 `currentPage` ref 控制。
+> **沒有 router、沒有 hash、不寫入瀏覽歷史**——下表的「頁面代號」是 `navItems` 裡的 `page` 值，
+> 不是可直接輸入的網址錨點。
+
+| 頁面 | 頁面代號 | 對應後端 | 說明 |
+|------|----------|----------|------|
+| 儀表板 | `dashboard` | `_read_current_status()` / WebSocket | 通道卡片、開關按鈕、即時電流 |
+| 圖表監控 | `charts` | `GET /api/history?minutes=N` | 雙 Y 軸、模組分圖、zoom、30 分鐘歷史 |
+| 通道設定 | `channel-settings` | `set_nominal_current()` / `POST /api/channels/nominal` | 額定電流表格（依模組分區，可編輯） |
+| 系統日誌 | `logs` | `GET /api/logs` | 等級篩選、顏色編碼、分頁、自動更新 |
+| 系統狀態 | `system-status` | `GET /api/device/info`、`GET /api/device/webif` | 上半：Identity Object + Class 0x0F（CIP）；下半三個「原廠介面」面板：硬體與韌體、LED 狀態、故障事件記憶（HTTP） |
+| 連線設定 | `connection` | `GET /api/device/network` / `POST /api/connect` | IP 連線表單 + 網路資訊面板（MAC / hostname） |
+| IP 設定 | `ip-config` | `GET /api/ipconfig/{current,interfaces}`、`POST /api/ipconfig/{discover,static,dhcp,detect-mac,assign}` | 網卡選擇 + 網段搜尋（含 MAC）、讀取/變更設備 IP、切換 DHCP、DHCP 失聯救援 |
+
+> ⚠️ **`/api/device/network` 與 `/api/ipconfig/current` 容易混淆**：
+> 前者走 `get_network_info()`（0xF5 + 0xF6），提供 **MAC / hostname**，但**沒有** IP 取得方式；
+> 後者走 `read_device_network_config()`（0xF5 Attr1/3/5），提供 **`config_control`
+> （Static / BOOTP / DHCP）**，是「IP 設定」頁判斷目前模式所必需。
+> 兩者用途不同，**新增欄位前先確認要加在哪一支**。
+
+> ⚠️ **系統狀態頁有兩個獨立資料源，別把欄位加錯邊**：
+> 上半部（設備識別／全域設定）走 **CIP**（`/api/device/info`，需 `is_connected`）；
+> 下半部三個「原廠介面」面板走 **HTTP/80**（`/api/device/webif`，**不需 CIP 連線**）。
+> 兩邊都有「韌體版本」但**意義不同**：CIP 那個是 Identity Object 的 revision（如 `1.3`），
+> webif 那個是原廠 Web 介面回報的 `fwversion`（如 `1.0.0`）。UI 已加註說明，勿合併。
 
 ---
 
@@ -358,6 +375,93 @@ set_nominal_current(1, 2, 4, verify=True)   # 模組1 通道2 設為 4A
   "product_name": "CAPAROC PM EIP"
 }
 ```
+
+### 5.2 原廠 Web 介面端點（Phase 4.9）
+
+| 端點 | 方法 | 說明 | 對應實作 |
+|------|------|------|---------|
+| `/api/device/webif` | GET | 原廠 Web 介面的補充唯讀資訊：硬體清單、韌體版本、LED 狀態、每模組故障事件記憶、每通道累計跳脫次數 | `src/caparoc_http.py` 的 `fetch_http_info()` |
+
+**與其他 `/api/device/*` 端點的根本差異**：
+
+| | `/api/device/info`、`/api/device/network` | `/api/device/webif` |
+|---|---|---|
+| 傳輸 | EtherNet/IP CIP，TCP 44818 | HTTP GET，TCP 80 |
+| 狀態性 | 有 session（註冊握手 + heartbeat 維持） | 無狀態、免認證 |
+| 併發控制 | 佔用 `CIPDriver` 與 `_cip_lock` | 完全不碰 CIP，可與 CIP 讀寫並行 |
+| 前置條件 | **需 `backend.is_connected`**，否則 HTTP 503 | **不需連線**，只要 `backend.device_ip` 可達 |
+| 失敗回應 | HTTP 503 | HTTP 200 + `{"available": false}` |
+
+> **為什麼不 gate `is_connected`**：webif 與 CIP 是兩條獨立傳輸。CIP session 掉了但設備還活著時，
+> 這裡仍讀得到——而每模組的故障事件記憶正是那個時候最有價值。
+> 也因此本端點**不丟 503**：抓不到只是補充資料缺席，不是錯誤路徑。
+> 代價是設備真的不見時會等約 5 秒（兩支端點各 2.5 秒逾時），故前端採「進頁面讀一次 + 手動 ↻」，
+> **不併入 1 Hz WebSocket 推送**。
+
+> **NET LED 判讀**（ODVA Network Status LED 規範）：綠色恆亮＝至少有一條 CIP 連線在線；
+> 綠色閃爍＝已上線但目前無 CIP 連線；紅閃＝連線逾時；紅恆亮＝IP 衝突。
+> ⚠️ 它反映的是**任何 client** 的連線，不僅本程式，**不可拿來取代 `backend.is_connected`**。
+
+**「LED 狀態」面板呈現**：狀態欄只畫燈點（`.led-dot`），不寫 `green` / `blinking-green` 等原始字串
+（仍保留在 `title` 供除錯）。顏色與閃爍的完整判讀集中在標題列「ℹ️ 燈號說明」按鈕開啟的 modal
+（顏色通則 + NET／MOD／通道燈各自意義）。燈色用獨立 token `--led-green` / `--led-red` / `--led-yellow`
+（**不沿用** `--ok` / `--err` / `--amber`——那組為白天模式文字對比被加深，當小圓點會發灰），
+兩個主題都是飽和發光色。故障面板的每模組通道表用 `table-layout: fixed` + `<colgroup>` 鎖欄寬，
+確保多模組時各表對齊。
+
+#### `GET /api/device/webif` 回應範例
+
+```json
+{
+  "available": true,
+  "powermodule": {
+    "name": "CAPAROC PM EIP",
+    "orderid": "1393553",
+    "serialnumber": "1378815610",
+    "hwversion": 0,
+    "fwversion": "1.0.0",
+    "dnsname": "caparoc1",
+    "ip": "192.168.50.111",
+    "mac": "cc:cc:ea:9f:c9:72",
+    "leds": [
+      { "name": "NET", "color": "green", "label": "Connected" }
+    ],
+    "voltage": 24.24,
+    "totalcurrent": 0.4,
+    "cumulativeerror": "off",
+    "percent80error": "off",
+    "totalcurrenterror": "off"
+  },
+  "modules": [
+    {
+      "index": 1,
+      "name": "CAPAROC E4 12-24DC/1-4A",
+      "serialnumber": "1378554559",
+      "hwversion": 1,
+      "fwversion": "1.0.2",
+      "channels": 4,
+      "nominal_min": 1,
+      "nominal_max": 4,
+      "nominal_range_label": "1–4 A",
+      "fault_events": ["Overload channel 2"],
+      "channels_data": [
+        {
+          "channel": 1, "nominalcurrent": 2, "current": 0.0, "led": "off",
+          "errorid": 0, "errorid_text": "-", "errorcounter": 0
+        }
+      ]
+    }
+  ],
+  "source": { "systeminfo": true, "processdata": true }
+}
+```
+
+**欄位備註**：
+- `percent80error` — 原廠鍵名是 `80percenterror`（開頭數字，JS 端存取不安全），已改名。
+- `nominalcurrent` 為**整數安培不除**；`current` ÷10、`voltage` ÷100、`totalcurrent` ÷10。
+- `source.processdata: false` 代表 `/webif/processdata` 沒抓到，即時欄位為 `null`、
+  `channels_data` 為 `[]`，但靜態的模組清單與 `fault_events` 仍有效。
+- `systeminfo` 抓不到 → 整支回 `{"available": false}`（沒有模組清單就沒有意義）。
 
 #### `GET /api/history?minutes=5` 回應範例
 

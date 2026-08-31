@@ -46,6 +46,7 @@ logs/
 *.json
 !config/*.json
 config/device_config.json
+config/nominal_probe_cache.json
 *.xlsx
 output/*
 !output/.gitkeep
@@ -67,3 +68,6 @@ temp/
 
 # AI Agent files
 AIagent_init.md
+
+# Claude Code third-party skills (vendored, not project code)
+.claude/skills/archify/

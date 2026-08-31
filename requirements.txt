@@ -15,6 +15,7 @@ uvicorn[standard]>=0.47.0   # ASGI 伺服器（含 websockets）
 jinja2>=3.1.6             # HTML 模板引擎
 python-multipart>=0.0.28  # Form data 支援
 websockets>=14.0          # WebSocket 協議實作（uvicorn 依賴，顯式列出）
+requests>=2.32.0          # 設備原廠 Web 介面 HTTP JSON API（/webif/systeminfo, /webif/processdata）
 
 # ============================================
 # 開發與測試工具 (可選)

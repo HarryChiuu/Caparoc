@@ -34,6 +34,7 @@ from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 # ==================== 路徑設定 ====================
 _WEB_DIR = Path(__file__).parent
@@ -41,6 +42,23 @@ _ROOT_DIR = _WEB_DIR.parent
 sys.path.insert(0, str(_ROOT_DIR / "src"))
 
 from caparoc_backend import CaparocBackend  # noqa: E402
+# 設備探索／IP 格式判斷的共用實作（與 src/caparoc_ip_config.py CLI 同一份）
+from caparoc_ip_core import (  # noqa: E402
+    discover, is_valid_ip, wait_for_device, list_interfaces,
+    open_dhcp_socket, detect_dhcp_macs, serve_dhcp, iface_mac_for, normalize_mac,
+)
+# 原廠 Web 介面（HTTP/80，與 CIP 完全獨立）的補充唯讀資訊：硬體清單 / 韌體版本 /
+# LED 狀態 / 每模組故障事件記憶。純函式，任何失敗回 None，不 raise。
+import caparoc_http  # noqa: E402
+
+# 同時只允許一次網段掃描：掃描會開 32 條探測執行緒，兩個分頁同時按會互相干擾
+_discover_lock = threading.Lock()
+# UDP port 67 是獨佔資源，MAC 偵測與迷你 DHCP server 都要用，必須互斥
+_dhcp_lock = threading.Lock()
+# 手動中斷旗標：DHCP 監聽／服務都是長時間阻塞作業，只讓前端放棄請求是不夠的——
+# 伺服器執行緒會繼續佔著 UDP/67 與 _dhcp_lock 直到逾時，使用者無法重試。
+# 每次作業開始前 clear()，由 POST /api/ipconfig/dhcp-cancel 設定。
+_dhcp_cancel = threading.Event()
 
 # ==================== Log 攔截器 ====================
 import re as _re
@@ -190,7 +208,7 @@ app.mount("/static", StaticFiles(directory=str(_WEB_DIR / "static")), name="stat
 def _format_status(raw: dict | None) -> dict:
     """將 _read_current_status() 輸出轉換為前端友善格式。"""
     if raw is None:
-        return {"connected": False, "error": "讀取失敗"}
+        return {"connected": False, "device_ip": backend.device_ip, "error": "讀取失敗"}
 
     global_byte = raw.get("global_status_byte", 0)
     channels_raw = raw.get("channels", {})
@@ -299,6 +317,91 @@ async def api_device_info():
     return info
 
 
+def _demo_webif_info() -> dict:
+    """--demo 模式的原廠 Web 介面假資料（走 merge_http_info 產生，結構與實機一致）。"""
+    si = {
+        "powermodule": {
+            "generaldata": {
+                "name": "CAPAROC PM EIP", "orderid": "1393553",
+                "serialnumber": "DEMO-0000", "hwversion": 0, "fwversion": "1.0.0",
+            },
+            "networkinfo": {
+                "dnsname": "caparoc-demo", "ip": "192.168.2.111",
+                "subnetmask": "255.255.255.0", "defaultgateway": "192.168.2.1",
+                "mac": "00:A0:45:DE:MO:01",
+            },
+            "leds": [
+                {"name": "PWR", "color": "green", "en": "Operating voltage present"},
+                {"name": "NET", "color": "green", "en": "Connected"},
+                {"name": "MOD", "color": "green", "en": "Device operational"},
+                {"name": "RDY", "color": "blinking-green", "en": "Device is ready for operation"},
+            ],
+        },
+        "cbmodules": [
+            {"name": "CAPAROC E4 12-24DC/1-4A", "serialnumber": "DEMO-M1",
+             "hwversion": 1, "fwversion": "1.0.2", "channels": 4,
+             "errorevents": [6, 2, 0, 0, 0, 0, 0, 0, 0, 0]},
+            {"name": "CAPAROC E4 12-24DC/1-4A", "serialnumber": "DEMO-M2",
+             "hwversion": 1, "fwversion": "1.0.2", "channels": 4,
+             "errorevents": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]},
+        ],
+    }
+    pd = {
+        "powermodule": {
+            "voltage": 2410, "totalcurrent": 78,
+            "cumulativeerror": "off", "80percenterror": "on", "totalcurrenterror": "off",
+        },
+        "cbmodules": [
+            [{"nominalcurrent": 4, "current": 5, "led": "green", "errorid": 0, "errorcounter": 0},
+             {"nominalcurrent": 4, "current": 34, "led": "yellow", "errorid": 0, "errorcounter": 1},
+             {"nominalcurrent": 4, "current": 46, "led": "red", "errorid": 2, "errorcounter": 3},
+             {"nominalcurrent": 4, "current": 255, "led": "blinking-red", "errorid": 1, "errorcounter": 7}],
+            [{"nominalcurrent": 4, "current": 0, "led": "off", "errorid": 4, "errorcounter": 2},
+             {"nominalcurrent": 4, "current": 0, "led": "off", "errorid": 0, "errorcounter": 0},
+             {"nominalcurrent": 2, "current": 0, "led": "off", "errorid": 0, "errorcounter": 0},
+             {"nominalcurrent": 4, "current": 12, "led": "green", "errorid": 0, "errorcounter": 0}],
+        ],
+    }
+    return caparoc_http.merge_http_info(si, pd)
+
+
+@app.get("/api/device/webif")
+async def api_device_webif():
+    """
+    原廠 Web 介面（GET /webif/systeminfo + /webif/processdata）的補充唯讀資訊。
+
+    與 CIP 完全獨立：走 HTTP/80、無 session、免認證，只要 backend.device_ip 可達即可，
+    刻意不檢查 backend.is_connected——CIP session 斷了但設備還在時這裡仍讀得到，
+    且每模組的故障事件記憶正是此時最有價值。
+
+    抓不到一律回 {"available": false}（HTTP 200），不丟 503——這是補充資料而非關鍵路徑。
+    """
+    if _DEMO_MODE:
+        return {"available": True, **_demo_webif_info()}
+    data = await asyncio.to_thread(caparoc_http.fetch_http_info, backend.device_ip)
+    if data is None:
+        return {"available": False}
+    return {"available": True, **data}
+
+
+@app.post("/api/device/reprobe-nominal")
+async def api_reprobe_nominal():
+    """
+    強制重新探測各模組的額定電流可寫性，並覆寫快取。
+
+    正常情況不需呼叫——連線時會沿用 config/nominal_probe_cache.json 的結果。
+    只有更換模組（但模組總數不變）導致快取失準時才需要。
+    ⚠️ 探測會短暫改寫設備的額定電流再還原。
+    """
+    if _DEMO_MODE:
+        return {"success": True, "readonly_modules": []}
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="設備未連線")
+    await asyncio.to_thread(backend._probe_all_modules, True)
+    return {"success": True,
+            "readonly_modules": sorted(backend._nominal_readonly_modules)}
+
+
 @app.post("/api/shutdown")
 async def api_shutdown():
     """優雅關閉伺服器（斷線設備 + 停止程序）。"""
@@ -320,7 +423,10 @@ def channel_on(channel_id: int):
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="未連線")
     module, ch = backend.get_module_and_channel(channel_id)
-    backend.set_channel(module, ch, True)
+    # show_result=False：終端機輸出前端看不到，WebSocket 一秒內就會推送真實狀態
+    ok = backend.set_channel(module, ch, True, show_result=False)
+    if not ok:
+        raise HTTPException(status_code=500, detail="開啟失敗，請確認設備連線")
     return {"success": True, "channel": channel_id, "state": "on"}
 
 
@@ -332,7 +438,9 @@ def channel_off(channel_id: int):
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="未連線")
     module, ch = backend.get_module_and_channel(channel_id)
-    backend.set_channel(module, ch, False)
+    ok = backend.set_channel(module, ch, False, show_result=False)
+    if not ok:
+        raise HTTPException(status_code=500, detail="關閉失敗，請確認設備連線")
     return {"success": True, "channel": channel_id, "state": "off"}
 
 
@@ -351,6 +459,363 @@ def set_nominal(channel_id: int, current_amps: float = Query(...)):
     if not ok:
         raise HTTPException(status_code=500, detail="設定失敗，請確認設備連線")
     return {"success": True, "channel": channel_id, "nominal_amps": amps_int}
+
+
+class NominalBatchRequest(BaseModel):
+    """批次設定額定電流的請求主體。"""
+    channel_ids:  list[int]
+    current_amps: float
+
+
+@app.post("/api/channels/nominal")
+async def set_nominal_batch(req: NominalBatchRequest):
+    """
+    批次設定多個通道的額定電流。
+
+    後端會先寫入全部通道再統一驗證，總耗時約 3 秒；
+    若前端改用 for 迴圈逐一呼叫 /api/channel/{id}/nominal，
+    8 通道最壞情況要等 24 秒，期間 WebSocket 推送會被 _cip_lock 卡住。
+    """
+    amps_int = int(round(req.current_amps))
+    if amps_int < 1 or amps_int > 20:
+        raise HTTPException(status_code=422, detail="額定電流範圍 1–20 A")
+    if not req.channel_ids:
+        raise HTTPException(status_code=422, detail="未指定通道")
+    if _DEMO_MODE:
+        return {"ok": len(req.channel_ids), "fail": 0, "nominal_amps": amps_int,
+                "skipped": [],
+                "results": [{"channel": c, "ok": True} for c in req.channel_ids]}
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="未連線")
+
+    # 跳過探測確認無法遠端設定的模組，避免白跑一趟 CIP 寫入
+    targets, skipped = [], []
+    id_by_target = {}
+    for cid in req.channel_ids:
+        module, ch = backend.get_module_and_channel(cid)
+        if backend.is_module_nominal_readonly(module):
+            skipped.append(cid)
+            continue
+        targets.append((module, ch, amps_int))
+        id_by_target[(module, ch)] = cid
+
+    if not targets:
+        raise HTTPException(status_code=422, detail="所選通道的模組皆不支援遠端設定額定電流")
+
+    outcome = await asyncio.to_thread(backend.set_nominal_current_batch, targets)
+    results = [
+        {"channel": id_by_target.get((r["module"], r["channel"])),
+         "ok": r["ok"], "actual": r["actual"], "error": r["error"]}
+        for r in outcome["results"]
+    ]
+    return {"ok": outcome["ok"], "fail": outcome["fail"], "nominal_amps": amps_int,
+            "skipped": skipped, "results": results}
+
+
+# ==================== IP 設定 ====================
+# 與 /api/device/network 的分工：
+#   /api/device/network  → get_network_info()：MAC / hostname（含 0xF6 Ethernet Link）
+#   /api/ipconfig/current → read_device_network_config()：0xF5 Attr1/3/5，**含 Static/DHCP 取得方式**
+# 「IP 設定」頁需要判斷目前是靜態還是 DHCP，故走後者。兩者用途不同，勿混用。
+
+class StaticIpRequest(BaseModel):
+    """設定設備靜態 IP 的請求主體。"""
+    ip:      str
+    subnet:  str = "255.255.255.0"
+    gateway: str = ""
+
+
+@app.get("/api/ipconfig/current")
+async def api_ipconfig_current():
+    """讀取設備目前的網路設定（CIP 0xF5 Attr1/3/5，含 IP 取得方式）。"""
+    if _DEMO_MODE:
+        return {"success": True, "ip": "192.168.2.111", "subnet": "255.255.255.0",
+                "gateway": "192.168.2.1", "config_control": 0,
+                "config_control_str": "Static IP", "status": 0x35, "error": None}
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="設備未連線")
+    return await asyncio.to_thread(backend.read_device_network_config)
+
+
+@app.get("/api/ipconfig/interfaces")
+async def api_ipconfig_interfaces():
+    """
+    列出本機可用網卡，供前端選擇要從哪張網卡掃描（對應 CLI 的 _pick_iface()）。
+
+    多網卡機器上這是必要的：不指定網卡時，OS 會依路由表決定導向廣播從哪個介面送出，
+    很可能送錯網卡而掃不到設備。
+    """
+    if _DEMO_MODE:
+        return {"interfaces": [
+            {"name": "demo0", "description": "Demo Ethernet Adapter",
+             "ip": "192.168.2.10", "mac": "00:11:22:33:44:55",
+             "broadcast": "192.168.2.255"}]}
+    return {"interfaces": await asyncio.to_thread(list_interfaces)}
+
+
+@app.post("/api/ipconfig/discover")
+async def api_ipconfig_discover(timeout: float = Query(default=2.0, ge=0.5, le=10.0),
+                                iface_ip: str = Query(default=None)):
+    """
+    掃描網段尋找 CAPAROC 設備（EtherNet/IP List Identity 廣播，無回應時退回 ARP table）。
+
+    刻意**不檢查連線狀態**——掃描的用途正是在還沒連上任何設備時找出設備 IP。
+
+    Args:
+        iface_ip: 指定從哪張網卡掃描（傳網卡自己的 IP）；未指定 = 全部網卡。
+    """
+    if _DEMO_MODE:
+        return {"devices": [
+                    {"ip": "192.168.2.111", "name": "CAPAROC-PM-EIP [DEMO]",
+                     "serial": "DEMO0001", "revision": "1.0", "vendor_id": 1,
+                     "mac": "00:a0:45:de:m0:01"},
+                    {"ip": "192.168.2.112", "name": "CAPAROC-PM-EIP [DEMO2]",
+                     "serial": "DEMO0002", "revision": "1.0", "vendor_id": 1,
+                     "mac": "00:a0:45:de:m0:02"}],
+                "via": "EIP", "broadcasts": ["192.168.2.255", "255.255.255.255"]}
+
+    if iface_ip and not is_valid_ip(iface_ip):
+        raise HTTPException(status_code=422, detail=f"「{iface_ip}」不是合法的網卡 IP")
+
+    if not _discover_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="掃描進行中，請稍候")
+    try:
+        result = await asyncio.to_thread(discover, timeout, None, iface_ip)
+    finally:
+        _discover_lock.release()
+    _WEB_LOGGER.log(_SYSTEM_LEVEL,
+                    f"網段掃描完成：找到 {len(result['devices'])} 台設備"
+                    f"（方式 {result['via'] or '無'}）",
+                    extra={'log_module': 'WEB'})
+    return result
+
+
+@app.post("/api/ipconfig/static")
+async def api_ipconfig_static(req: StaticIpRequest):
+    """
+    將設備設為靜態 IP，並在寫入後自動重連新 IP。
+
+    寫入成功後舊連線必然中斷（設備 IP 立即改變），因此本路由承擔完整的
+    「寫入 → 斷線 → 換 IP → 等待上線 → 重連」流程：放在伺服器端只有一份狀態機，
+    且結果會透過既有的 1 Hz WebSocket 推送自然同步到所有開啟的分頁。
+    """
+    if _DEMO_MODE:
+        return {"success": True, "new_ip": req.ip, "online": True, "reconnected": True}
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="設備未連線")
+
+    if not is_valid_ip(req.ip):
+        raise HTTPException(status_code=422, detail=f"「{req.ip}」不是合法的 IP 格式")
+    if not is_valid_ip(req.subnet):
+        raise HTTPException(status_code=422, detail=f"「{req.subnet}」不是合法的子網路遮罩")
+    if req.gateway and not is_valid_ip(req.gateway):
+        raise HTTPException(status_code=422, detail=f"「{req.gateway}」不是合法的閘道位址")
+
+    old_ip = backend.device_ip
+    result = await asyncio.to_thread(
+        backend.set_device_ip, None, req.ip, req.subnet, req.gateway)
+    if not result['success']:
+        _WEB_LOGGER.warning(f"設備 IP 寫入失敗 ({old_ip} → {req.ip}): {result['error']}",
+                            extra={'log_module': 'WEB'})
+        raise HTTPException(status_code=500, detail=f"寫入失敗: {result['error']}")
+
+    _WEB_LOGGER.log(_SYSTEM_LEVEL, f"設備 IP 已寫入：{old_ip} → {req.ip}，等待設備重新上線",
+                    extra={'log_module': 'WEB'})
+
+    # 舊連線已隨 IP 變更失效，先清乾淨再指向新位址
+    await asyncio.to_thread(backend.disconnect)
+    backend.device_ip = req.ip
+
+    # 純 TCP 44818 探測，不碰 _cip_lock，不會卡住 WebSocket 推送
+    online = await asyncio.to_thread(wait_for_device, req.ip, 30.0)
+    reconnected = False
+    if online:
+        reconnected = await asyncio.to_thread(backend.connect)
+
+    _WEB_LOGGER.log(_SYSTEM_LEVEL,
+                    f"IP 變更結果：new_ip={req.ip} online={online} reconnected={reconnected}",
+                    extra={'log_module': 'WEB'})
+    return {"success": True, "new_ip": req.ip,
+            "online": online, "reconnected": reconnected}
+
+
+@app.post("/api/ipconfig/dhcp")
+async def api_ipconfig_dhcp():
+    """
+    將設備切換為 DHCP 模式。
+
+    ⚠️ 切換後設備會向 DHCP server 重新取得 IP，新 IP 無法預知，
+    因此這裡只斷線並提示使用者用「搜尋設備」找回。
+    """
+    if _DEMO_MODE:
+        return {"success": True, "note": "[DEMO] 已切換為 DHCP"}
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="設備未連線")
+
+    old_ip = backend.device_ip
+    result = await asyncio.to_thread(backend.set_device_dhcp, None)
+    if not result['success']:
+        raise HTTPException(status_code=500, detail=f"寫入失敗: {result['error']}")
+
+    await asyncio.to_thread(backend.disconnect)
+    _WEB_LOGGER.log(_SYSTEM_LEVEL, f"設備已切換為 DHCP 模式（原 IP {old_ip}），連線已中斷",
+                    extra={'log_module': 'WEB'})
+    return {"success": True,
+            "note": "設備已切換為 DHCP，IP 由 DHCP server 重新指派；請用「搜尋設備」找回新 IP"}
+
+
+class DhcpAssignRequest(BaseModel):
+    """把 IP 指派給失聯設備的請求主體。"""
+    iface_ip: str                        # 要在哪張網卡上開 DHCP server
+    mac:      str                        # 目標設備 MAC
+    ip:       str                        # 要指派並固化的 IP
+    subnet:   str = "255.255.255.0"
+    gateway:  str = ""
+    timeout:  float = 120.0              # 等設備送出 DHCP Discover 的上限
+
+
+@app.post("/api/ipconfig/detect-mac")
+async def api_ipconfig_detect_mac(
+    iface_ip: str = Query(...),
+    timeout: float = Query(default=90.0, ge=5.0, le=180.0),
+):
+    """
+    監聽 UDP/67 的 DHCP Discover，找出正在請求位址的設備 MAC。
+
+    這是設備「切成 DHCP 但網段沒有 DHCP server」而失聯時**唯一**能發現它的方法：
+    此時設備沒有 IP，EIP 廣播與 ARP 都查不到，但它會持續送出 DHCP Discover，
+    封包裡帶著自己的 MAC。對應 CLI 的 _detect_mac_via_socket()。
+
+    綁定 port 67 在 Windows 上不需要管理員權限，但該埠是獨佔的
+    （BootP-DHCP Tool 等程式若開著會搶走）。
+
+    ⚠️ 預設等 90 秒：DHCP client 的重試間隔會逐次拉長，實機實測設備約每 60 秒
+    才送一次 Discover，等太短會誤以為偵測不到。
+    """
+    if _DEMO_MODE:
+        return {"macs": [{"mac": "cc:cc:ea:9f:c9:72", "count": 3}],
+                "iface_ip": iface_ip}
+    if not is_valid_ip(iface_ip):
+        raise HTTPException(status_code=422, detail=f"「{iface_ip}」不是合法的網卡 IP")
+    if not _dhcp_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="另一項 DHCP 作業進行中，請稍候")
+    try:
+        _dhcp_cancel.clear()
+        sock, err = await asyncio.to_thread(open_dhcp_socket, iface_ip)
+        if sock is None:
+            raise HTTPException(status_code=503, detail=err)
+        try:
+            own_mac = await asyncio.to_thread(iface_mac_for, iface_ip)
+            seen = await asyncio.to_thread(
+                detect_dhcp_macs, sock, own_mac, timeout, 2.0, None,
+                _dhcp_cancel.is_set)
+        finally:
+            sock.close()
+    finally:
+        _dhcp_lock.release()
+
+    cancelled = _dhcp_cancel.is_set()
+    macs = [{"mac": m, "count": n} for m, n in sorted(seen.items())]
+    _WEB_LOGGER.log(_SYSTEM_LEVEL,
+                    f"DHCP MAC 偵測{'（已中斷）' if cancelled else '完成'}"
+                    f"（{iface_ip}）：找到 {len(macs)} 個",
+                    extra={'log_module': 'WEB'})
+    return {"macs": macs, "iface_ip": iface_ip, "cancelled": cancelled}
+
+
+@app.post("/api/ipconfig/dhcp-cancel")
+async def api_ipconfig_dhcp_cancel():
+    """
+    中斷進行中的 DHCP 監聽／指派作業。
+
+    設定共用的中斷旗標，讓佔著 UDP/67 的背景執行緒在下一輪（監聽約 0.25 秒、
+    指派約 1 秒）自行結束並釋放鎖。若只在前端 abort fetch，伺服器端仍會跑到逾時。
+    """
+    if _DEMO_MODE:
+        return {"success": True, "was_running": False}
+    was_running = _dhcp_lock.locked()
+    _dhcp_cancel.set()
+    if was_running:
+        _WEB_LOGGER.log(_SYSTEM_LEVEL, "收到 DHCP 作業中斷要求",
+                        extra={'log_module': 'WEB'})
+    return {"success": True, "was_running": was_running}
+
+
+@app.post("/api/ipconfig/assign")
+async def api_ipconfig_assign(req: DhcpAssignRequest):
+    """
+    救回失聯設備：開迷你 DHCP server 指派 IP 給指定 MAC，再把該 IP 固化為靜態。
+
+    對應 CLI 的「[2] 新裝置初始設定」。流程：
+      1. 綁 UDP/67，等目標 MAC 送出 Discover → 回 Offer → 收 Request → 回 ACK
+      2. 等設備以新 IP 上線
+      3. 連上去，把 IP 寫成靜態（Attr3 切 Static 再寫 Attr5），避免下次又靠 DHCP
+    """
+    if _DEMO_MODE:
+        return {"success": True, "assigned": True, "online": True,
+                "static_set": True, "ip": req.ip, "connected": True}
+
+    for label, value in (("網卡 IP", req.iface_ip), ("指派 IP", req.ip),
+                         ("子網路遮罩", req.subnet)):
+        if not is_valid_ip(value):
+            raise HTTPException(status_code=422, detail=f"{label}「{value}」格式不正確")
+    if req.gateway and not is_valid_ip(req.gateway):
+        raise HTTPException(status_code=422, detail=f"閘道「{req.gateway}」格式不正確")
+    mac = normalize_mac(req.mac)
+    if len(mac.split(':')) != 6:
+        raise HTTPException(status_code=422, detail=f"MAC「{req.mac}」格式不正確")
+
+    if not _dhcp_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="另一項 DHCP 作業進行中，請稍候")
+    try:
+        _dhcp_cancel.clear()
+        # 設備可能還連著舊 session，先斷開以免占用
+        if backend.is_connected:
+            await asyncio.to_thread(backend.disconnect)
+
+        sock, err = await asyncio.to_thread(open_dhcp_socket, req.iface_ip)
+        if sock is None:
+            raise HTTPException(status_code=503, detail=err)
+        try:
+            _WEB_LOGGER.log(_SYSTEM_LEVEL,
+                            f"迷你 DHCP server 啟動（{req.iface_ip}）：指派 {req.ip} 給 {mac}",
+                            extra={'log_module': 'WEB'})
+            assigned = await asyncio.to_thread(
+                serve_dhcp, sock, req.iface_ip, mac, req.ip, req.subnet,
+                req.timeout, None, None, _dhcp_cancel.is_set)
+        finally:
+            sock.close()
+    finally:
+        _dhcp_lock.release()
+
+    if not assigned:
+        if _dhcp_cancel.is_set():
+            raise HTTPException(status_code=499, detail="已手動中斷")
+        raise HTTPException(
+            status_code=504,
+            detail=f"{int(req.timeout)} 秒內未收到 {mac} 的 DHCP 請求；"
+                   f"請確認網路線已接上、網卡選對，必要時重插設備網路線強制重試")
+
+    online = await asyncio.to_thread(wait_for_device, req.ip, 40.0)
+    static_set, connected = False, False
+    if online:
+        backend.device_ip = req.ip
+        connected = await asyncio.to_thread(backend.connect)
+        if connected:
+            result = await asyncio.to_thread(
+                backend.set_device_ip, None, req.ip, req.subnet, req.gateway)
+            static_set = bool(result.get('success'))
+            # 固化靜態後連線通常會斷，重連一次
+            await asyncio.to_thread(backend.disconnect)
+            if await asyncio.to_thread(wait_for_device, req.ip, 30.0):
+                connected = await asyncio.to_thread(backend.connect)
+
+    _WEB_LOGGER.log(_SYSTEM_LEVEL,
+                    f"設備救援結果：ip={req.ip} assigned={assigned} online={online} "
+                    f"static_set={static_set} connected={connected}",
+                    extra={'log_module': 'WEB'})
+    return {"success": True, "assigned": assigned, "online": online,
+            "static_set": static_set, "connected": connected, "ip": req.ip}
 
 
 # ==================== Log API ====================
@@ -516,8 +981,11 @@ async def ws_status(websocket: WebSocket):
                                       for ch in payload['channels']},
                 })
             await asyncio.sleep(1.0)
-    except (WebSocketDisconnect, Exception):
-        pass
+    except WebSocketDisconnect:
+        pass  # 前端正常關閉頁面/重整，不需記錄
+    except Exception as e:
+        _WEB_LOGGER.warning(f"WebSocket 迴圈異常中止: {type(e).__name__}: {e}",
+                            extra={'log_module': 'WEB'})
     finally:
         _ws_client_count -= 1
         # 最後一個客戶端斷線 → 啟動倒數，逾時自動 shutdown
@@ -526,12 +994,49 @@ async def ws_status(websocket: WebSocket):
 
 
 # ==================== 直接執行入口 ====================
+def _resolve_port() -> int:
+    """
+    決定監聽埠，優先序：
+      1. 命令列 --port N
+      2. 環境變數 CAPAROC_PORT
+      3. 預設 8001（避開 NVIDIA Overlay 間歇佔用的 8000）
+    選定埠若已被佔用，往上探 10 個埠取第一個可用的。
+    """
+    import socket
+
+    chosen = 8001
+    if "--port" in sys.argv:
+        try:
+            chosen = int(sys.argv[sys.argv.index("--port") + 1])
+        except (IndexError, ValueError):
+            print("[CAPAROC] --port 參數格式錯誤，改用預設")
+    elif os.environ.get("CAPAROC_PORT"):
+        try:
+            chosen = int(os.environ["CAPAROC_PORT"])
+        except ValueError:
+            print("[CAPAROC] CAPAROC_PORT 格式錯誤，改用預設")
+
+    for candidate in range(chosen, chosen + 10):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("0.0.0.0", candidate))
+            except OSError:
+                print(f"[CAPAROC] 埠 {candidate} 已被佔用，改試 {candidate + 1}")
+                continue
+        if candidate != chosen:
+            print(f"[CAPAROC] 改用埠 {candidate}")
+        return candidate
+
+    print(f"[CAPAROC] {chosen}~{chosen + 9} 全部無法綁定，仍嘗試 {chosen}")
+    return chosen
+
+
 if __name__ == "__main__":
     import threading
     import webbrowser
     import uvicorn
 
-    PORT = 8000
+    PORT = _resolve_port()
     URL = f"http://localhost:{PORT}"
 
     # 等伺服器就緒後再開瀏覽器（延遲 1.5 秒）

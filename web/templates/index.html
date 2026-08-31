@@ -5,7 +5,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CAPAROC 控制台</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=4.2.10d" />
+    <!-- 開頁前先套用主題，避免夜間/白天閃爍 -->
+    <script>
+        try {
+            document.documentElement.setAttribute(
+                'data-theme', localStorage.getItem('caparoc_theme') || 'dark');
+        } catch (e) { }
+    </script>
+    <link rel="stylesheet" href="/static/css/style.css?v=4.9.0" />
 </head>
 
 <body>
@@ -28,6 +35,18 @@
                     <button class="btn-sm btn-danger" v-else @click="doDisconnect">斷線</button>
                 </div>
                 <div class="topbar-sep"></div>
+                <button class="theme-toggle" @click="toggleTheme"
+                    :title="theme === 'dark' ? 'Dark mode (click for light)' : 'Light mode (click for dark)'">
+                    <svg v-if="theme === 'dark'" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.11-1.36a5.4 5.4 0 0 1-7.53-7.53C12.92 3.04 12.46 3 12 3z" />
+                    </svg>
+                    <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="4" />
+                        <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+                    </svg>
+                </button>
+                <div class="topbar-sep"></div>
                 <button class="btn-close-tab" @click="doCloseTab" :disabled="isShuttingDown"
                     :title="isShuttingDown ? '關閉中...' : '關閉伺服器'">{{ isShuttingDown ? '⏹' : '✕' }}</button>
             </div>
@@ -39,7 +58,7 @@
             <!-- 左側導覽列 -->
             <nav class="sidebar" :class="{ collapsed: sidebarCollapsed }">
                 <ul class="nav-list">
-                    <li v-for="item in navItems" :key="item.page" class="nav-item"
+                    <li v-for="item in navItems" :key="item.page" class="nav-item" :title="item.label"
                         :class="{ active: currentPage === item.page }" @click="navigate(item.page)">
                         <span class="nav-icon">{{ item.icon }}</span>
                         <span class="nav-label">{{ item.label }}</span>
@@ -90,11 +109,12 @@
                             </div>
                             <div class="ch-grid">
                                 <div class="ch-card" v-for="ch in channelsByModule[mod]" :key="ch.id"
-                                    :class="[cardClass(ch), !state.connected ? 'stale' : '']">
+                                    :class="[cardClass(ch), !state.connected ? 'stale' : '', channelToggleError[ch.id] ? 'toggle-err' : '']">
                                     <div class="ch-top">
                                         <span class="ch-name">CH{{ ch.channel }}</span>
                                         <button class="toggle-btn" :class="ch.on ? 'is-on' : 'is-off'"
-                                            @click="toggleCh(ch)" :disabled="!state.connected">
+                                            @click="toggleCh(ch)" :disabled="!state.connected || channelToggling[ch.id]"
+                                            :title="channelToggleError[ch.id] ? '操作失敗，請確認設備連線' : ''">
                                             {{ ch.on ? '關閉' : '開啟' }}
                                         </button>
                                     </div>
@@ -205,12 +225,14 @@
 
                             <!-- 全域批次列 -->
                             <div class="batch-bar">
-                                <span style="font-size:0.82rem;color:#7a8aaa;white-space:nowrap">全部套用</span>
+                                <span class="batch-label">全部套用</span>
                                 <input type="number" v-model="batchNominal" min="1" max="20" step="1" placeholder="A"
-                                    class="nominal-input" :disabled="!state.connected" />
-                                <button class="btn" @click="setAllNominal" :disabled="!state.connected">套用至全部通道</button>
+                                    class="nominal-input" :disabled="!state.connected || batchBusy" />
+                                <button class="btn" @click="setAllNominal" :disabled="!state.connected || batchBusy">
+                                    {{ batchBusy ? '設定中…' : '套用至全部通道' }}
+                                </button>
                                 <span class="feedback-msg" :class="batchStatus.ok ? 'ok' : 'err'"
-                                    v-if="batchStatus.msg">{{ batchStatus.msg }}</span>
+                                    v-if="batchStatus.msg" :title="batchStatus.msg">{{ batchStatus.msg }}</span>
                             </div>
 
                             <!-- 各模組區塊 -->
@@ -219,25 +241,34 @@
                                     <span class="mod-title">模組 {{ mod }}</span>
                                     <span class="mod-ch-count">{{ channelsByModule[mod].length }} 通道</span>
                                     <button class="mod-readonly-badge" v-if="isModNominalReadOnly(mod)"
-                                        @click="showNominalHelp = true">
-                                        ⚙️ 額定電流需手動設定（旋鈕）&nbsp;ℹ️
+                                        @click="showNominalHelp = true" title="點擊查看旋鈕設定步驟">
+                                        ⚙️ 額定電流需旋鈕手動設定 ℹ️
                                     </button>
                                 </div>
 
                                 <!-- 模組批次列 -->
                                 <div class="mod-batch-bar">
-                                    <span style="font-size:0.82rem;color:#7a8aaa;white-space:nowrap">本模組套用</span>
+                                    <span class="batch-label">本模組套用</span>
                                     <input type="number" v-model="batchNominalByMod[mod]" min="1" max="20" step="1"
                                         placeholder="A" class="nominal-input"
-                                        :disabled="!state.connected || isModNominalReadOnly(mod)" />
+                                        :disabled="!state.connected || isModNominalReadOnly(mod) || batchBusyByMod[mod]" />
                                     <button class="btn btn-sm" @click="setModuleNominal(mod)"
-                                        :disabled="!state.connected || isModNominalReadOnly(mod)">套用</button>
+                                        :disabled="!state.connected || isModNominalReadOnly(mod) || batchBusyByMod[mod]">
+                                        {{ batchBusyByMod[mod] ? '設定中…' : '套用' }}
+                                    </button>
                                     <span class="feedback-msg" :class="batchStatusByMod[mod]?.ok ? 'ok' : 'err'"
-                                        v-if="batchStatusByMod[mod]?.msg">{{ batchStatusByMod[mod].msg }}</span>
+                                        v-if="batchStatusByMod[mod]?.msg" :title="batchStatusByMod[mod].msg">{{
+                                        batchStatusByMod[mod].msg }}</span>
                                 </div>
 
                                 <!-- 通道表格 -->
                                 <table class="ch-table">
+                                    <colgroup>
+                                        <col class="col-ch" />
+                                        <col class="col-nominal" />
+                                        <col class="col-input" />
+                                        <col />
+                                    </colgroup>
                                     <thead>
                                         <tr>
                                             <th>通道</th>
@@ -253,16 +284,21 @@
                                             <td>
                                                 <input type="number" v-model="nominalInputs[ch.id]" min="1" max="20"
                                                     step="1" :placeholder="ch.nominal_amps" class="nominal-input"
-                                                    :disabled="!state.connected || isModNominalReadOnly(ch.module)" />
+                                                    :disabled="!state.connected || isModNominalReadOnly(ch.module) || nominalBusy[ch.id]" />
                                             </td>
                                             <td>
-                                                <button class="btn btn-sm" @click="setNominal(ch.id)"
-                                                    :disabled="!state.connected || isModNominalReadOnly(ch.module)">設定</button>
-                                                <span class="feedback-msg"
-                                                    :class="nominalFeedback[ch.id]?.ok ? 'ok' : 'err'"
-                                                    v-if="nominalFeedback[ch.id]?.msg">
-                                                    {{ nominalFeedback[ch.id].msg }}
-                                                </span>
+                                                <div class="td-action">
+                                                    <button class="btn btn-sm" @click="setNominal(ch.id)"
+                                                        :disabled="!state.connected || isModNominalReadOnly(ch.module) || nominalBusy[ch.id]">
+                                                        {{ nominalBusy[ch.id] ? '設定中…' : '設定' }}
+                                                    </button>
+                                                    <span class="feedback-msg"
+                                                        :class="nominalFeedback[ch.id]?.ok ? 'ok' : 'err'"
+                                                        v-if="nominalFeedback[ch.id]?.msg"
+                                                        :title="nominalFeedback[ch.id].msg">
+                                                        {{ nominalFeedback[ch.id].msg }}
+                                                    </span>
+                                                </div>
                                             </td>
                                         </tr>
                                     </tbody>
@@ -478,6 +514,293 @@
                         <h2>全域設定</h2>
                         <div class="hint-text">請先連線至設備</div>
                     </section>
+
+                    <!-- ================= 原廠 Web 介面（webif）=================
+                         資料來源：GET http://<ip>/webif/{systeminfo,processdata}
+                         走 HTTP/80，與 CIP 完全獨立，不需先連線。 -->
+
+                    <!-- 硬體與韌體 -->
+                    <section class="panel">
+                        <h2>
+                            原廠介面 · 硬體與韌體
+                            <span v-if="!state.connected && webifInfo" class="net-info-stale">（CIP 未連線）</span>
+                            <button class="btn-refresh" @click="refreshWebifInfo" :disabled="webifInfoRefreshing"
+                                title="重新從原廠 Web 介面讀取">↻</button>
+                        </h2>
+                        <p class="hint-text webif-src-note">
+                            來自設備內建的原廠 Web 介面（HTTP，非 CIP），提供 CIP 讀不到的硬體清單與韌體版本。
+                        </p>
+                        <div v-if="webifInfoRefreshing && !webifInfo" class="hint-text">讀取中...</div>
+                        <div v-else-if="!webifInfo" class="hint-text">
+                            {{ webifUnavailable ? '原廠介面無回應（設備不可達，或韌體未提供此介面）' : '尚無資料' }}
+                        </div>
+                        <template v-else>
+                            <p v-if="webifUnavailable" class="hint-text webif-stale-warn">
+                                ⚠ 目前讀取失敗，以下為上次成功讀取的資料。
+                            </p>
+                            <h3 class="webif-sub">電源模組</h3>
+                            <table class="net-info-table">
+                                <tr>
+                                    <td>型號</td>
+                                    <td>{{ webifInfo.powermodule?.name || '—' }}</td>
+                                </tr>
+                                <tr>
+                                    <td>訂購編號</td>
+                                    <td>{{ webifInfo.powermodule?.orderid || '—' }}</td>
+                                </tr>
+                                <tr>
+                                    <td>序號</td>
+                                    <td class="net-mac">{{ webifInfo.powermodule?.serialnumber || '—' }}</td>
+                                </tr>
+                                <tr>
+                                    <td>硬體版本</td>
+                                    <td>{{ webifInfo.powermodule?.hwversion ?? '—' }}</td>
+                                </tr>
+                                <tr>
+                                    <td>韌體版本</td>
+                                    <td>
+                                        {{ webifInfo.powermodule?.fwversion || '—' }}
+                                        <span class="webif-hint-inline">（原廠 Web 介面回報，與上方 CIP Identity 的修訂版本不同）</span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>主機名稱</td>
+                                    <td>{{ webifInfo.powermodule?.dnsname || '—' }}</td>
+                                </tr>
+                                <tr>
+                                    <td>MAC 位址</td>
+                                    <td class="net-mac">{{ webifInfo.powermodule?.mac || '—' }}</td>
+                                </tr>
+                                <tr v-if="webifInfo.source?.processdata">
+                                    <td>即時量測</td>
+                                    <td>
+                                        {{ webifInfo.powermodule?.voltage ?? '—' }} V ·
+                                        {{ webifInfo.powermodule?.totalcurrent ?? '—' }} A
+                                        <span class="webif-hint-inline">（原廠介面數值，關鍵值仍以 CIP 為準）</span>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <h3 class="webif-sub">斷路器模組（{{ webifInfo.modules?.length || 0 }} 個）</h3>
+                            <table class="net-info-table data-table">
+                                <thead>
+                                    <tr>
+                                        <th>模組</th>
+                                        <th>型號</th>
+                                        <th>序號</th>
+                                        <th>通道</th>
+                                        <th>額定範圍</th>
+                                        <th>HW</th>
+                                        <th>FW</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="m in webifInfo.modules" :key="m.index">
+                                        <td>M{{ m.index }}</td>
+                                        <td>{{ m.name || '—' }}</td>
+                                        <td class="net-mac">{{ m.serialnumber || '—' }}</td>
+                                        <td>{{ m.channels ?? '—' }}</td>
+                                        <td>{{ m.nominal_range_label || '—' }}</td>
+                                        <td>{{ m.hwversion ?? '—' }}</td>
+                                        <td>{{ m.fwversion || '—' }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </template>
+                    </section>
+
+                    <!-- LED 狀態 -->
+                    <section class="panel" v-if="webifInfo">
+                        <h2>
+                            原廠介面 · LED 狀態
+                            <span v-if="webifUnavailable" class="net-info-stale">（上次資訊）</span>
+                            <button class="btn-help" @click="showLedHelp = true" title="查看燈號顏色與閃爍的意義">
+                                ℹ️ 燈號說明
+                            </button>
+                        </h2>
+                        <p class="hint-text webif-src-note">設備面板上的實體指示燈，即時反映硬體狀態。</p>
+                        <table class="net-info-table data-table led-status-table">
+                            <thead>
+                                <tr>
+                                    <th>LED</th>
+                                    <th class="th-led">狀態</th>
+                                    <th>說明</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="l in webifInfo.powermodule?.leds" :key="l.name">
+                                    <td class="webif-led-name">{{ l.name }}</td>
+                                    <td class="td-led">
+                                        <span class="led-dot led-lg" :class="'led-' + (l.color || 'off')"
+                                            :title="l.color || '—'"></span>
+                                    </td>
+                                    <td>{{ l.label || '—' }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <div v-if="!webifInfo.powermodule?.leds?.length" class="hint-text">無 LED 資訊</div>
+                    </section>
+
+                    <!-- 故障事件記憶 -->
+                    <section class="panel" v-if="webifInfo">
+                        <h2>
+                            原廠介面 · 故障事件記憶
+                            <span v-if="webifUnavailable" class="net-info-stale">（上次資訊）</span>
+                        </h2>
+                        <p class="hint-text webif-src-note">
+                            每個斷路器模組保留最近 10 筆跳脫事件（最新在前），以及各通道的累計跳脫次數。
+                            此紀錄由設備韌體自行維護，CIP 無法讀取。
+                        </p>
+                        <div v-if="!webifHasFaults" class="hint-text">✅ 所有模組皆無故障紀錄</div>
+                        <template v-else>
+                            <div v-for="m in webifInfo.modules" :key="m.index" class="webif-mod-block">
+                                <h3 class="webif-sub">M{{ m.index }} · {{ m.name || '—' }}</h3>
+                                <div class="webif-fault-events">
+                                    <span class="webif-label">事件記憶：</span>
+                                    <template v-if="m.fault_events?.length">
+                                        <span v-for="(e, i) in m.fault_events" :key="i" class="webif-fault-tag">
+                                            {{ i + 1 }}. {{ e }}
+                                        </span>
+                                    </template>
+                                    <span v-else class="webif-none">無</span>
+                                </div>
+                                <table v-if="m.channels_data?.length" class="net-info-table data-table webif-ch-table">
+                                    <colgroup>
+                                        <col class="wc-ch" />
+                                        <col class="wc-led" />
+                                        <col class="wc-err" />
+                                        <col class="wc-cnt" />
+                                        <col class="wc-amp" />
+                                    </colgroup>
+                                    <thead>
+                                        <tr>
+                                            <th>通道</th>
+                                            <th class="th-led">LED</th>
+                                            <th>目前錯誤</th>
+                                            <th>累計跳脫</th>
+                                            <th>額定 / 實際</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="c in m.channels_data" :key="c.channel">
+                                            <td>CH{{ c.channel }}</td>
+                                            <td class="td-led">
+                                                <span class="led-dot led-lg" :class="'led-' + (c.led || 'off')"
+                                                    :title="c.led || '—'"></span>
+                                            </td>
+                                            <td :class="c.errorid ? 'webif-err' : ''">{{ c.errorid_text || '—' }}</td>
+                                            <td :class="c.errorcounter ? 'webif-warn' : ''">{{ c.errorcounter ?? '—' }}
+                                            </td>
+                                            <td>{{ c.nominalcurrent ?? '—' }} A / {{ c.current ?? '—' }} A</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                                <div v-else class="hint-text">（即時資料無回應，僅顯示事件記憶）</div>
+                            </div>
+                        </template>
+                    </section>
+
+                    <!-- 燈號說明 Modal -->
+                    <div class="modal-overlay" v-if="showLedHelp" @click.self="showLedHelp = false">
+                        <div class="modal-box wide">
+                            <div class="modal-header">
+                                <span>💡 LED 燈號說明</span>
+                                <button class="modal-close" @click="showLedHelp = false">✕</button>
+                            </div>
+                            <div class="modal-body">
+                                <p class="modal-note">
+                                    燈號來自設備的原廠 Web 介面，反映實體面板上的狀態。
+                                    表格「說明」欄的文字由設備本身回報；以下說明的是<strong>顏色與閃爍</strong>的意義。
+                                </p>
+
+                                <h4 class="modal-sub">顏色通則</h4>
+                                <table class="net-info-table led-legend">
+                                    <tr>
+                                        <td><span class="led-dot led-lg led-off"></span></td>
+                                        <td>熄滅</td>
+                                        <td>未供電，或該功能未啟用（通道則為關閉）</td>
+                                    </tr>
+                                    <tr>
+                                        <td><span class="led-dot led-lg led-green"></span></td>
+                                        <td>綠色恆亮</td>
+                                        <td>正常運作</td>
+                                    </tr>
+                                    <tr>
+                                        <td><span class="led-dot led-lg led-blinking-green"></span></td>
+                                        <td>綠色閃爍</td>
+                                        <td>進行中或待確認狀態（各燈別意義不同，見下）</td>
+                                    </tr>
+                                    <tr>
+                                        <td><span class="led-dot led-lg led-yellow"></span></td>
+                                        <td>黃色</td>
+                                        <td>警告，尚未跳脫</td>
+                                    </tr>
+                                    <tr>
+                                        <td><span class="led-dot led-lg led-red"></span></td>
+                                        <td>紅色恆亮</td>
+                                        <td>錯誤或已跳脫</td>
+                                    </tr>
+                                    <tr>
+                                        <td><span class="led-dot led-lg led-blinking-red"></span></td>
+                                        <td>紅色閃爍</td>
+                                        <td>可回復的錯誤（例如連線逾時）</td>
+                                    </tr>
+                                </table>
+
+                                <h4 class="modal-sub">NET — 網路狀態燈</h4>
+                                <p class="modal-note">依 ODVA EtherNet/IP Network Status LED 規範：</p>
+                                <table class="net-info-table led-legend">
+                                    <tr>
+                                        <td><span class="led-dot led-lg led-off"></span></td>
+                                        <td>熄滅</td>
+                                        <td>尚未取得 IP 位址</td>
+                                    </tr>
+                                    <tr>
+                                        <td><span class="led-dot led-lg led-blinking-green"></span></td>
+                                        <td>綠色閃爍</td>
+                                        <td>已上線，但<strong>目前沒有任何 CIP 連線</strong></td>
+                                    </tr>
+                                    <tr>
+                                        <td><span class="led-dot led-lg led-green"></span></td>
+                                        <td>綠色恆亮</td>
+                                        <td><strong>至少有一條 CIP 連線在線上</strong></td>
+                                    </tr>
+                                    <tr>
+                                        <td><span class="led-dot led-lg led-blinking-red"></span></td>
+                                        <td>紅色閃爍</td>
+                                        <td>一條以上的連線逾時</td>
+                                    </tr>
+                                    <tr>
+                                        <td><span class="led-dot led-lg led-red"></span></td>
+                                        <td>紅色恆亮</td>
+                                        <td>IP 位址衝突</td>
+                                    </tr>
+                                </table>
+                                <p class="modal-warn">
+                                    ⚠ NET 反映的是<strong>任何 client</strong> 的 CIP 連線（PLC、其他工具也算），
+                                    不只本程式。判斷本程式是否連線請看頂部列的連線狀態指示燈。
+                                </p>
+
+                                <h4 class="modal-sub">MOD — 模組狀態燈</h4>
+                                <p class="modal-note">
+                                    設備自身的運作狀態（ODVA Module Status LED 規範）：
+                                    綠色恆亮＝正常運作；綠色閃爍＝待配置／待命；
+                                    紅色閃爍＝可回復的故障；紅色恆亮＝不可回復的故障，需重啟或送修。
+                                </p>
+
+                                <h4 class="modal-sub">通道 LED</h4>
+                                <p class="modal-note">
+                                    位於「故障事件記憶」面板中，對應各斷路器通道：
+                                    熄滅＝通道關閉；綠色恆亮＝已開啟且正常供電；
+                                    黃色＝接近額定電流的 80% 警告；紅色＝過載或短路已跳脫。
+                                </p>
+                                <p class="modal-note">
+                                    <strong>綠色閃爍</strong>另有特殊意義：轉動旋鈕改變額定電流後、
+                                    尚未長按按鈕確認的「待確認」狀態。詳見「通道設定」頁的手動設定說明。
+                                </p>
+                            </div>
+                        </div>
+                    </div>
                 </template>
 
                 <!-- 連線設定 -->
@@ -533,6 +856,276 @@
                     </section>
                 </template>
 
+                <!-- 設備 IP 設定 -->
+                <template v-if="currentPage === 'ip-config'">
+
+                    <!-- 1. 搜尋設備（不需先連線） -->
+                    <section class="panel">
+                        <h2>搜尋設備</h2>
+                        <p class="hint-text">
+                            以 EtherNet/IP 廣播尋找網路上的 CAPAROC；無回應時自動改查 ARP 表。此功能不需先連線。
+                        </p>
+
+                        <div class="conn-form-block">
+                            <label class="field-label">掃描網卡</label>
+                            <div class="conn-form">
+                                <select v-model="ipIfaceSel">
+                                    <option value="">全部網卡</option>
+                                    <option v-for="itf in ipIfaces" :key="itf.ip" :value="itf.ip">
+                                        {{ itf.ip }} — {{ itf.description }}
+                                    </option>
+                                </select>
+                                <button class="btn btn-sm btn-ghost" @click="fetchIfaces" title="重新列舉網卡">↻</button>
+                            </div>
+                            <p class="hint-text">
+                                多網卡環境請指定設備所在的網卡；選「全部網卡」時由作業系統決定廣播送往哪個介面，可能掃不到。
+                            </p>
+                        </div>
+
+                        <div class="action-row">
+                            <button class="btn" @click="scanDevices" :disabled="ipScanBusy">
+                                {{ ipScanBusy ? '掃描中…' : '🔍 掃描網段' }}
+                            </button>
+                            <span class="feedback-msg err" v-if="ipScanError">{{ ipScanError }}</span>
+                        </div>
+
+                        <div v-if="ipScanResult">
+                            <p class="hint-text" v-if="ipScanResult.broadcasts">
+                                廣播位址：{{ ipScanResult.broadcasts.join(', ') }}
+                                <span v-if="ipScanResult.via">｜命中方式：{{ ipScanResult.via }}</span>
+                            </p>
+                            <table class="net-info-table data-table" v-if="ipScanResult.devices.length">
+                                <thead>
+                                    <tr>
+                                        <th>IP 位址</th>
+                                        <th>MAC 位址</th>
+                                        <th>名稱 / S/N</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="d in ipScanResult.devices" :key="d.ip">
+                                        <td>{{ d.ip }}</td>
+                                        <td class="net-mac">{{ d.mac || '—' }}</td>
+                                        <td>
+                                            {{ d.name || '—' }}
+                                            <span v-if="d.serial">（S/N: {{ d.serial }}）</span>
+                                        </td>
+                                        <td>
+                                            <button class="btn btn-sm" @click="connectToFound(d.ip)"
+                                                :disabled="connecting">連線</button>
+                                            <button class="btn btn-sm btn-ghost" @click="useFoundIp(d.ip)"
+                                                title="填入下方「變更設備 IP」的目標欄位">帶入</button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div v-else class="placeholder">
+                                <div class="placeholder-icon">🔍</div>
+                                <div class="placeholder-title">未發現設備</div>
+                                <div class="placeholder-desc">請確認設備已上電且與本機在同一網段</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- 2. 目前網路設定（需連線） -->
+                    <section class="panel">
+                        <h2>
+                            目前網路設定
+                            <span v-if="!state.connected && ipCurrent" class="net-info-stale">（上次連線資訊）</span>
+                            <button v-if="state.connected" class="btn-refresh" @click="refreshIpCurrent"
+                                :disabled="ipCurrentRefreshing" title="重新從設備讀取">↻</button>
+                        </h2>
+                        <div v-if="!state.connected && !ipCurrent" class="placeholder">
+                            <div class="placeholder-icon">🌐</div>
+                            <div class="placeholder-title">尚未連線</div>
+                            <div class="placeholder-desc">請先連線至設備，或用上方「搜尋設備」找出設備 IP</div>
+                        </div>
+                        <template v-else>
+                            <div v-if="!state.connected" class="stale-banner">⚠ 資料已停止更新，顯示斷線前最後資料</div>
+                            <div v-if="!ipCurrent && state.connected" class="hint-text">讀取中...</div>
+                            <table v-else-if="ipCurrent" class="net-info-table">
+                                <tr>
+                                    <td>IP 取得方式</td>
+                                    <td>{{ ipCurrent.config_control_str || '—' }}</td>
+                                </tr>
+                                <tr>
+                                    <td>IP 位址</td>
+                                    <td>{{ ipCurrent.ip || '—' }}</td>
+                                </tr>
+                                <tr>
+                                    <td>子網路遮罩</td>
+                                    <td>{{ ipCurrent.subnet || '—' }}</td>
+                                </tr>
+                                <tr>
+                                    <td>預設閘道</td>
+                                    <td>{{ (ipCurrent.gateway && ipCurrent.gateway !== '0.0.0.0') ? ipCurrent.gateway : '—' }}</td>
+                                </tr>
+                            </table>
+                            <p class="err-msg" v-if="ipCurrent && ipCurrent.error">{{ ipCurrent.error }}</p>
+                        </template>
+                    </section>
+
+                    <!-- 3. 變更設備 IP（需連線） -->
+                    <section class="panel" v-if="state.connected">
+                        <h2>變更設備 IP</h2>
+
+                        <label class="field-label">設定方式</label>
+                        <div class="radio-row">
+                            <label><input type="radio" value="static" v-model="ipMode" /> 靜態 IP</label>
+                            <label><input type="radio" value="dhcp" v-model="ipMode" /> DHCP</label>
+                        </div>
+
+                        <template v-if="ipMode === 'static'">
+                            <div class="form-grid">
+                                <div>
+                                    <label class="field-label">IP 位址</label>
+                                    <input v-model="ipForm.ip" placeholder="192.168.50.111" />
+                                </div>
+                                <div>
+                                    <label class="field-label">子網路遮罩</label>
+                                    <input v-model="ipForm.subnet" placeholder="255.255.255.0" />
+                                </div>
+                                <div>
+                                    <label class="field-label">預設閘道（可留空）</label>
+                                    <input v-model="ipForm.gateway" placeholder="0.0.0.0" />
+                                </div>
+                            </div>
+                            <p class="hint-text" v-if="ipSubnetWarning">{{ ipSubnetWarning }}</p>
+                        </template>
+
+                        <div class="stale-banner" v-else>
+                            ⚠ 切換為 DHCP 前請先確認：<b>這個網段上真的有 DHCP server</b>。
+                            若設備直連電腦或網段沒有 DHCP server，設備會拿不到位址而<b>完全失聯</b>，
+                            屆時只能用 CLI 的迷你 DHCP server 救回：
+                            <code>python src/caparoc_ip_config.py</code> → [2] 新裝置初始設定（需設備 MAC）。
+                            <br />建議先記下設備 MAC（見上方掃描結果）再切換。
+                        </div>
+
+                        <div class="action-row">
+                            <button class="btn btn-danger" @click="openIpConfirm" :disabled="ipApplyBusy">
+                                {{ ipApplyBusy ? '處理中…' : (ipMode === 'static' ? '套用靜態 IP' : '切換為 DHCP') }}
+                            </button>
+                            <span class="feedback-msg" :class="ipApplyFeedback.ok ? 'ok' : 'err'"
+                                v-if="ipApplyFeedback.msg">{{ ipApplyFeedback.msg }}</span>
+                        </div>
+                    </section>
+
+                    <!-- 4. 失聯設備救援（進階／例外流程，預設收合） -->
+                    <details class="panel adv-panel">
+                        <summary>
+                            找不到設備？（DHCP 失聯救援）
+                            <span class="summary-hint">設備切成 DHCP 卻拿不到位址時用這裡救回</span>
+                        </summary>
+
+                        <p class="hint-text">
+                            設備切成 DHCP、但網段上沒有 DHCP server 時，它拿不到位址，掃描與 ARP 都找不到它 ——
+                            但它會持續送出 DHCP Discover 廣播。這裡監聽該廣播取得設備 MAC，再指派一個 IP 給它並固化為靜態 IP。
+                            （等同 CLI 的「[2] 新裝置初始設定」）
+                        </p>
+
+                        <div class="action-row">
+                            <button class="btn" @click="detectMac" :disabled="macBusy">
+                                {{ macBusy ? '監聽中…最長 90 秒' : '📡 偵測 DHCP 廣播中的設備' }}
+                            </button>
+                            <button class="btn btn-ghost" v-if="macBusy" @click="cancelDhcpOp"
+                                :disabled="dhcpCancelBusy">✕ 中斷</button>
+                            <span class="feedback-msg err" v-if="macError">{{ macError }}</span>
+                        </div>
+
+                        <div v-if="macList">
+                            <table class="net-info-table data-table" v-if="macList.length">
+                                <thead>
+                                    <tr>
+                                        <th>選擇</th>
+                                        <th>MAC 位址</th>
+                                        <th>Discover 次數</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="m in macList" :key="m.mac">
+                                        <td><input type="radio" :value="m.mac" v-model="rescueMac" /></td>
+                                        <td class="net-mac">{{ m.mac }}</td>
+                                        <td>{{ m.count }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <p v-else class="hint-text">
+                                未偵測到任何 DHCP 廣播。設備的重試間隔會逐次拉長（實測約每 60 秒一次），可再按一次；
+                                也請確認網路線已接上、網卡選對，或重插設備網路線強制它立刻重試。
+                            </p>
+                        </div>
+
+                        <template v-if="rescueMac">
+                            <label class="field-label" style="margin-top:14px">指派給 {{ rescueMac }} 的網路設定</label>
+                            <div class="form-grid">
+                                <div>
+                                    <label class="field-label">IP 位址</label>
+                                    <input v-model="rescueIp" placeholder="192.168.50.111" />
+                                </div>
+                                <div>
+                                    <label class="field-label">子網路遮罩</label>
+                                    <input v-model="rescueSubnet" placeholder="255.255.255.0" />
+                                </div>
+                                <div>
+                                    <label class="field-label">預設閘道（可留空）</label>
+                                    <input v-model="rescueGateway" placeholder="0.0.0.0" />
+                                </div>
+                            </div>
+                            <div class="action-row">
+                                <button class="btn btn-danger" @click="rescueDevice" :disabled="rescueBusy">
+                                    {{ rescueBusy ? '救援中…' : '指派並固化為靜態 IP' }}
+                                </button>
+                                <button class="btn btn-ghost" v-if="rescueBusy" @click="cancelDhcpOp"
+                                    :disabled="dhcpCancelBusy">✕ 中斷</button>
+                                <span class="feedback-msg" :class="rescueFeedback.ok ? 'ok' : 'err'"
+                                    v-if="rescueFeedback.msg">{{ rescueFeedback.msg }}</span>
+                            </div>
+                            <p class="hint-text">按下後最長等 2 分鐘讓設備送出 DHCP 請求。</p>
+                        </template>
+                    </details>
+
+                    <!-- 確認對話框 -->
+                    <div class="modal-overlay" v-if="ipConfirmOpen" @click.self="ipConfirmOpen = false">
+                        <div class="modal-box wide">
+                            <div class="modal-header">
+                                <span>確認變更設備 IP</span>
+                                <button class="modal-close" @click="ipConfirmOpen = false">✕</button>
+                            </div>
+                            <div class="modal-body">
+                                <table class="net-info-table">
+                                    <tr>
+                                        <td>目前 IP</td>
+                                        <td>{{ (ipCurrent && ipCurrent.ip) || state.device_ip || '—' }}</td>
+                                    </tr>
+                                    <tr v-if="ipMode === 'static'">
+                                        <td>變更為</td>
+                                        <td>{{ ipForm.ip }} / {{ ipForm.subnet }}
+                                            <span v-if="ipForm.gateway">（GW {{ ipForm.gateway }}）</span>
+                                        </td>
+                                    </tr>
+                                    <tr v-else>
+                                        <td>變更為</td>
+                                        <td>DHCP（由 DHCP server 指派）</td>
+                                    </tr>
+                                </table>
+                                <p class="hint-text" v-if="ipMode === 'static'">
+                                    套用後設備連線會立即中斷，伺服器會自動等待設備上線並重新連線（最長 30 秒）。
+                                </p>
+                                <p class="hint-text" v-else>
+                                    套用後連線會中斷，且新 IP 無法預知，需自行用「搜尋設備」找回。
+                                    <b>若此網段沒有 DHCP server，設備將失聯</b>，需以 CLI 的迷你 DHCP server 救回。
+                                </p>
+                                <p class="hint-text" v-if="ipSubnetWarning">{{ ipSubnetWarning }}</p>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-ghost" @click="ipConfirmOpen = false">取消</button>
+                                <button class="btn btn-danger" @click="applyIpChange">確認送出</button>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
             </main>
         </div>
 
@@ -543,7 +1136,7 @@
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="/static/js/app.js?v=4.2.10d"></script>
+    <script src="/static/js/app.js?v=4.9.0"></script>
 </body>
 
 </html>

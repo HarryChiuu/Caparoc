@@ -19,10 +19,12 @@ CAPAROC 後端操作層
 """
 
 from pycomm3 import CIPDriver
+import json
 import struct
 import time
 import threading
 import traceback
+from pathlib import Path
 
 try:
     from logging_manager import setup as _log_setup, get_logger
@@ -191,14 +193,17 @@ class CaparocBackend:
 
                 if idle_time >= self.heartbeat_interval:
                     try:
-                        driver.generic_message(
-                            service=0x0E,
-                            class_code=0x04,
-                            instance=self.input_instance,
-                            attribute=3,
-                            connected=True,
-                            unconnected_send=False
-                        )
+                        # 與 _read_current_status / set_channel 等所有 CIP 呼叫共用
+                        # 同一把鎖，避免與其他執行緒並發送出 generic_message
+                        with self._cip_lock:
+                            driver.generic_message(
+                                service=0x0E,
+                                class_code=0x04,
+                                instance=self.input_instance,
+                                attribute=3,
+                                connected=True,
+                                unconnected_send=False
+                            )
                         self.last_activity_time = time.time()
                         if self._hb_fail_logged:
                             self.logger.info(
@@ -356,6 +361,98 @@ class CaparocBackend:
             self._cip_driver = None
         self.driver = None
 
+    # ==================== CIP 共用存取 ====================
+
+    def _cip_get(self, class_code, instance, attribute, connected=False, driver=None):
+        """
+        Get_Attribute_Single（Service 0x0E），內建 _cip_lock。
+
+        所有 CIP 讀取都應走這裡，鎖由方法自己持有，
+        呼叫端不必（也不該）自行 `with self._cip_lock`——
+        避免新增呼叫點時忘記上鎖，破壞 pycomm3 的 TCP 串流。
+
+        Args:
+            driver: 指定要走哪個 CIPDriver。
+                    None（web 一律如此）= 用 self.driver；
+                    caparoc_ip_config.py 這類 CLI 工具會傳入自建的短命 driver
+                    （它只想改 IP，不該被 connect() 的模組探測副作用波及）。
+                    無論走哪個 driver 都持有 _cip_lock——CLI 單執行緒下無競爭，成本為零。
+
+        Returns:
+            bytes: 回應內容（可能為 b''）
+            None:  讀取失敗、CIP 端點回錯誤、或尚未連線
+        """
+        drv = driver if driver is not None else self.driver
+        if not drv:
+            return None
+        try:
+            with self._cip_lock:
+                resp = drv.generic_message(
+                    service=0x0E, class_code=class_code, instance=instance,
+                    attribute=attribute, connected=connected,
+                    unconnected_send=False,
+                )
+            if not resp or getattr(resp, 'error', None):
+                return None
+            return bytes(resp.value) if resp.value is not None else b''
+        except Exception:
+            return None
+
+    def _cip_set(self, class_code, instance, attribute, data, connected=True, driver=None):
+        """
+        Set_Attribute_Single（Service 0x10），內建 _cip_lock。
+
+        Args:
+            driver: 同 _cip_get()——None 表示用 self.driver。
+
+        Returns:
+            (True,  None)      寫入成功
+            (False, error_msg) 寫入失敗（CIP 錯誤或例外）
+        """
+        ok, err, _ = self._cip_set_detail(class_code, instance, attribute, data,
+                                          connected=connected, driver=driver)
+        return ok, err
+
+    def _cip_set_detail(self, class_code, instance, attribute, data,
+                        connected=True, driver=None):
+        """
+        與 _cip_set() 相同，但多回傳 was_exception 旗標。
+
+        寫入 0xF5 這類「成功後設備立刻換 IP、連線隨即中斷」的屬性時，必須分辨：
+          - 設備**明確回 CIP 錯誤**（例如 DHCP 模式下寫 Attr5 會回 Object state
+            conflict）→ 真失敗，要往上報
+          - 送出後**拿不到回應而拋例外** → 極可能是成功了，只是連線已斷
+        兩者若都當成失敗，改 IP 永遠會被誤報為失敗。
+
+        Returns:
+            (ok: bool, err: str|None, was_exception: bool)
+        """
+        drv = driver if driver is not None else self.driver
+        if not drv:
+            return False, "driver 未初始化", False
+        try:
+            with self._cip_lock:
+                resp = drv.generic_message(
+                    service=0x10, class_code=class_code, instance=instance,
+                    attribute=attribute, request_data=data, connected=connected,
+                    unconnected_send=False,
+                )
+            err = getattr(resp, 'error', None) if resp else "無回應"
+            if err:
+                return False, str(err), False
+            return True, None, False
+        except Exception as e:
+            return False, f"{type(e).__name__}: {e}", True
+
+    def _read_input_assembly(self, connected=False):
+        """
+        讀取整份 Input Assembly（0x65 attr 3）。
+
+        一次讀取即涵蓋所有模組/通道，批次驗證時可用單次 CIP 往返
+        取代「每通道各讀一次」，大幅減少鎖競爭與 WebSocket 卡頓。
+        """
+        return self._cip_get(0x04, self.input_instance, 3, connected=connected)
+
     def get_network_info(self) -> dict:
         """
         讀取設備網路資訊。需已連線（connected=True）。
@@ -379,18 +476,8 @@ class CaparocBackend:
             return f"{(v>>24)&0xFF}.{(v>>16)&0xFF}.{(v>>8)&0xFF}.{v&0xFF}"
 
         def _rd(cls, inst, attr):
-            """Get_Attribute_Single（connected=True），持鎖避免並發損毀。"""
-            try:
-                with self._cip_lock:
-                    resp = self.driver.generic_message(
-                        service=0x0E, class_code=cls, instance=inst, attribute=attr,
-                        connected=True, unconnected_send=False,
-                    )
-                if resp and not (hasattr(resp, 'error') and resp.error):
-                    return bytes(resp.value) if resp.value is not None else b''
-            except Exception:
-                pass
-            return None
+            """Get_Attribute_Single（connected=True），鎖由 _cip_get 內建。"""
+            return self._cip_get(cls, inst, attr, connected=True)
 
         # TCP/IP Interface attr5: Interface Configuration（IP + Subnet + GW + DNS1 + DNS2 + Domain Name）
         raw = _rd(0xF5, 1, 5)
@@ -479,18 +566,8 @@ class CaparocBackend:
             return result
 
         def _rd(cls, inst, attr):
-            """Get_Attribute_Single（connected=True），持鎖避免並發損毀。"""
-            try:
-                with self._cip_lock:
-                    resp = self.driver.generic_message(
-                        service=0x0E, class_code=cls, instance=inst, attribute=attr,
-                        connected=True, unconnected_send=False,
-                    )
-                if resp and not (hasattr(resp, 'error') and resp.error):
-                    return bytes(resp.value) if resp.value is not None else b''
-            except Exception:
-                pass
-            return None
+            """Get_Attribute_Single（connected=True），鎖由 _cip_get 內建。"""
+            return self._cip_get(cls, inst, attr, connected=True)
 
         # ---- Identity Object (0x01, inst 1) — connected=True only ----
         for attr, size, key in (
@@ -679,13 +756,20 @@ class CaparocBackend:
         """
         探測某模組是否支援 CIP 額定電流寫入。
 
-        方法：第一個實體通道寫入 nominal ± 1（probe 對照組），
-               0.8 秒後驗證是否改變。若成功立即還原。
+        ⚠️ 破壞性探測：會實際對設備寫入 nominal ± 1 再還原。
+           結果由 _probe_all_modules() 快取到檔案，同一台設備正常只跑一次。
+
+        方法：第一個實體通道寫入 nominal ± 1（probe 對照組），0.8 秒後讀回驗證。
+              無論判定結果或中途例外，finally 都會還原原值，
+              確保設備不會被留在 probe 值。
 
         Returns:
             True  = 可寫（主動探測確認）
             False = read-only（2 通道型或其他硬體限制）
         """
+        nominal_inst = None
+        original = None
+        wrote_probe = False
         try:
             # 找模組內第一個實體通道（存在於 _ch_id_map）
             first_ch = None
@@ -696,58 +780,29 @@ class CaparocBackend:
             if first_ch is None:
                 return False   # 模組沒有實體通道
 
-            # 所有 CIP 呼叫均持 _cip_lock，避免與 WebSocket read 並發
-            with self._cip_lock:
-                # 讀取目前 nominal
-                inp = self.driver.generic_message(
-                    service=0x0E, class_code=0x04,
-                    instance=self.input_instance, attribute=3, connected=False
-                )
-                if not inp or not hasattr(inp, 'value'):
-                    return False
-                inp_off = self.get_channel_offset(module, first_ch)
-                if len(inp.value) <= inp_off + 2:
-                    return False
-                current_nominal = inp.value[inp_off + 1]
-                if current_nominal == 0:
-                    return False
+            inp_off = self.get_channel_offset(module, first_ch)
+            data = self._read_input_assembly()
+            if data is None or len(data) <= inp_off + 2:
+                return False
+            original = data[inp_off + 1]
+            if original == 0:
+                return False
 
             # 計算 probe 對照組（寫 nominal ± 1）
-            probe_val = (current_nominal - 1) if current_nominal > 1 else (current_nominal + 1)
+            probe_val = (original - 1) if original > 1 else (original + 1)
             nominal_inst = self._get_nominal_param_instance(module, first_ch)
 
-            with self._cip_lock:
-                wr = self.driver.generic_message(
-                    service=0x10, class_code=0x0F, instance=nominal_inst,
-                    attribute=1, request_data=bytes([probe_val]),
-                    connected=True, unconnected_send=False
-                )
-            if getattr(wr, 'error', None):
-                return False   # CIP 端點明確拒絕
+            ok, _err = self._cip_set(0x0F, nominal_inst, 1, bytes([probe_val]))
+            if not ok:
+                return False   # CIP 端點明確拒絕，設備值未被改動
+            wrote_probe = True
 
             time.sleep(0.8)
 
-            with self._cip_lock:
-                # 讀回驗證
-                inp2 = self.driver.generic_message(
-                    service=0x0E, class_code=0x04,
-                    instance=self.input_instance, attribute=3, connected=False
-                )
-            if not inp2 or not hasattr(inp2, 'value'):
+            data2 = self._read_input_assembly()
+            if data2 is None or len(data2) <= inp_off + 2:
                 return False
-            actual = inp2.value[inp_off + 1] if len(inp2.value) > inp_off + 2 else current_nominal
-
-            if actual == probe_val:
-                # 寫入成功 → 立即還原
-                with self._cip_lock:
-                    self.driver.generic_message(
-                        service=0x10, class_code=0x0F, instance=nominal_inst,
-                        attribute=1, request_data=bytes([current_nominal]),
-                        connected=True, unconnected_send=False
-                    )
-                return True
-            else:
-                return False   # 齔嘯寫入，read-only
+            return data2[inp_off + 1] == probe_val
 
         except Exception as e:
             self.logger.warning(
@@ -755,16 +810,86 @@ class CaparocBackend:
                 extra={'log_module': 'CONN'}
             )
             return False
+        finally:
+            # 只要送出過 probe 寫入就還原——包含判定 read-only 與中途例外的情況。
+            # （read-only 模組本來就吃不下寫入，多還原一次無副作用）
+            if wrote_probe and nominal_inst is not None and original is not None:
+                ok, err = self._cip_set(0x0F, nominal_inst, 1, bytes([original]))
+                if not ok:
+                    self.logger.error(
+                        f"M{module} 探測值還原失敗，額定電流可能停在 probe 值: {err}",
+                        extra={'log_module': 'CONN'}
+                    )
 
-    def _probe_all_modules(self):
+    # ---- 探測結果快取（避免每次連線都對設備做破壞性寫入）----
+
+    _PROBE_CACHE_PATH = Path(__file__).resolve().parent.parent / "config" / "nominal_probe_cache.json"
+
+    def _probe_cache_key(self) -> str:
         """
-        對所有已連線模組進行額定電流寫入探測。
-        失敗的模組加入 _nominal_readonly_modules。
+        快取索引鍵：優先用 Identity Object 序號（綁定物理設備），
+        讀不到時退回 IP（同一台機器換 IP 會重新探測，可接受）。
+        """
+        raw = self._cip_get(0x01, 1, 6, connected=True)   # Serial Number, UDINT
+        if raw is not None and len(raw) >= 4:
+            return f"sn:{struct.unpack_from('<I', raw)[0]}"
+        return f"ip:{self.device_ip}"
+
+    def _load_probe_cache(self) -> dict:
+        try:
+            if self._PROBE_CACHE_PATH.exists():
+                with open(self._PROBE_CACHE_PATH, encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data if isinstance(data, dict) else {}
+        except Exception as e:
+            self.logger.warning(f"讀取額定電流探測快取失敗: {e}",
+                                extra={'log_module': 'CONN'})
+        return {}
+
+    def _save_probe_cache(self, cache: dict):
+        try:
+            self._PROBE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._PROBE_CACHE_PATH, 'w', encoding='utf-8') as f:
+                json.dump(cache, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.logger.warning(f"寫入額定電流探測快取失敗: {e}",
+                                extra={'log_module': 'CONN'})
+
+    def _probe_all_modules(self, force: bool = False):
+        """
+        判定各模組的額定電流是否可透過 CIP 寫入。
+
+        探測本身會短暫改變設備的真實額定電流（見 _probe_nominal_writable），
+        而同一台設備的硬體能力不會變，因此結果以序號為索引快取到
+        config/nominal_probe_cache.json；只有下列情況才重新探測：
+          - 沒有該設備的快取紀錄
+          - 快取的模組數與現況不符（換過模組）
+          - force=True（呼叫端明確要求重測）
+
         連線後內部呼叫一次。
         """
         self._nominal_readonly_modules.clear()
+
+        cache = self._load_probe_cache()
+        key = self._probe_cache_key()
+        entry = cache.get(key) if not force else None
+
+        if isinstance(entry, dict) and entry.get('module_count') == self.module_count:
+            self._nominal_readonly_modules = {
+                int(m) for m in entry.get('readonly_modules', [])
+            }
+            ro = sorted(self._nominal_readonly_modules)
+            self.logger.info(
+                f"沿用額定電流探測快取（{key}，{self.module_count} 模組）："
+                f"read-only 模組 {ro if ro else '無'}；不對設備寫入",
+                extra={'log_module': 'CONN'}
+            )
+            return
+
+        reason = "強制重測" if force else ("模組數變更" if entry else "無快取紀錄")
         self.logger.info(
-            f"開始探測 {self.module_count} 個模組的額定電流可寫性...",
+            f"開始探測 {self.module_count} 個模組的額定電流可寫性（{reason}）；"
+            f"過程會短暫寫入設備並自動還原...",
             extra={'log_module': 'CONN'}
         )
         for mod in range(1, self.module_count + 1):
@@ -777,91 +902,80 @@ class CaparocBackend:
             if not writable:
                 self._nominal_readonly_modules.add(mod)
 
-    def set_nominal_current(self, module, channel, current_amps, verify=True):
+        cache[key] = {
+            'device_ip':        self.device_ip,
+            'module_count':     self.module_count,
+            'readonly_modules': sorted(self._nominal_readonly_modules),
+            'probed_at':        time.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        self._save_probe_cache(cache)
+
+    # 驗證輪詢參數（單筆與批次共用）
+    _NOMINAL_VERIFY_ATTEMPTS = 6
+    _NOMINAL_VERIFY_INTERVAL = 0.5
+
+    def _validate_nominal_args(self, module, channel, current_amps):
+        """檢查額定電流設定的參數範圍。合法回 None，否則回錯誤訊息字串。"""
+        if not self.driver:
+            return "Driver 未初始化"
+        if module < 1 or module > 16:
+            return f"模組編號超出範圍 (1-16): {module}"
+        if channel < 1 or channel > self.channels_per_module:
+            return f"通道編號超出範圍 (1-{self.channels_per_module}): {channel}"
+        if current_amps < 1 or current_amps > 20:
+            return f"額定電流超出範圍 (1-20A): {current_amps}"
+        return None
+
+    def _channel_label(self, module, channel):
+        """回傳 (人類可讀標籤, 全域通道編號)。多模組時標籤帶 M#.CH# 與 #全域編號。"""
+        global_ch = (module - 1) * self.channels_per_module + channel
+        if self.module_count > 1:
+            return f"M{module}.CH{channel} (#{global_ch})", global_ch
+        return f"CH{global_ch}", global_ch
+
+    def _write_nominal_current(self, module, channel, current_amps, ch_label, global_ch):
         """
-        設定通道的額定電流（使用 Config Assembly）
+        寫入額定電流（只寫入，不驗證）。單筆與批次設定共用。
 
-        根據手冊 Table 7-11 & 7-18:
-        - Byte 0: Nominal Current (USINT, 1-20A)
-        - Byte 1: Programming Lock
-        - Byte 2: Status (0=Off, 1=On, 2=No Change)
-
-        ⚠️ 關鍵修正：使用 Status Byte = 2 (No Change) 保護所有通道不被意外關閉！
-
-        Args:
-            module: 模組編號 (1-16)
-            channel: 通道編號 (1-4)
-            current_amps: 額定電流 (1-20A)
-            verify: 是否驗證設定成功
+        主要路徑：Class 0x0F Parameter Object（適用所有模組，含 2 通道）
+        回退路徑：Config Assembly（舊邏輯，對部分模組仍有效）
 
         Returns:
-            bool: True=成功, False=失敗
+            bool: True=寫入指令已被設備接受
         """
-        if not self.driver:
-            print("❌ Driver 未初始化")
-            return False
+        nominal_inst = self._get_nominal_param_instance(module, channel)
+        print(f"   [0x0F] instance={nominal_inst}，寫入 {current_amps}A")
+        ok, wr_err = self._cip_set(0x0F, nominal_inst, 1, bytes([current_amps]))
+        print(f"   [0x0F] write_error={wr_err!r}")
+        if ok:
+            return True
 
-        if module < 1 or module > 16:
-            print(f"❌ 模組編號超出範圍 (1-16): {module}")
-            return False
-
-        if channel < 1 or channel > self.channels_per_module:
-            print(f"❌ 通道編號超出範圍 (1-{self.channels_per_module}): {channel}")
-            return False
-
-        if current_amps < 1 or current_amps > 20:
-            print(f"❌ 額定電流超出範圍 (1-20A): {current_amps}")
-            return False
-
+        # ── 回退：Config Assembly ──
+        # 讀取→修改→寫入必須在同一次持鎖內完成才具原子性，
+        # 因此這裡不用 _cip_get/_cip_set（兩者各自獨立上鎖）。
+        print(f"   [0x0F] 失敗，回退至 Config Assembly...")
+        offset_current = self.get_config_channel_offset(module, channel)
+        offset_status = offset_current + 2
         try:
-            base_offset = self.get_config_channel_offset(module, channel)
-            offset_current = base_offset
-            offset_lock = base_offset + 1
-            offset_status = base_offset + 2
-
-            global_ch = (module - 1) * self.channels_per_module + channel
-            if self.module_count > 1:
-                ch_label = f"M{module}.CH{channel} (#{global_ch})"
-            else:
-                ch_label = f"CH{global_ch}"
-
-            print(f"\n[額定電流設定] {ch_label}")
-
-            current_value = self._read_nominal_current_silent(self.driver, module, channel)
-            if current_value is not None:
-                print(f"⚠️  變更警告: {ch_label} 目前為 {current_value}A，修改設定為 {current_amps}A")
-
-            # ── 主要方法：Class 0x0F Parameter Object（適用所有模組，含 2 通道）──
-            nominal_inst = self._get_nominal_param_instance(module, channel)
-            print(f"   [0x0F] instance={nominal_inst}，寫入 {current_amps}A")
-            write_response = self.driver.generic_message(
-                service=0x10,
-                class_code=0x0F,
-                instance=nominal_inst,
-                attribute=1,
-                request_data=bytes([current_amps]),
-                connected=True,
-                unconnected_send=False,
-            )
-            wr_err = getattr(write_response, 'error', None)
-            print(f"   [0x0F] write_error={wr_err!r}")
-
-            if wr_err:
-                # 備用方法：Config Assembly（舊邏輯，對部分模組仍有效）
-                print(f"   [0x0F] 失敗，回退至 Config Assembly...")
+            with self._cip_lock:
                 cfg_resp = self.driver.generic_message(
                     service=0x0E, class_code=0x04,
                     instance=self.config_instance, attribute=3, connected=True
                 )
-                if not cfg_resp or (hasattr(cfg_resp, 'error') and cfg_resp.error):
+                if not cfg_resp or getattr(cfg_resp, 'error', None):
                     print(f"   ❌ Config Assembly 讀取失敗")
+                    self.logger.error(f"{ch_label} 額定電流設定失敗：Config Assembly 讀取失敗",
+                                      extra={'log_module': 'INIT', 'channel': global_ch})
                     return False
                 config_data = bytearray(cfg_resp.value)
                 if offset_status >= len(config_data):
                     print(f"   ❌ Offset 超出範圍")
+                    self.logger.error(f"{ch_label} 額定電流設定失敗：offset 超出範圍",
+                                      extra={'log_module': 'INIT', 'channel': global_ch})
                     return False
                 config_data[offset_current] = current_amps
                 config_data[offset_status]  = 2
+                # ⚠️ 其他已設定通道的 Status Byte 補成 2 (No Change)，避免被意外關閉
                 for m in range(1, 17):
                     for ch in range(1, 5):
                         co = self.get_config_channel_offset(m, ch)
@@ -872,72 +986,204 @@ class CaparocBackend:
                     instance=self.config_instance, attribute=3,
                     request_data=bytes(config_data), connected=True
                 )
-                if hasattr(wr2, 'error') and wr2.error:
+                if getattr(wr2, 'error', None):
                     print(f"   ❌ Config Assembly 寫入失敗: {wr2.error}")
+                    self.logger.error(f"{ch_label} 額定電流設定失敗：{wr2.error}",
+                                      extra={'log_module': 'INIT', 'channel': global_ch})
                     return False
-
-            if verify:
-                print(f"\n[驗證] 等待設備應用配置...")
-                max_attempts = 6
-                for attempt in range(1, max_attempts + 1):
-                    time.sleep(0.5)
-                    actual = self._read_nominal_current_silent(self.driver, module, channel)
-                    if actual is not None and actual == current_amps:
-                        elapsed = attempt * 0.5
-                        print(f"✅ 變更成功: {ch_label} 目前為 {actual}A (耗時: {elapsed:.1f}s)")
-                        self.logger.info(
-                            f"{ch_label} 額定電流設為 {actual}A (耗時:{elapsed:.1f}s)",
-                            extra={'log_module': 'INIT', 'channel': global_ch,
-                                   'amps': actual, 'verified': True, 'elapsed': elapsed}
-                        )
-                        return True
-                    elif attempt < max_attempts:
-                        continue
-                    else:
-                        if actual is not None:
-                            print(f"⚠️  驗證警告: 設備顯示 {actual}A，設定值 {current_amps}A")
-                            print(f"   建議: 請使用 'verify {global_ch}' 命令再次確認")
-                            self.logger.warning(
-                                f"{ch_label} 驗證警告: 設備顯示 {actual}A，設定值 {current_amps}A",
-                                extra={'log_module': 'INIT', 'channel': global_ch}
-                            )
-                        else:
-                            print(f"⚠️  無法驗證（讀取失敗），但設定已寫入")
-                        return True
-
             return True
 
         except Exception as e:
-            print(f"   ❌ 發生異常: {e}")
+            print(f"   ❌ Config Assembly 寫入異常: {e}")
             traceback.print_exc()
+            self.logger.error(f"{ch_label} 額定電流設定異常: {e}",
+                              extra={'log_module': 'INIT', 'channel': global_ch})
             return False
 
-    def _read_nominal_current_silent(self, driver, module, channel):
+    def set_nominal_current(self, module, channel, current_amps, verify=True):
         """
-        靜默讀取通道的額定電流設定（不顯示調試信息）
+        設定單一通道的額定電流。
+
+        根據手冊 Table 7-11 & 7-18:
+        - Byte 0: Nominal Current (USINT, 1-20A)
+        - Byte 1: Programming Lock
+        - Byte 2: Status (0=Off, 1=On, 2=No Change)
+
+        Args:
+            module: 模組編號 (1-16)
+            channel: 通道編號 (1-4)
+            current_amps: 額定電流 (1-20A)
+            verify: 是否驗證設定成功（最長 3 秒）
+
+        Returns:
+            bool: True=成功, False=失敗
+
+        多通道請改用 set_nominal_current_batch()，可省下 N 倍的驗證等待。
+        """
+        err = self._validate_nominal_args(module, channel, current_amps)
+        if err:
+            print(f"❌ {err}")
+            return False
+
+        self._update_activity()
+        ch_label, global_ch = self._channel_label(module, channel)
+        print(f"\n[額定電流設定] {ch_label}")
+
+        current_value = self._read_nominal_current(module, channel)
+        if current_value is not None:
+            print(f"⚠️  變更警告: {ch_label} 目前為 {current_value}A，修改設定為 {current_amps}A")
+
+        if not self._write_nominal_current(module, channel, current_amps, ch_label, global_ch):
+            return False
+
+        if not verify:
+            return True
+
+        print(f"\n[驗證] 等待設備應用配置...")
+        actual = None
+        for attempt in range(1, self._NOMINAL_VERIFY_ATTEMPTS + 1):
+            time.sleep(self._NOMINAL_VERIFY_INTERVAL)
+            actual = self._read_nominal_current(module, channel)
+            if actual is not None and actual == current_amps:
+                elapsed = attempt * self._NOMINAL_VERIFY_INTERVAL
+                print(f"✅ 變更成功: {ch_label} 目前為 {actual}A (耗時: {elapsed:.1f}s)")
+                self.logger.info(
+                    f"{ch_label} 額定電流設為 {actual}A (耗時:{elapsed:.1f}s)",
+                    extra={'log_module': 'INIT', 'channel': global_ch,
+                           'amps': actual, 'verified': True, 'elapsed': elapsed}
+                )
+                return True
+
+        # 寫入已被接受但設備未在時限內回報新值：沿用舊行為視為成功，僅記錄警告
+        if actual is not None:
+            print(f"⚠️  驗證警告: 設備顯示 {actual}A，設定值 {current_amps}A")
+            print(f"   建議: 請使用 'verify {global_ch}' 命令再次確認")
+            self.logger.warning(
+                f"{ch_label} 驗證警告: 設備顯示 {actual}A，設定值 {current_amps}A",
+                extra={'log_module': 'INIT', 'channel': global_ch}
+            )
+        else:
+            print(f"⚠️  無法驗證（讀取失敗），但設定已寫入")
+        return True
+
+    def set_nominal_current_batch(self, targets, verify=True):
+        """
+        批次設定多個通道的額定電流。
+
+        與逐一呼叫 set_nominal_current() 的差別：
+          - 先把所有通道都寫入，最後才統一驗證
+          - 驗證改用「單次 Input Assembly 讀取檢查全部通道」，
+            而不是每個通道各讀一次整份 assembly
+
+        8 通道最壞情況從約 24 秒（8 × 6 × 0.5s）降到約 3 秒，
+        期間搶 _cip_lock 的讀取次數從 48 次降到 6 次，
+        WebSocket 狀態推送不再被長時間排隊卡住。
+
+        Args:
+            targets: [(module, channel, amps), ...]
+            verify:  是否於寫入後驗證設備實際值
+
+        Returns:
+            dict: {
+              'ok': int, 'fail': int,
+              'results': [{'module','channel','amps','ok','actual','error'}, ...]
+            }
+        """
+        results = []
+        pending = []          # 寫入成功、等待設備套用的項目
+        for module, channel, amps in targets:
+            amps = int(round(amps))
+            entry = {'module': module, 'channel': channel, 'amps': amps,
+                     'ok': False, 'actual': None, 'error': None}
+            results.append(entry)
+
+            err = self._validate_nominal_args(module, channel, amps)
+            if err:
+                entry['error'] = err
+                print(f"❌ {err}")
+                continue
+
+            self._update_activity()
+            ch_label, global_ch = self._channel_label(module, channel)
+            print(f"\n[額定電流設定] {ch_label}")
+            if self._write_nominal_current(module, channel, amps, ch_label, global_ch):
+                entry['ok'] = True
+                pending.append(entry)
+            else:
+                entry['error'] = '寫入失敗'
+
+        if verify and pending:
+            print(f"\n[驗證] 等待設備套用 {len(pending)} 個通道的配置...")
+            for _ in range(self._NOMINAL_VERIFY_ATTEMPTS):
+                time.sleep(self._NOMINAL_VERIFY_INTERVAL)
+                data = self._read_input_assembly()
+                if data is None:
+                    continue
+                still_pending = []
+                for entry in pending:
+                    entry['actual'] = self._nominal_from_assembly(
+                        data, entry['module'], entry['channel'])
+                    if entry['actual'] != entry['amps']:
+                        still_pending.append(entry)
+                pending = still_pending
+                if not pending:
+                    break
+
+            # 未在時限內回報新值者，與單筆設定行為一致：仍視為成功，僅記錄警告
+            for entry in pending:
+                label, gch = self._channel_label(entry['module'], entry['channel'])
+                print(f"⚠️  驗證警告: {label} 設備顯示 {entry['actual']}A，設定值 {entry['amps']}A")
+                self.logger.warning(
+                    f"{label} 批次設定驗證逾時：設備顯示 {entry['actual']}A，"
+                    f"設定值 {entry['amps']}A",
+                    extra={'log_module': 'INIT', 'channel': gch}
+                )
+
+        ok_count = sum(1 for e in results if e['ok'])
+        self.logger.info(
+            f"批次額定電流設定完成：{ok_count} 成功 / {len(results) - ok_count} 失敗",
+            extra={'log_module': 'INIT'}
+        )
+        return {'ok': ok_count, 'fail': len(results) - ok_count, 'results': results}
+
+    def _nominal_from_assembly(self, data, module, channel):
+        """從整份 Input Assembly 取出指定通道的額定電流（A）。"""
+        if data is None:
+            return None
+        offset = self.get_channel_offset(module, channel)
+        if len(data) > offset + 1:
+            return int(data[offset + 1])
+        return None
+
+    def _read_nominal_current(self, module, channel, verbose=False):
+        """
+        讀取通道目前的額定電流設定。
+
+        Args:
+            verbose: True 時額外印出 Input Assembly 原始位元組（CLI `verify` 指令用）
 
         Returns:
             int: 實際額定電流值 (0-20A), 或 None (讀取失敗)
         """
-        try:
-            response = driver.generic_message(
-                service=0x0E,
-                class_code=0x04,
-                instance=self.input_instance,
-                attribute=3,
-                connected=False
-            )
+        data = self._read_input_assembly()
+        value = self._nominal_from_assembly(data, module, channel)
 
-            if response and hasattr(response, 'value'):
-                data = response.value
-                offset = self.get_channel_offset(module, channel)
-                if len(data) > offset + 1:
-                    return int(data[offset + 1])
-
+        if value is None:
+            if verbose:
+                print(f"       [驗證] 讀取失敗或資料長度不足")
             return None
 
-        except Exception:
-            return None
+        if verbose:
+            offset = self.get_channel_offset(module, channel)
+            print(f"       [驗證Debug] Input Assembly offset {offset}:")
+            print(f"                   Byte 0 (status): 0x{data[offset]:02X}")
+            print(f"                   Byte 1 (nominal): {value}A")
+            if len(data) > offset + 2:
+                print(f"                   Byte 2: 0x{data[offset+2]:02X}")
+            if len(data) > offset + 3:
+                print(f"                   Byte 3: 0x{data[offset+3]:02X}")
+
+        return value
 
     def _wait_for_config_processing(self, driver, max_wait=10.0):
         """
@@ -987,48 +1233,9 @@ class CaparocBackend:
         print(f"   ⚠️  監測超時 ({max_wait}s)")
         return False
 
-    def _verify_nominal_current(self, driver, module, channel):
-        """
-        驗證通道的額定電流設定（顯示詳細調試信息）
-
-        Returns:
-            int: 實際額定電流值 (0-20A), 或 None (讀取失敗)
-        """
-        try:
-            response = driver.generic_message(
-                service=0x0E,
-                class_code=0x04,
-                instance=self.input_instance,
-                attribute=3,
-                connected=False
-            )
-
-            if response and hasattr(response, 'value'):
-                data = response.value
-                offset = self.get_channel_offset(module, channel)
-
-                if len(data) > offset + 1:
-                    nominal_current = data[offset + 1]
-
-                    print(f"       [驗證Debug] Input Assembly offset {offset}:")
-                    print(f"                   Byte 0 (status): 0x{data[offset]:02X}")
-                    print(f"                   Byte 1 (nominal): {nominal_current}A")
-                    if len(data) > offset + 2:
-                        print(f"                   Byte 2: 0x{data[offset+2]:02X}")
-                    if len(data) > offset + 3:
-                        print(f"                   Byte 3: 0x{data[offset+3]:02X}")
-
-                    return int(nominal_current)
-
-            return None
-
-        except Exception as e:
-            print(f"       [驗證] 讀取失敗: {e}")
-            return None
-
     # ==================== 通道開關控制 ====================
 
-    def set_channel(self, module, channel, state):
+    def set_channel(self, module, channel, state, show_result=True):
         """
         控制通道開關（基於手冊 7.1.2 節）
 
@@ -1036,10 +1243,15 @@ class CaparocBackend:
             module: 1-16（模組編號，對應 Output byte 1..16）
             channel: 1-4（模組內通道編號）
             state: True=開啟, False=關閉
+            show_result: True=下命令後等 0.5 秒讀回實際電流並印出（CLI 用）。
+                         Web 路徑請傳 False——輸出沒人看得到，卻要多花
+                         0.5 秒與一次 CIP 往返，且 WebSocket 一秒內就會刷新真實狀態。
         """
         if not self.driver:
             print("[錯誤] Driver 未初始化")
             return False
+
+        self._update_activity()
 
         with self.io_data_lock:
             byte_offset = module   # Module 1 -> byte 1, Module 2 -> byte 2, ...
@@ -1065,78 +1277,88 @@ class CaparocBackend:
                 time.sleep(0.2)
                 print(f"       ✅ 控制命令已提交")
             else:
+                # 與 _read_current_status / heartbeat 等所有 CIP 呼叫共用同一把鎖，
+                # 避免多執行緒並發送出 generic_message 破壞 pycomm3 的 TCP 串流
                 try:
-                    output_data = bytes(self.current_output_data)
-                    response = self.driver.generic_message(
-                        service=0x10,
-                        class_code=0x04,
-                        instance=self.output_instance,
-                        attribute=3,
-                        request_data=output_data,
-                        connected=False
-                    )
+                    with self._cip_lock:
+                        output_data = bytes(self.current_output_data)
+                        response = self.driver.generic_message(
+                            service=0x10,
+                            class_code=0x04,
+                            instance=self.output_instance,
+                            attribute=3,
+                            request_data=output_data,
+                            connected=False
+                        )
 
-                    if response and not (hasattr(response, 'error') and response.error):
-                        try:
-                            verify_resp = self.driver.generic_message(
-                                service=0x0E,
-                                class_code=0x04,
-                                instance=self.output_instance,
-                                attribute=3,
-                                connected=False
+                        if response and not (hasattr(response, 'error') and response.error):
+                            try:
+                                verify_resp = self.driver.generic_message(
+                                    service=0x0E,
+                                    class_code=0x04,
+                                    instance=self.output_instance,
+                                    attribute=3,
+                                    connected=False
+                                )
+                                if verify_resp and hasattr(verify_resp, 'value') and len(verify_resp.value) > byte_offset:
+                                    actual_byte = verify_resp.value[byte_offset]
+                                    if actual_byte == new_value:
+                                        print(f"       ✅ 驗證成功 (設備 byte[{byte_offset}]=0x{actual_byte:02X})")
+                                    else:
+                                        print(f"       ⚠️ 驗證警告：設備 byte[{byte_offset}]=0x{actual_byte:02X}, 預期=0x{new_value:02X}")
+                            except Exception as ve:
+                                print(f"       ⚠️ 無法驗證: {ve}")
+                        else:
+                            error_msg = response.error if hasattr(response, 'error') else '未知'
+                            print(f"       ❌ 寫入失敗: {error_msg}")
+                            self.logger.error(
+                                f"CH{channel} {'開啟' if state else '關閉'}失敗: {error_msg}",
+                                extra={'log_module': 'CTRL', 'channel': channel}
                             )
-                            if verify_resp and hasattr(verify_resp, 'value') and len(verify_resp.value) > byte_offset:
-                                actual_byte = verify_resp.value[byte_offset]
-                                if actual_byte == new_value:
-                                    print(f"       ✅ 驗證成功 (設備 byte[{byte_offset}]=0x{actual_byte:02X})")
-                                else:
-                                    print(f"       ⚠️ 驗證警告：設備 byte[{byte_offset}]=0x{actual_byte:02X}, 預期=0x{new_value:02X}")
-                        except Exception as ve:
-                            print(f"       ⚠️ 無法驗證: {ve}")
-                    else:
-                        error_msg = response.error if hasattr(response, 'error') else '未知'
-                        print(f"       ❌ 寫入失敗: {error_msg}")
-                        return False
+                            return False
 
                 except Exception as e:
                     print(f"       ❌ 寫入異常: {e}")
                     traceback.print_exc()
+                    self.logger.error(
+                        f"CH{channel} {'開啟' if state else '關閉'}異常: {e}",
+                        extra={'log_module': 'CTRL', 'channel': channel}
+                    )
                     return False
 
-        time.sleep(0.5)
-        self._read_and_show_result(channel, state)
+        if show_result:
+            time.sleep(0.5)
+            self._read_and_show_result(module, channel, state)
         return True
 
-    def _read_and_show_result(self, channel, expected_state):
-        """讀取並顯示控制結果"""
-        try:
-            response = self.driver.generic_message(
-                service=0x0E,
-                class_code=0x04,
-                instance=0x101,
-                attribute=3,
-                connected=False
-            )
+    def _read_and_show_result(self, module, channel, expected_state):
+        """
+        讀取並印出通道實際電流（CLI 用）。
 
-            if response and hasattr(response, 'value'):
-                data = response.value
-                offset = 20 + (channel - 1) * 2
-                if len(data) >= offset + 2:
-                    current_raw = struct.unpack('<H', data[offset:offset+2])[0]
-                    current = current_raw / 100.0
+        位址取法與 _read_current_status 一致：Input Assembly 0x65，
+        通道區塊 offset 由 get_channel_offset() 算出，Byte 2 = 流動電流（0.1A 單位）。
+        """
+        data = self._read_input_assembly()
+        if data is None:
+            print(f"       ⚠️ 無法讀取結果")
+            return
 
-                    if expected_state:
-                        if current > 0.05:
-                            print(f"       ✅ CH{channel} 已開啟，電流: {current:.2f} A")
-                        else:
-                            print(f"       ⚠️ CH{channel} 命令已發送，但電流仍為 {current:.2f} A")
-                    else:
-                        if current < 0.05:
-                            print(f"       ✅ CH{channel} 已關閉")
-                        else:
-                            print(f"       ⚠️ CH{channel} 命令已發送，但電流仍為 {current:.2f} A")
-        except Exception as e:
-            print(f"       ⚠️ 無法讀取結果: {e}")
+        offset = self.get_channel_offset(module, channel)
+        if len(data) <= offset + 2:
+            print(f"       ⚠️ 無法讀取結果：Input Assembly 長度不足 (offset={offset})")
+            return
+
+        current = data[offset + 2] / 10.0
+        if expected_state:
+            if current > 0.05:
+                print(f"       ✅ CH{channel} 已開啟，電流: {current:.2f} A")
+            else:
+                print(f"       ⚠️ CH{channel} 命令已發送，但電流仍為 {current:.2f} A")
+        else:
+            if current < 0.05:
+                print(f"       ✅ CH{channel} 已關閉")
+            else:
+                print(f"       ⚠️ CH{channel} 命令已發送，但電流仍為 {current:.2f} A")
 
     def read_channel_status(self, channel):
         """讀取通道狀態（基於手冊 7.2.5 節）"""
@@ -1183,15 +1405,9 @@ class CaparocBackend:
             }
 
         try:
-            response = self.driver.generic_message(
-                service=0x0E,
-                class_code=0x04,
-                instance=self.input_instance,
-                attribute=3,
-                connected=False
-            )
+            data = self._read_input_assembly()
 
-            if not response or not hasattr(response, 'value') or len(response.value) < 6:
+            if data is None or len(data) < 6:
                 return {
                     'safe': False,
                     'warnings': [],
@@ -1202,7 +1418,6 @@ class CaparocBackend:
                     'global_status_byte': 0
                 }
 
-            data = response.value
             warnings = []
             errors = []
 
@@ -1406,6 +1621,7 @@ class CaparocBackend:
                 'voltage':           voltage,
                 'channels':          channels
             }
+            self._update_activity()  # 定期成功讀取即視為活躍，避免心跳與此並發搶鎖
             if not self._last_read_ok:
                 self.logger.info(
                     f"設備恢復回應 ({self.device_ip})",
@@ -1606,19 +1822,11 @@ class CaparocBackend:
 
         try:
             print("\n📊 讀取設備狀態...")
-            response_input = self.driver.generic_message(
-                service=0x0E,
-                class_code=0x04,
-                instance=self.input_instance,
-                attribute=3,
-                connected=False
-            )
+            data = self._read_input_assembly()
 
-            if not response_input or not hasattr(response_input, 'value'):
+            if data is None:
                 print("❌ 無法讀取狀態資料")
                 return
-
-            data = response_input.value
 
             print("\n🌐 全域系統狀態:")
             if len(data) > 0:
@@ -1750,7 +1958,7 @@ class CaparocBackend:
 
     # ==================== 網路設定（CIP Class 0xF5） ====================
 
-    def read_device_network_config(self, driver):
+    def read_device_network_config(self, driver=None):
         """
         讀取設備目前的網路設定（CIP TCP/IP Interface Object, Class 0xF5）。
 
@@ -1758,6 +1966,13 @@ class CaparocBackend:
           - Attr 1 (Status)             — 介面狀態旗標
           - Attr 3 (Configuration Control) — 0x00=Static, 0x01=BOOTP, 0x02=DHCP
           - Attr 5 (Interface Configuration) — IP / Subnet / Gateway
+
+        與 get_network_info() 的差別：本方法回傳 **config_control**（Static/BOOTP/DHCP
+        取得方式），是「IP 設定」頁判斷模式所必需；get_network_info() 則額外含
+        MAC / hostname（0xF6 Ethernet Link）但沒有取得方式。兩者用途不同，勿混用。
+
+        Args:
+            driver: None = 用 self.driver（web）；CLI 可傳入自建 driver。
 
         Returns:
             dict: {
@@ -1769,46 +1984,47 @@ class CaparocBackend:
                 'error': str or None
             }
         """
+        import socket as _socket
+
         result = {
             'success': False,
             'ip': '', 'subnet': '', 'gateway': '',
             'config_control': -1, 'config_control_str': '未知',
             'status': -1, 'error': None
         }
+        def _read_f5(attr):
+            """
+            讀 0xF5 單一屬性，connected=False 失敗時退回 connected=True。
+
+            ⚠️ 本設備（CAPAROC PM EIP）實測**三個屬性都只接受 connected=True**，
+            connected=False 一律回 'Too much data'（它不支援 Unconnected Send 0x52）。
+            此處保留兩段式嘗試而非寫死 True，是為了相容其他韌體/型號；
+            順序與 caparoc_ip_config.py 的 _read_attr() 一致。
+            """
+            raw = self._cip_get(0xF5, 1, attr, connected=False, driver=driver)
+            if raw:
+                return raw
+            return self._cip_get(0xF5, 1, attr, connected=True, driver=driver)
+
         try:
-            # 讀取 Attr 1: Status
-            resp_status = driver.generic_message(
-                service=0x0E, class_code=0xF5, instance=1,
-                attribute=1, connected=False
-            )
-            if resp_status and hasattr(resp_status, 'value'):
-                raw = resp_status.value
-                if len(raw) >= 4:
-                    result['status'] = struct.unpack('<I', raw[:4])[0]
+            # Attr 1: Status
+            raw = _read_f5(1)
+            if raw and len(raw) >= 4:
+                result['status'] = struct.unpack('<I', raw[:4])[0]
 
-            # 讀取 Attr 3: Configuration Control
-            resp_ctrl = driver.generic_message(
-                service=0x0E, class_code=0xF5, instance=1,
-                attribute=3, connected=False
-            )
-            if resp_ctrl and hasattr(resp_ctrl, 'value'):
-                raw = resp_ctrl.value
-                if len(raw) >= 4:
-                    ctrl = struct.unpack('<I', raw[:4])[0]
-                    result['config_control'] = ctrl
-                    result['config_control_str'] = {
-                        0: 'Static IP', 1: 'BOOTP', 2: 'DHCP'
-                    }.get(ctrl, f'未知 (0x{ctrl:02X})')
+            # Attr 3: Configuration Control
+            raw = _read_f5(3)
+            if raw and len(raw) >= 4:
+                ctrl = struct.unpack('<I', raw[:4])[0]
+                result['config_control'] = ctrl
+                result['config_control_str'] = {
+                    0: 'Static IP', 1: 'BOOTP', 2: 'DHCP'
+                }.get(ctrl, f'未知 (0x{ctrl:02X})')
 
-            # 讀取 Attr 5: Interface Configuration
-            resp_cfg = driver.generic_message(
-                service=0x0E, class_code=0xF5, instance=1,
-                attribute=5, connected=False
-            )
-            if resp_cfg and hasattr(resp_cfg, 'value'):
-                raw = resp_cfg.value
+            # Attr 5: Interface Configuration
+            raw = _read_f5(5)
+            if raw is not None:
                 if len(raw) >= 12:
-                    import socket as _socket
                     # CIP 以 Little-Endian UDINT 儲存 IP，需反轉 bytes 才是正確順序
                     # （對稱於 set_device_ip() 寫入時的 inet_aton(...)[::-1]）
                     result['ip']      = _socket.inet_ntoa(raw[0:4][::-1])
@@ -1823,34 +2039,61 @@ class CaparocBackend:
 
         return result
 
-    def set_device_ip(self, driver, new_ip, subnet="255.255.255.0", gateway=""):
+    def set_device_ip(self, driver=None, new_ip=None, subnet="255.255.255.0", gateway=""):
         """
         透過 CIP Class 0xF5 將設備 IP 硬寫入設備。
 
-        步驟：
-          1. 寫入 Attr 3 = 0x00（強制 Static IP 模式）
+        步驟（順序很重要）：
+          1. 寫入 Attr 3 = 0x00（切為 Static IP 模式）
           2. 寫入 Attr 5（new_ip + subnet + gateway + NS1=0 + NS2=0 + DomainName=""）
 
+        ⚠️ **必須先 Attr3 再 Attr5**。設備處於 DHCP 模式時會拒絕寫入 Attr5，
+        回 CIP 錯誤 `Object state conflict`（介面設定由 DHCP 掌控，不接受手動改）。
+        舊版寫成「先 Attr5 再 Attr3」，導致從 DHCP 切回靜態 IP 永遠失敗。
+        兩個屬性都要寫——只寫 Attr3 的話設備會沿用舊的 Attr5 值，而不是使用者輸入的新 IP。
+
         ⚠️ 寫入成功後設備 IP 立即改變，現有連線會中斷（正常現象）。
+        ⚠️ 因此 `success=True` 只代表「Attr5 指令已被接受」，不代表設備已用新 IP 上線。
+           真正的確認要靠呼叫端在寫入後探測新 IP（見 caparoc_ip_core.wait_for_device()）。
 
         Args:
-            driver: CIPDriver 實例（connected=False 模式）
+            driver:  None = 用 self.driver（web）；CLI 可傳入自建 driver。
+                     保留為第一個位置參數以相容既有 CLI 呼叫
+                     `backend.set_device_ip(driver, ip, subnet, gw)`。
             new_ip (str):  新 IP 位址，e.g. "192.168.2.200"
             subnet (str):  子網路遮罩，預設 "255.255.255.0"
             gateway (str): 預設閘道，空字串 = "0.0.0.0"
 
         Returns:
-            dict: {'success': bool, 'error': str or None}
+            dict: {'success': bool, 'error': str or None,
+                   'ctrl_written': bool, 'unverified': bool}
+                  ctrl_written — Attr3（切 Static）是否寫成功。
+                  unverified   — Attr5 送出後連線即中斷、拿不到確認回應。
+                                 這在 IP 真的改變時屬正常，呼叫端應改以探測新 IP 確認。
         """
         import socket as _socket
 
-        result = {'success': False, 'error': None}
+        result = {'success': False, 'error': None,
+                  'ctrl_written': False, 'unverified': False}
+
+        if not new_ip:
+            result['error'] = "new_ip 未指定"
+            return result
 
         # 空 gateway 轉為全零
         gw_addr = gateway if gateway else "0.0.0.0"
 
         try:
-            # Step 1: 組裝 Attr 5 資料（先寫 IP，再切模式，確保設備用新 IP）
+            # Step 1: 先切為 Static。DHCP 模式下不先切，Attr5 會被拒（Object state conflict）
+            ctrl_ok, ctrl_err, ctrl_exc = self._cip_set_detail(
+                0xF5, 1, 3, struct.pack('<I', 0), connected=True, driver=driver)
+            result['ctrl_written'] = ctrl_ok
+            if not ctrl_ok and not ctrl_exc:
+                # 設備明確拒絕切模式 —— 這是真失敗，繼續寫 Attr5 也不會成功
+                result['error'] = f"Attr3 write error: {ctrl_err}"
+                return result
+
+            # Step 2: 寫入 Attr 5
             # CIP 以 Little-Endian UDINT 儲存 IP，需反轉 bytes
             # 格式: IP(4) + Subnet(4) + Gateway(4) + NS1(4) + NS2(4) + DomainName SSTRING len(2)
             config_data = (
@@ -1861,54 +2104,53 @@ class CaparocBackend:
                 bytes(4) +               # NameServer2 = 0.0.0.0
                 struct.pack('<H', 0)     # DomainName SSTRING: length=0
             )
-            resp_cfg = driver.generic_message(
-                service=0x10, class_code=0xF5, instance=1,
-                attribute=5, request_data=config_data, connected=True
-            )
-            if resp_cfg and hasattr(resp_cfg, 'error') and resp_cfg.error:
-                result['error'] = f"Attr5 write error: {resp_cfg.error}"
-                return result
-
-            # Attr5 寫入成功，IP 可能已立即生效
-            result['success'] = True
-
-            # Step 2: 寫入 Attr 3 = Static IP；IP 變更後連線中斷屬正常現象
-            try:
-                static_data = struct.pack('<I', 0)
-                driver.generic_message(
-                    service=0x10, class_code=0xF5, instance=1,
-                    attribute=3, request_data=static_data, connected=True
-                )
-            except Exception:
-                pass  # 連線因 IP 改變而中斷，屬預期行為
+            ok, err, was_exc = self._cip_set_detail(
+                0xF5, 1, 5, config_data, connected=True, driver=driver)
+            if ok:
+                result['success'] = True
+            elif was_exc:
+                # 送出後連線中斷：IP 一改變本來就收不到回應，視為已送出，
+                # 由呼叫端探測新 IP 來確認（見 caparoc_ip_core.wait_for_device()）
+                result['success'] = True
+                result['unverified'] = True
+            else:
+                result['error'] = f"Attr5 write error: {err}"
 
         except Exception as e:
             result['error'] = str(e)
 
         return result
 
-    def set_device_dhcp(self, driver):
+    def set_device_dhcp(self, driver=None):
         """
         透過 CIP Class 0xF5 將設備切換為 DHCP 模式。
 
         只需寫入 Attr 3 = 0x02（DHCP），設備會自行向 DHCP server 取得 IP。
         ⚠️ 成功後設備 IP 立即改變，現有連線會中斷（正常現象）。
 
+        ⚠️ **已知限制**：連線中斷與真正的寫入失敗在此難以區分——設備一換 IP 就
+        不會再回應，拿不到成功回應是預期行為。因此本方法對「無回應」採寬鬆判定
+        （視為已送出），呼叫端**不應把 success 當成設備真的切換成功的證據**；
+        請改用探索（caparoc_ip_core.discover()）找回設備新 IP 來確認。
+
+        Args:
+            driver: None = 用 self.driver（web）；CLI 可傳入自建 driver。
+
         Returns:
             dict: {'success': bool, 'error': str or None}
         """
         result = {'success': False, 'error': None}
-        try:
-            dhcp_data = struct.pack('<I', 2)  # Configuration Control = 2 (DHCP)
-            resp = driver.generic_message(
-                service=0x10, class_code=0xF5, instance=1,
-                attribute=3, request_data=dhcp_data, connected=True
-            )
-            if resp and hasattr(resp, 'error') and resp.error:
-                result['error'] = f"Attr3 write error: {resp.error}"
-                return result
+        dhcp_data = struct.pack('<I', 2)  # Configuration Control = 2 (DHCP)
+        ok, err = self._cip_set(0xF5, 1, 3, dhcp_data,
+                                connected=True, driver=driver)
+        if ok:
             result['success'] = True
-        except Exception:
-            # 連線因 IP 改變而中斷，屬預期行為
+        else:
+            # 連線因 IP 改變而中斷屬預期行為；此處沿用既有的寬鬆判定，
+            # 把錯誤原因保留在 error 供日誌追查，但仍回報 success。
             result['success'] = True
+            result['error'] = None
+            self.logger.info(
+                f"切換 DHCP 後未取得確認回應（屬預期，設備已換 IP）: {err}",
+                extra={'log_module': 'CONN'})
         return result

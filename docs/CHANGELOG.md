@@ -2,6 +2,379 @@
 
 ---
 
+## [2026-08-31] 通道設定頁排版穩定化 + 白天模式對比度改善（尚未提交）
+
+> ⚠️ 這則描述的是**工作目錄中已完成但尚未 commit** 的變更（`style.css` / `app.js` / `index.html`），
+> 記錄下來避免遺失；細節見 `docs/TODO.md` 4.3.7。命令 `git diff` 可重現完整內容。
+
+### 🐛 「設定中…」時整列/整表會跳動
+
+- **根因**：額定電流表格與批次列沒有固定欄寬/按鈕寬度，按鈕文字從「設定」變成「設定中…」、
+  或回饋訊息（`✓ 已設定` / 錯誤訊息）出現時，內容寬度改變會推擠整列甚至整個表格重排；
+  主內容區也沒有預留捲軸槽，內容變高變矮時捲軸出現/消失會讓置中面板左右位移
+- **修正**：`.ch-table` 改 `table-layout: fixed` + `colgroup` 固定欄寬；操作欄改用 `.td-action`
+  （flex row，按鈕 `min-width` 固定，回饋訊息單行截斷 + `title` 提示完整文字）；
+  批次列比照辦理；主內容區加 `scrollbar-gutter: stable`
+
+### 🎨 白天模式對比度不足
+
+- **根因**：白天模式的文字/強調色沿用了原本為深色底調校的色階，部分文字對比度偏低
+- **修正**：`--text*` / `--accent*` / `--ok` / `--err` / `--warn` / `--amber` / `--sysconf-*` /
+  `--purple` 全數加深，目標 `--text-dim` 以上（含）皆 ≥ 6:1、最淡的 `--text-fainter` 也有 ~4.6:1；
+  系統日誌各等級配色、圖表格線/刻度/圖例（`app.js` 的 `_chartTheme()`）同步加深；
+  通道開關「開啟」狀態新增白天模式專屬配色（原本沿用暗色模式配色，白天對比不足）
+- 版號 `?v=4.7.0 → 4.8.0`
+
+### ✅ 待驗證
+
+- [ ] 尚未在瀏覽器實際切換白天/夜間模式檢查畫面
+- [ ] 尚未 commit
+
+---
+
+## [2026-08-28] IP 設定：DHCP 作業可手動中斷、救援可自訂遮罩與閘道（fix/web-cip-concurrency）
+
+### ✨ DHCP 監聽／救援可手動中斷
+
+- **問題**：MAC 偵測最長 90 秒、指派最長 2 分鐘，中途沒有退出的方法。
+  **只在前端 abort fetch 是不夠的**——伺服器執行緒仍會佔著 UDP/67 與 `_dhcp_lock`
+  跑到逾時，使用者按什麼都只會拿到 409，等於卡死
+- **修正**：伺服器端真正的取消。`detect_dhcp_macs()` / `serve_dhcp()` 新增
+  `should_stop` callable，迴圈每輪（監聽約 0.25 秒、指派約 1 秒）檢查一次；
+  新增 `POST /api/ipconfig/dhcp-cancel` 設定共用的 `_dhcp_cancel` 事件旗標
+- 前端在作業進行中顯示「✕ 中斷」按鈕；偵測回應新增 `cancelled` 欄位，
+  指派被中斷時回 HTTP 499「已手動中斷」
+- **實測**：90 秒監聽在送出中斷後 **5.1 秒**結束、標記 `cancelled: true`，
+  且鎖立即釋放（隨後的偵測請求回 200 而非 409）；指派中斷同樣回 499 並釋放鎖
+
+### ✨ 救援面板可自訂子網路遮罩與閘道
+
+原本指派 IP 時遮罩／閘道是沿用下方「變更設備 IP」面板的欄位，隱晦且容易搞錯。
+改為在救援面板中提供獨立的「子網路遮罩」「預設閘道」輸入框，
+`POST /api/ipconfig/assign` 本來就接受這兩個參數，現在前端有對應 UI。
+
+### 🐛 `is_valid_ip()` 寫成 `return false`（小寫）
+
+- **現象**：任何格式錯誤的 IP／遮罩／閘道都會回 **HTTP 500**，而不是預期的 422
+- **根因**：`caparoc_ip_core.py` 的 `is_valid_ip()` 例外分支寫成小寫 `false`
+  （Python 沒有這個名字）→ 拋 `NameError`。
+  合法 IP 走 `return True` 不受影響，所以只有「輸入錯誤」時才會炸，容易漏測
+- **影響範圍**：`/api/ipconfig/static`、`/api/ipconfig/assign`、
+  `/api/ipconfig/discover?iface_ip=` 的所有驗證路徑
+- **修正**：改回 `False`，並全檔掃描確認無其他小寫 `true`/`false`。
+  修正後五條驗證路徑全部正確回 422 並附中文訊息
+
+### 🐛 補回 CLI 的 Ctrl+C 行為（前次重構的回歸）
+
+DHCP 原語下沉到 core 時，漏掉了原本 `_detect_mac_via_socket()` 內的
+`except KeyboardInterrupt: pass`，導致 CLI 在 MAC 偵測階段按 Ctrl+C 會拋出 traceback
+而非回傳已收集到的部分結果。已在 `detect_dhcp_macs()` 補回。
+
+---
+
+## [2026-08-28] IP 設定頁：DHCP 失聯救援（MAC 偵測 + 指派 IP）（fix/web-cip-concurrency）
+
+> 承上一則。使用者回報「切換成 DHCP 以後，掃描網段還是找不到 MAC」，
+> 補上 web 相對於 CLI 缺的最後一塊：**設備失聯時的發現與救援**。
+
+### 🐛 為什麼切成 DHCP 後就「找不到 MAC」
+
+不是 MAC 顯示的問題——是**整台設備都掃不到**。設備切成 DHCP 但網段上沒有 DHCP server 時：
+
+- 它拿不到 IP → EIP List Identity 廣播收不到回應
+- 它沒有 IP → 不會出現在本機 ARP 表，ARP 後援也查不到
+- 上一版的 MAC 補齊機制靠的正是 ARP 表，所以一樣是空的
+
+**但設備並沒有死**：它會持續送出 DHCP Discover 廣播，封包裡就帶著自己的 MAC。
+監聽 UDP/67 是這種狀態下**唯一**能發現設備的方法——CLI 的 `_detect_mac_via_socket()`
+一直都做得到，web 卻沒有，這才是功能落差所在。
+
+### ✨ 新增：DHCP 失聯救援（等同 CLI 的「[2] 新裝置初始設定」）
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| `POST` | `/api/ipconfig/detect-mac` | 監聽 UDP/67 的 DHCP Discover，回傳偵測到的 MAC 清單 |
+| `POST` | `/api/ipconfig/assign` | 開迷你 DHCP server 指派 IP 給指定 MAC，設備上線後再固化為靜態 IP 並自動重連 |
+
+- 前端新增「找不到設備？（DHCP 失聯救援）」面板：偵測 MAC → 單選要救的 MAC →
+  填入要指派的 IP → 一鍵完成「指派 + 固化靜態 + 重新連線」
+- 新增 `_dhcp_lock`：UDP/67 是獨佔資源，MAC 偵測與迷你 DHCP server 必須互斥（並發回 409）
+- 綁定 port 67 在 Windows 上**不需要管理員權限**；被 BootP-DHCP Tool 之類占用時回 503 並指出占用行程
+
+### 🏗️ DHCP 原語下沉到 core，CLI 與 web 共用
+
+`open_dhcp_socket` / `detect_dhcp_macs` / `build_dhcp_reply` / `serve_dhcp` /
+`dhcp_msg_type` / `normalize_mac` / `iface_mac_for` 移入 `caparoc_ip_core.py`，
+print 一律改為 callback（`on_found` / `on_progress` / `on_event`）。
+`caparoc_ip_config.py` 只留印畫面的薄包裝，CLI 輸出逐字不變（`caparoc_ip_config.py` 少約 90 行）。
+
+### 🐛 順手修掉：DHCP 訊息型別判斷錯誤（既有 bug）
+
+- **根因**：`_detect_mac_via_socket()` 用 `data[0] != DHCP_DISCOVER` 判斷訊息型別，
+  但 `data[0]` 是 BOOTP 的 `op` 欄位（1 = BOOTREQUEST），**不是 Option 53**。
+  因為 `DHCP_DISCOVER` 剛好也等於 1 才「看起來能動」，實際上會把
+  REQUEST / RELEASE / INFORM 全部誤判成 Discover
+- **修正**：新增 `dhcp_msg_type()` 正確走 Option 迴圈解析，偵測與 serve 兩條路徑統一使用。
+  單元驗證：`op=1 + Option53=3(REQUEST)` 現在正確回傳 3（舊碼會回報成 Discover）
+- 這在 web 上更要緊——UI 會把「偵測到設備 MAC」當成確認步驟顯示給使用者
+
+### ⏱️ 偵測預設時間 30 秒 → 90 秒
+
+實機實測設備約**每 60 秒**才送一次 DHCP Discover（重試間隔會逐次拉長），
+30 秒會誤以為偵測不到。預設改 90 秒、上限 180 秒，UI 也說明可再按一次或重插網路線。
+
+### ✅ 實機驗證（用新功能救回真的失聯的設備）
+
+測試期間設備確實處於「DHCP 模式 + 無 DHCP server」的失聯狀態，
+掃描、ARP、舊位址探測全部無回應。完整走過 web 救援流程：
+
+| 步驟 | 結果 |
+|---|---|
+| 掃描 | `devices: []`（重現使用者回報的現象） |
+| `POST /api/ipconfig/detect-mac`（90 秒） | 偵測到 `cc:cc:ea:9f:c9:72`，約 61 秒 |
+| `POST /api/ipconfig/assign` | `assigned/online/static_set/connected` 全為 true，耗時 51 秒 |
+| 事後確認 | `192.168.50.111 / 255.255.255.0 / Static IP`，已連線，3 模組 24.24V |
+| 事後掃描 | EIP 掃到設備且帶 MAC |
+| CLI 迴歸 | 探索路徑與 [2] 新裝置設定選單輸出皆與改動前一致 |
+
+---
+
+## [2026-08-28] IP 設定頁實機測試修正：4 項問題（fix/web-cip-concurrency）
+
+> 使用者實機操作後回報 4 項問題，逐一重現並修正。全部已在實機（CAPAROC PM EIP，
+> 192.168.50.111，S/N 522F0E7A）驗證通過。
+
+### 🐛 無法變更靜態 IP —— 寫入順序反了（最嚴重）
+
+- **現象**：Web 按下「套用靜態 IP」永遠失敗；連帶「目前網路設定」一直顯示 DHCP
+  （因為模式根本沒切成功，畫面顯示的其實是事實）
+- **根因**：`set_device_ip()` 的順序是「先寫 Attr5（IP）再寫 Attr3（模式）」。
+  但設備處於 DHCP 模式時**會拒絕寫入 Attr5**，回 CIP 錯誤 `Object state conflict`
+  ——介面設定由 DHCP 掌控，不接受手動改。實機用相同值測試 Attr5 寫入即可穩定重現
+- **修正**：改為 **先 Attr3 = 0（切 Static）、再 Attr5（寫 IP/遮罩/閘道）**。
+  兩者仍都要寫——只寫 Attr3 的話設備會沿用舊的 Attr5 值而非使用者輸入的新 IP
+- **附帶修正**：新增 `_cip_set_detail()`，回傳 `was_exception` 旗標以分辨
+  「設備明確回 CIP 錯誤」（真失敗）與「送出後拿不到回應」（IP 已變、連線中斷，屬正常）。
+  舊寫法把兩者都當失敗，導致改 IP 即使成功也會被誤報為失敗
+- `set_device_ip()` 回傳新增 `unverified` 欄位，標示「已送出但未取得確認」
+
+### 🐛 掃描不到 MAC、無法選擇網卡
+
+- **根因 1（MAC）**：List Identity 回應**本身不含 MAC**（只有 IP/廠商/序號/產品名），
+  只有 ARP 後援路徑才有 MAC；且前端表格根本沒有 MAC 欄位
+- **修正 1**：新增 `arp_table()` / `arp_mac_map()`，EIP 探索完成後以 ARP 表補齊 MAC
+  （設備剛回應過廣播，本機 ARP 表必然有它），讓兩條探索路徑欄位一致；前端表格加 MAC 欄
+- **根因 2（網卡）**：CLI 的 `_pick_iface()` 只用在新裝置配置流程，探索路徑沒有網卡選擇；
+  而多網卡機器上不綁定介面時，OS 會依路由表決定導向廣播從哪張網卡送出，很容易送錯而掃不到。
+  實測：本機有 5 張網卡，指定 `192.168.50.255` 但不綁定 socket 時掃不到設備
+- **修正 2**：新增 `list_interfaces()`（scapy `conf.ifaces`，含友善描述與 MAC）與
+  `GET /api/ipconfig/interfaces`；`discover(iface_ip=...)` 會**把 socket 綁到該網卡 IP**
+  並同時送導向廣播與受限廣播。前端新增「掃描網卡」下拉選單
+- 實測：指定設備所在網卡（192.168.50.1 / Realtek USB GbE）可穩定以 EIP 掃到並帶 MAC
+
+### 🐛 靜態 IP 時「設定方式」單選停在錯誤選項
+
+- **根因**：`ipMode` 單選是獨立 ref，固定預設 `static`，不反映設備實際模式，
+  造成上方資訊表顯示 DHCP、下方單選卻停在靜態 IP 的自相矛盾畫面
+- **修正**：讀取設定後依 `config_control` 同步 `ipMode`（0→static、2→dhcp）
+
+### ⚠️ 切換 DHCP 的風險警告（實測踩到）
+
+測試過程中把設備切成 DHCP，而 192.168.50.x 是**電腦直連網段、沒有 DHCP server**，
+設備隨即完全失聯（廣播、ARP、直接探測舊位址全部無回應）。
+最後是用專案自帶的迷你 DHCP server 救回（`_open_dhcp_socket` + `_serve_dhcp`，
+指派 192.168.50.111 給 MAC cc:cc:ea:9f:c9:72），設備才重新上線。
+
+- **修正**：UI 的 DHCP 選項警告從一行 `hint-text` 改為顯眼的 `stale-banner`，
+  明確寫出「若網段沒有 DHCP server，設備會**完全失聯**」，並附上救援指令
+  （`python src/caparoc_ip_config.py` → [2] 新裝置初始設定）與「先記下 MAC」的提醒；
+  確認對話框內同步強化
+
+### ✅ 實機驗證
+
+| 項目 | 結果 |
+|---|---|
+| 網卡列舉 | 5 張網卡，含 IP/MAC/友善描述 |
+| 指定網卡掃描 + MAC | EIP 掃到 192.168.50.111，MAC `cc-cc-ea-9f-c9-72` |
+| 目前設定顯示 | `config_control=0` → Static IP，與設備一致 |
+| 變更靜態 IP `.111 → .112` | 成功，含自動重連，耗時 2.2 秒 |
+| 還原 `.112 → .111` | 成功，含自動重連，耗時 2.2 秒 |
+| **DHCP → 靜態 IP**（原本失敗的路徑） | **成功**，`config_control` 2 → 0 |
+| CLI 迴歸（探索） | 輸出與改動前一致 |
+
+---
+
+## [2026-08-27] Web 新增「IP 設定」分頁 + 0xF5 讀寫補鎖（fix/web-cip-concurrency）
+
+> 把 `src/caparoc_ip_config.py` 的設備探索與 IP 設定能力搬上 Web UI，側邊欄新增獨立一項「🌐 IP 設定」。
+> 不含「全新設備配置精靈」（迷你 DHCP server + MAC 偵測）——該路徑需管理員權限與 Npcap、
+> 單次流程最長約 6 分鐘，仍留在 CLI。
+
+### 🏗️ 架構：抽出非互動核心層 `src/caparoc_ip_core.py`
+
+- **根因**：`caparoc_ip_config.py` 每個函式都綁死 `input()` / `print(end='\r')`，web 層完全無法呼叫，
+  導致設備 IP 設定至今只能在終端機操作
+- **修正**：新增 `src/caparoc_ip_core.py`，收納 9 個不含互動 I/O 的函式
+  （`is_valid_ip` / `same_subnet` / `parse_list_identity` / `get_broadcast_addresses` /
+  `eip_port_open` / `probe_eip_hosts` / `discover_devices` / `discover_by_arp` / `wait_for_device`），
+  另加組合函式 `discover()` 統一「List Identity 廣播 → ARP 後援」的退回邏輯。
+  CLI 與 `web/app.py` **共用同一份實作**，日後修改探索行為只需改一個檔案
+- **CLI 行為完全不變**：新增 `_wait_for_device()` 包裝補回 `⏳ 剩餘 Ns` 進度與 ✅/⚠️ 結果訊息；
+  `discover()` 加 `on_stage` callback，讓 CLI 仍能在**開始 ARP 掃描前**就印出「改用 ARP table...」
+  （ARP 掃描可能數秒，等結束才提示會讓使用者對著空畫面等）
+- `discover_by_arp()` 補 `except (FileNotFoundError, OSError) → []`（原本在無 `arp.exe` 的系統會拋例外）
+
+### 🐛 `read_device_network_config()` 自誕生起就是壞的（既有 bug）
+
+- **根因**：該方法寫死 `connected=False`，但本設備（CAPAROC PM EIP）**三個 0xF5 屬性都只接受
+  `connected=True`**，`connected=False` 一律回 `Too much data`（設備不支援 Unconnected Send 0x52）。
+  實測 Attr1/3/5 三者皆然
+- **為何沒被發現**：它在本次之前**沒有任何呼叫端**。CLI 的 `read_config()` 走自己的 `_read_attr()`，
+  那支本來就有 `connected=False → True` 的退回機制
+- **修正**：內部新增 `_read_f5(attr)`，比照 CLI 做兩段式嘗試。不寫死 `True` 是為了相容其他韌體/型號
+- **實機驗證**：讀回 `ip=192.168.50.111 / subnet=255.255.254.0 / gateway=192.168.50.1 / Static IP`
+
+### 🔒 三個 0xF5 方法補上 `_cip_lock`
+
+- **根因**：`read_device_network_config` / `set_device_ip` / `set_device_dhcp` 直接呼叫
+  `driver.generic_message()` 而未取 `_cip_lock`。CLI 單執行緒沒事，但 web 有 1 Hz WebSocket
+  狀態讀取執行緒，共用 driver 會撞爛 pycomm3 的 TCP 串流
+- **修正**：`_cip_get()` / `_cip_set()` 新增 `driver=None` 參數（None = 用 `self.driver`；
+  CLI 可傳入自建的短命 driver），三個方法全部改走 wrapper。
+  維持既有契約「呼叫端不必也不該自行 `with self._cip_lock`」
+- **未採用的替代方案**：讓 CLI 改用 `backend.connect()` 以移除 `driver` 參數——`connect()` 會
+  `_activate_connection_state`、啟動 heartbeat、並跑 `_probe_all_modules()`（**探測會暫時改寫設備額定電流**），
+  對一台只想改 IP 的設備做這些事既不必要也有風險
+- `set_device_ip()` 新增 `ctrl_written` 欄位（Attr3 切 Static 是否寫成功），僅供除錯，不影響 `success`
+
+**附帶盤點**：全檔 14 處 `generic_message` 逐一確認後，其餘未上鎖處分兩類——
+`check_device_connection` / `_sync_output_from_device` / `_activate_connection_state` 只在
+`connect()` 內、且都排在 `_start_heartbeat()` 之前執行（此時無其他執行緒碰 driver）；
+`update_config_parameter` / `_wait_for_config_processing` 則是全 repo 無呼叫者的死碼。
+⚠️ 前者的安全性依賴一個沒寫下來的隱性不變式，已記入 `docs/TODO.md`。
+
+### 🌐 Web：新增 4 支 `/api/ipconfig/*` 路由
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| `GET` | `/api/ipconfig/current` | 讀 0xF5 Attr1/3/5，**含 Static/BOOTP/DHCP 取得方式** |
+| `POST` | `/api/ipconfig/discover` | 網段掃描；**刻意不檢查連線**（掃描的用途正是在未連線時找設備）。以 `_discover_lock` 防並發，第二個併發請求回 **409** |
+| `POST` | `/api/ipconfig/static` | 設靜態 IP，並在伺服器端完成「寫入 → 斷線 → 換 IP → 等待上線 → 重連」 |
+| `POST` | `/api/ipconfig/dhcp` | 切 DHCP；新 IP 無法預知，回傳提示改用掃描找回 |
+
+- **自動重連放在伺服器端**：狀態機只有一份，結果透過既有 1 Hz WebSocket 自然同步到所有分頁；
+  若放前端會變成「每個分頁各自輪詢重連」的競態溫床
+- `wait_for_device()` 是純 TCP 44818 探測，**不碰 `_cip_lock`**，等待 30 秒期間不會卡住 WebSocket
+- 與既有 `/api/device/network` 的分工已寫入雙方 docstring：後者走 `get_network_info()`
+  提供 MAC/hostname，但**沒有** `config_control`，故 IP 設定頁必須走前者
+
+### 🖥️ 前端：側邊欄新增「🌐 IP 設定」
+
+- `navItems` 新增一項；新增 `currentPage === 'ip-config'` 分頁，含三個面板：
+  **搜尋設備**（結果每列可「連線」或「帶入」表單）、**目前網路設定**（↻ 手動重讀）、**變更設備 IP**
+- 靜態/DHCP 以 radio 切換；送出前跳 `.modal-overlay` 確認框，列出「目前 IP → 變更為」對照
+- **同網段檢查**：新 IP 與設備現網段不同時顯示警告，但**只警告不擋**（比照 CLI `same_subnet` 語意）
+- `refreshIpCurrent()` 併入既有的 `_cipReadInFlight` 旗標，不會與 `refreshNetworkInfo` /
+  `refreshDeviceInfo` 並發觸發 CIP 讀取
+- **零新增 CSS**：19 個用到的類別全部沿用 `style.css` 既有樣式
+- `index.html` 的 CSS 與 JS 版號由 `?v=4.2.10d` 一併 bump 至 `?v=4.3.0`
+
+### ✅ 驗證
+
+- CLI 迴歸：主選單 / `[0]` 離開 / 非法 IP 參數 / `[1]` 探索（實機找到 192.168.50.111，
+  廣播訊息與 ARP 後援訊息順序正確）全部與改動前一致
+- Mock driver：三個 0xF5 方法回傳結構正確、`set_device_ip` 確認「先寫 Attr5 再寫 Attr3」、
+  並實測 `generic_message` 執行期間 `_cip_lock.locked() == True`
+- Demo 模式：4 支路由皆 200
+- **實機並發測試**（連線 192.168.50.111，3 模組）：WebSocket 推送期間連打 6 次
+  `/api/ipconfig/current`，讀取全部成功（0.03 秒）、**推送間隔穩定 1.01 秒、無中斷無逾時**；
+  並發掃描正確回 `[200, 409]`
+- 前端：`node --check` 語法通過；靜態掃描確認 template 用到的 21 個識別字全部存在於 `setup()` 的 return 物件
+- **實機驗證**：實際寫入新 IP →「寫入 → 斷線 → 換 device_ip → 等待上線 → 重連」伺服器端流程 →
+  WebSocket 於新 IP 上恢復推送，完整跑通
+
+---
+
+## [2026-08-27] `python web/app.py` 監聽埠可設定 + 自動避讓（fix/web-cip-concurrency）
+
+- **根因**：`PORT` 寫死 8000，而 NVIDIA Overlay 會間歇性 `bind()` 0.0.0.0:8000（overlay/遊戲啟動時），造成 `python web/app.py` 偶發 `[Errno 10048] 一次只能用一個通訊端位址`
+- **修正**：新增 `_resolve_port()`——預設改 8001（避開 NVIDIA Overlay），可用 `--port N` 或環境變數 `CAPAROC_PORT` 覆寫；選定埠若已被佔用，往上探 10 個埠取第一個可用的，並印出實際使用的埠讓瀏覽器開對 URL
+- **範圍**：僅影響 `python web/app.py` 直接執行入口；`uvicorn web.app:app` 仍需自帶 `--port`
+- TODO 4.3.1（config 合併）落地時可把此邏輯併入統一 config
+
+---
+
+## [2026-08-26] Web CIP 並發修正後續 refactor（fix/web-cip-concurrency，TODO 項目 1–5）
+
+> 承接上一則的 `_cip_lock` 補齊工作，把複查時記錄在 `docs/TODO.md` 的 5 個後續項目一次做完。
+
+### ⚡ 效能與使用體感
+
+**批次設定額定電流：8 通道從最壞 24 秒縮短到約 3 秒（項目 1）**
+- **根因**：`app.js` 的 `setAllNominal()`/`setModuleNominal()` 用 `for` 迴圈逐一 `await` 單通道 API，每次呼叫後端都要跑 `sleep(0.5)×6` 的驗證迴圈，8 通道最壞 24 秒；期間每個請求都搶 `_cip_lock`，WebSocket 推送被排隊卡住，而畫面上完全沒有進度提示
+- **修正**：新增 `CaparocBackend.set_nominal_current_batch(targets)`——先把所有通道都寫入，最後才統一驗證，且驗證改用「單次 Input Assembly 讀取檢查全部通道」而非每通道各讀一次整份 assembly。8 通道的驗證讀取從 48 次降為最多 6 次
+- 新增 `POST /api/channels/nominal`（body: `channel_ids` + `current_amps`），前端兩個批次按鈕改呼叫此端點；後端會自動略過探測判定為 read-only 的模組並回報 `skipped`
+- **進度提示**：批次與單筆設定都加上進行中狀態（按鈕文字變「設定中…」、輸入框與按鈕停用、顯示「設定中… (N 個通道)」），完成後顯示成功/失敗/略過筆數
+
+### 🛡️ 設備安全
+
+**額定電流可寫性探測不再每次連線都改寫設備（項目 2）**
+- **根因**：`_probe_nominal_writable()` 用「寫入 nominal±1 → 等 0.8 秒 → 讀回驗證 → 還原」判斷模組是否支援遠端設定，而 `connect()` 每次都會跑一遍。每個模組至少 0.8 秒，且**會短暫改變真實設備的額定電流**；若中途斷線或崩潰，設備會被留在 probe 值
+- **修正 1（快取）**：探測結果以 Identity Object 序號為索引寫入 `config/nominal_probe_cache.json`（讀不到序號時退回 IP）。同一台設備只在「無快取紀錄」「模組數與快取不符」「明確要求重測」三種情況才重新探測，其餘連線完全不對設備寫入
+- **修正 2（還原保證）**：只要送出過 probe 寫入，就在 `finally` 還原原值——包含判定 read-only 與中途例外的情況；還原失敗會記 `ERROR` log
+- 新增 `POST /api/device/reprobe-nominal` 作為逃生口（更換模組但總數不變導致快取失準時使用）
+- `config/nominal_probe_cache.json` 加入 `.gitignore`（屬本機設備狀態）
+
+### 🧹 重構
+
+**CIP 存取抽出共用方法，消除「新增呼叫點忘記上鎖」的風險類別（項目 5）**
+- 新增 `_cip_get()` / `_cip_set()`：內建 `_cip_lock`，呼叫端不需要（也不應該）自行持鎖——正是上一則 `a1951c6` 要修的問題根源
+- 新增 `_read_input_assembly()`：一次讀取涵蓋所有模組/通道，供批次驗證使用
+- `get_network_info()` / `get_device_info()` 內重複的區域 `_rd()` 改為薄封裝；額定電流讀寫、探測、`_read_and_show_result` 全面改用共用方法
+- **刻意保留原始寫法的兩處**：Config Assembly 回退路徑與 `set_channel()` 的寫入＋驗證，兩者的「讀取→修改→寫入」必須在同一次持鎖內完成才具原子性，改用各自獨立上鎖的 helper 反而會破壞語意（已加註解說明）
+
+**合併重複的額定電流讀取方法（項目 3）**
+- `_read_nominal_current_silent()` 與 `_verify_nominal_current()` 邏輯完全相同，只差 debug print，且後者是唯一還沒補 `_cip_lock` 的讀取路徑
+- 合併為 `_read_nominal_current(module, channel, verbose=False)`（`driver` 參數移除，一律用 `self.driver`）；`caparoc_controller.py` 的 `verify` 指令改呼叫新方法
+
+**修正 `_read_and_show_result()` 位址錯誤，並讓 web 路徑跳過（項目 4）**
+- **根因**：用 `instance=0x101`（其他地方一致用 `self.input_instance`=0x65），偏移公式 `20+(channel-1)*2` 也跟 `get_channel_offset()` 對不上，讀出的是無意義的位元組；整段包在 try/except 裡只 `print()`，壞了沒人發現
+- **修正**：位址改用 `input_instance` + `get_channel_offset()`，電流取 Byte 2 ÷ 10（與 `_read_current_status` 一致）；簽章加入 `module` 參數
+- `set_channel()` 新增 `show_result=True` 參數，`web/app.py` 傳 `False`——web 使用者看不到終端機輸出，卻要為此多花 `sleep(0.5)` 與一次 CIP 往返，而 WebSocket 一秒內就會刷新真實狀態
+
+### ⚠️ 待驗證
+
+以上修正通過 mock driver 測試（模擬 2 模組 6 通道，驗證批次耗時、驗證讀取次數、快取命中時零寫入、probe 值還原、開關路徑電流讀取正確）與 `--demo` 模式的 API smoke test，**尚未接實機驗證**。
+
+---
+
+## [2026-08-26] Web CIP 並發鎖補齊 + 通道開關錯誤回報（fix/web-cip-concurrency，a1951c6, f721f30, 20db324）
+
+### 🐛 Bug 修正
+
+**寫入類 CIP 呼叫完全沒上鎖，與 WebSocket 讀取並發（a1951c6）**
+- **根因**：`_cip_lock` 自 2026-05-25（b779752）加入後只覆蓋了讀取類方法（`_read_current_status`、`get_network_info`、`get_device_info`），但 web 使用者實際會觸發寫入的 `set_channel`、`set_nominal_current`（含其驗證讀取）與心跳執行緒完全沒有上鎖，會與 WebSocket 每秒一次的狀態讀取並發送出 `generic_message`，直接違反鎖原本要防的情境
+- **心跳格外確定會踩到**：`_update_activity()` 定義後從未被任何地方呼叫，`last_activity_time` 永遠不會更新，閒置時間必然在 300 秒後觸發心跳，與 WebSocket 讀取並發——推測是「儀表板開著一段時間後偶爾莫名失聯」的成因之一
+- **修正**：`set_channel()` 的寫入與驗證讀取、`_read_and_show_result()`、`set_nominal_current()` 的主要／備用寫入路徑、`_read_nominal_current_silent()`、`_heartbeat_worker()` 皆補上 `_cip_lock`；`set_channel()`／`set_nominal_current()`／`_read_current_status()` 成功路徑補上 `_update_activity()` 呼叫，讓心跳正確反映實際閒置時間
+- **鎖順序**：已確認全程一致（`io_data_lock → _cip_lock`，僅 `set_channel` 一處巢狀，其餘皆各自獨立取得、不重入），不會死鎖
+- **連帶修正**：`set_channel`／`set_nominal_current` 失敗分支補上 `self.logger.error()`——原本只有 `print()` 到終端機 stdout，web 的 log 面板完全看不到失敗原因
+
+**通道開關失敗仍回報成功（f721f30）**
+- **根因**：`web/app.py` 的 `channel_on`/`channel_off` 呼叫 `backend.set_channel()` 後沒有檢查回傳值，失敗時前端仍收到 `{"success": true}`；`set_nominal` 原本就有正確檢查
+- **修正**：`channel_on`/`channel_off` 檢查回傳值，失敗時回傳 HTTP 500 而非謊報成功
+- **連帶修正**：`_format_status(None)` 補上 `device_ip` 欄位，與其他分支一致；WebSocket 迴圈的 `except (WebSocketDisconnect, Exception): pass` 拆開為正常斷線（不記錄）與其他例外（記錄 warning），原本一律吞掉，真正的錯誤完全無跡可查
+
+**前端 `toggleCh()` 完全不檢查回應，後端剛補的 500 形同虛設（20db324）**
+- **根因**：後端 `channel_on`/`channel_off` 改回傳 500 後，前端 `toggleCh()` 仍然 `await fetch(...)` 就結束，不管成功失敗，使用者點了開關沒反應也看不出原因；隔壁 `setNominal()` 早就有完整的 `r.ok` 檢查與回饋機制，只有這裡漏掉
+- **修正**：`toggleCh()` 補上 `r.ok` 檢查與 try/catch，失敗時設定 `channelToggleError[ch.id]`（2.5 秒後自動清除）；新增 `channelToggling` 旗標避免同一通道在請求進行中被連續點擊
+- **連帶修正**：通道卡片新增 `.toggle-err` 短暫紅色邊框閃爍動畫，與 `.fault`（硬體故障，持續顯示）視覺區隔；按鈕在請求進行中停用
+
+### ⚠️ 待驗證
+
+以上鎖相關修正僅通過 `--demo` 模式的 in-process smoke test（demo 模式不會經過 `set_channel` 的真實 CIP 路徑），尚未接實機、開著儀表板同時操作驗證是否真的解決並發失聯問題。
+
+---
+
 ## [2026-08-11] IP 設定功能完整實作（feature/ip-config-dhcp）
 
 ### ✨ 新功能

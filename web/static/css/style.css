@@ -72,16 +72,17 @@
     --border-softer: #eceff4;
     --border-strong: #c4ccdb;
 
-    --text: #1e2632;
-    --text-bright: #2b3547;
-    --text-mid: #45526a;
-    --text-muted: #5d6a85;
-    --text-dim: #6c7890;
-    --text-faint: #7e8aa0;
-    --text-fainter: #97a1b4;
+    /* 白底上的對比：--text-dim 以上皆 ≥ 6:1，最淡的 --text-fainter 也有 ~4.6:1 */
+    --text: #121821;
+    --text-bright: #212a39;
+    --text-mid: #313d51;
+    --text-muted: #434f66;
+    --text-dim: #525e77;
+    --text-faint: #5f6a81;
+    --text-fainter: #6e7889;
 
-    --accent: #2563c4;
-    --accent-hover: #1a4ea0;
+    --accent: #1d5ab8;
+    --accent-hover: #14448f;
     --accent-active-bg: #d9e6fb;
 
     --btn-bg: #2a5ba8;
@@ -100,10 +101,10 @@
     --scrollbar-track: #e8ecf3;
     --disabled-input-bg: rgba(0, 0, 0, 0.04);
 
-    --ok: #2f9e4f;
-    --err: #cf3a2f;
-    --warn: #d97a00;
-    --amber: #a9760c;
+    --ok: #1d7a3a;
+    --err: #b82c22;
+    --warn: #b35f00;
+    --amber: #8f6200;
     --dot-off: #aeb6c3;
 
     --tint-ok-bg: #e7f5ec;
@@ -113,9 +114,9 @@
     --tint-fault-bg: #fceae8;
     --tint-fault-border: #e2564a;
 
-    --sysconf-ok: #15a34a;
-    --sysconf-warn: #b45309;
-    --purple: #6d3fc4;
+    --sysconf-ok: #157f39;
+    --sysconf-warn: #92400e;
+    --purple: #5b32a8;
 }
 
 *,
@@ -386,6 +387,8 @@ code {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    /* 內容變高變矮時捲軸出現/消失會讓置中的面板左右位移，預留捲軸槽 */
+    scrollbar-gutter: stable;
     padding: 14px;
 }
 
@@ -631,6 +634,33 @@ code {
     margin-bottom: 14px;
 }
 
+/* 忙碌時按鈕文字會換成「設定中…」，固定寬度避免整列左右位移 */
+.batch-bar .btn {
+    min-width: 148px;
+}
+
+.mod-batch-bar .btn {
+    min-width: 82px;
+}
+
+/* 回饋訊息維持單行，避免出現時把批次列撐高、推動下方內容 */
+.batch-bar .feedback-msg,
+.mod-batch-bar .feedback-msg {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 批次列的欄位標題（原本寫死顏色，白天模式會過淡） */
+.batch-label {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+}
+
 .mod-batch-bar {
     display: flex;
     align-items: center;
@@ -787,7 +817,13 @@ code {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.88rem;
+    /* 固定欄寬：設定過程中欄內文字長度改變不會牽動整表重排 */
+    table-layout: fixed;
 }
+
+.ch-table col.col-ch      { width: 92px; }
+.ch-table col.col-nominal { width: 132px; }
+.ch-table col.col-input   { width: 108px; }
 
 .ch-table th {
     text-align: left;
@@ -801,6 +837,29 @@ code {
     padding: 8px 12px;
     border-bottom: 1px solid var(--border-soft);
     vertical-align: middle;
+}
+
+/* 操作欄：按鈕寬度固定（「設定」↔「設定中…」不改寬），
+   回饋訊息單行截斷，出現時不推擠按鈕也不改列高 */
+.td-action {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 30px;
+}
+
+.td-action .btn {
+    flex-shrink: 0;
+    min-width: 76px;
+}
+
+.td-action .feedback-msg {
+    margin-left: 0;
+    min-width: 0;
+    max-width: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .ch-table tr:last-child td {
@@ -1260,12 +1319,16 @@ input:disabled {
 :root[data-theme="light"] .log-row-error td    { background: #fcebe9; }
 :root[data-theme="light"] .log-row-critical td { background: #fbe4ec; }
 
-:root[data-theme="light"] .log-debug    { background: #e3e8f2; color: #5d6a85; }
-:root[data-theme="light"] .log-info     { background: #dce9fb; color: #1f5bb5; }
-:root[data-theme="light"] .log-system   { background: #ece3fb; color: #6d3fc4; }
-:root[data-theme="light"] .log-warning  { background: #fbe6c8; color: #a15c00; }
-:root[data-theme="light"] .log-error    { background: #fbdad7; color: #c0362b; }
-:root[data-theme="light"] .log-critical { background: #f7d0dd; color: #b0134a; }
+/* 通道開關的「開啟」狀態在白天模式改用淺綠底深綠字 */
+:root[data-theme="light"] .toggle-btn.is-on       { background: #d7f0de; color: #14682f; }
+:root[data-theme="light"] .toggle-btn.is-on:hover { background: #c4e8ce; }
+
+:root[data-theme="light"] .log-debug    { background: #e3e8f2; color: #4a5568; }
+:root[data-theme="light"] .log-info     { background: #dce9fb; color: #17509f; }
+:root[data-theme="light"] .log-system   { background: #ece3fb; color: #5b32a8; }
+:root[data-theme="light"] .log-warning  { background: #fbe6c8; color: #8a4e00; }
+:root[data-theme="light"] .log-error    { background: #fbdad7; color: #a82d22; }
+:root[data-theme="light"] .log-critical { background: #f7d0dd; color: #98103f; }
 
 /* ── 窄視窗 ─────────────────────────────── */
 @media (max-width: 760px) {

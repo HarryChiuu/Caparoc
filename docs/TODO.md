@@ -1,6 +1,6 @@
 # CAPAROC 控制器 - 待實作功能清單
 
-更新日期: 2026-08-28
+更新日期: 2026-08-31
 
 ## ✅ 已完成功能
 
@@ -804,6 +804,31 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
+##### 4.3.7 通道設定頁排版穩定化 + 白天模式對比度改善 ✅ 已完成（2026-08-31，尚未提交）
+
+> **目的**：修「設定中…」狀態切換時整列/整表跳動的問題，並提高白天模式下文字與強調色的對比度。
+> **狀態**：`style.css` / `app.js` / `index.html` 已在工作目錄完成，**尚未 commit**（本輪只補文件）。
+
+**排版穩定化**（按鈕文字在「設定」↔「設定中…」間切換、回饋訊息出現/消失時，不應牽動版面）：
+- [x] `.ch-table` 改 `table-layout: fixed`，新增 `colgroup`（`col-ch` / `col-nominal` / `col-input` 固定寬度）
+- [x] 通道列操作欄改用 `.td-action`（flex row）：按鈕 `min-width` 固定，回饋訊息單行截斷（`text-overflow: ellipsis`）+ `title` 屬性顯示完整文字
+- [x] `.batch-bar` / `.mod-batch-bar` 的按鈕加 `min-width`，回饋訊息同樣截斷不換行
+- [x] `.batch-label`：抽出原本寫死在 `index.html` inline `style="color:#7a8aaa"` 的欄位標題樣式成獨立 class（順便修正白天模式過淡的問題）
+- [x] 主內容區 `scrollbar-gutter: stable`：內容變高變矮時捲軸出現/消失不再讓置中面板左右位移
+
+**白天模式對比度**（`--text*` / `--accent*` / `--ok` / `--err` / `--warn` / `--amber` / `--sysconf-*` / `--purple` 全數加深）：
+- [x] 目標對比：`--text-dim` 以上（含）皆 ≥ 6:1，最淡的 `--text-fainter` 也有 ~4.6:1（見 `style.css` 註解）
+- [x] 系統日誌各等級（debug/info/system/warning/error/critical）白天模式配色同步加深
+- [x] 通道開關「開啟」狀態新增白天模式專屬配色（淺綠底、深綠字），不再沿用暗色模式配色
+- [x] `app.js` 圖表主題（`_chartTheme()`）的白天模式格線/刻度/圖例顏色同步加深
+- [x] `index.html` 版號 `?v=4.7.0 → 4.8.0`
+
+**⚠️ 尚待處理**：
+- [ ] 尚未在瀏覽器實際切換白天/夜間模式檢查（本輪僅靜態閱讀 diff，未啟動伺服器驗證畫面）
+- [ ] 尚未 commit——待人工確認畫面無誤後再提交
+
+---
+
 ##### 4.3.5 通道設定頁 nominal_readonly 主動探測（2 通道模組反灰 + 說明）
 
 > **背景**：CAPAROC 2 通道斷路器模組的額定電流無法透過 EIP CIP 遠端設定（Config Assembly / Parameter Object 寫入均被靜默忽略），需在 UI 明確標示並禁用輸入。  
@@ -1062,6 +1087,38 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
+#### 4.9 原廠 Web 介面資料整合（`caparoc_http.py`）🔧 部分完成（客戶端已就緒，尚未接上）
+
+> **目的**：設備除了 EtherNet/IP CIP，還有一個未公開的原廠 Web 介面
+> （`GET http://<ip>/webif/systeminfo`、`GET http://<ip>/webif/processdata`，皆無需認證），
+> 能拿到 CIP 讀不到的資訊：硬體清單、韌體版本、LED 狀態、故障事件記憶（每模組最近 10 筆）。
+> **狀態**：`src/caparoc_http.py`（244 行）+ `tests/test_caparoc_http.py`（193 行，8 個測試）
+> 已存在於工作目錄且測試全過，但**目前沒有任何地方 import 它**——尚未接進 `web/app.py`，
+> 對使用者而言等於不存在。`requirements.txt` 已加 `requests>=2.32.0` 依賴。
+
+**已完成（`caparoc_http.py`，純函式，無 class，任何失敗一律回 `None`/部分資料，不 raise）**：
+- [x] `fetch_systeminfo(ip)` / `fetch_processdata(ip)` — 各打一支端點，回傳 `data` 區塊或 `None`
+- [x] `fetch_http_info(ip)` — 兩支端點都打，合併成單一 dict（`merge_http_info` 負責合併邏輯）
+- [x] `errorid_text()` / `errorevent_text()` / `decode_errorevents()` — 錯誤代碼 → 文字
+      （docstring 註明原廠韌體內建的 DE/EN 對照表在 index 3/5 互相矛盾，已採用原廠 SPA bundle 的英文版為準）
+- [x] `nominal_range_from_name()` — 從模組型號字串解析額定電流範圍（如 `"...1-4A"` → `(1, 4)`）
+- [x] 換算係數已對實機 192.168.50.111 與 CIP `/api/status` 同刻交叉驗證（voltage /100、totalcurrent /10、
+      per-channel current /10、nominalcurrent 為整數安培不除）
+- [x] `tests/test_caparoc_http.py`：8 個測試全過（含 fixtures，無網路依賴）
+
+**待做（接上 web 層）**：
+- [ ] `web/app.py`：決定資料流——是併入現有 `/api/device/info` 或 `/api/device/network`，
+      還是新開 `GET /api/device/webif` 端點（後者較不會混淆既有欄位語意，比照本檔
+      「🌐 Web「IP 設定」」節記取的 `/api/device/network` vs `/api/ipconfig/current`
+      分工教訓：新資料源用新端點，不要塞進語意不合的舊端點）
+- [ ] 補 `_DEMO_MODE` 分支（本專案每個端點的固定稅）
+- [ ] 前端：系統狀態頁或設備識別面板顯示 LED 狀態、故障事件記憶
+- [ ] 決定輪詢頻率／是否併入 WebSocket 推送（原廠 API 逾時設 2.5 秒，不適合每秒打一次；
+      建議比照 `/api/device/info` 走「進頁面才手動/自動讀一次」的既有慣例，而非併入 1 Hz 推送）
+- [ ] `docs/CHANGELOG.md` 待實際接上、通過 demo 與實機驗證後再補條目
+
+---
+
 ### Phase 5: 打包與部署 📦
 
 > **目標**：將程式打包為可直接執行的形式（Windows .exe / Linux Docker），方便無 Python 環境的使用者部署  
@@ -1089,20 +1146,6 @@ config 和 logs 必須在 exe 旁邊（使用者可編輯），不能被打包�
 ---
 
 #### 5.2 CDN 資源離線化
-
-> **目的**：讓 Web UI 在無網路環境（工廠內網）也能正常載入  
-> **預估工時**：0.5 小時
-
-**目前 CDN 依賴**：
-- Vue 3（`unpkg.com/vue@3`）
-- Chart.js 4.4.6（`cdn.jsdelivr.net/npm/chart.js`）
-- chartjs-plugin-zoom（`cdn.jsdelivr.net`）
-- Hammer.js（`cdn.jsdelivr.net`）
-
-**工作項目**：
-- [ ] 下載上述 JS 檔案到 `web/static/vendor/`
-- [ ] `index.html` 的 `<script src>` 改為 `/static/vendor/xxx.min.js`
-- [ ] 驗證離線環境正常運作
 
 ---
 

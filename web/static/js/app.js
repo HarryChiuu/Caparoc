@@ -779,9 +779,9 @@ createApp({
         function _chartTheme() {
             const light = document.documentElement.dataset.theme === 'light';
             return {
-                grid: light ? 'rgba(0,0,0,0.09)' : 'rgba(255,255,255,0.05)',
-                tick: light ? '#5d6a85' : '#9aaac4',
-                legend: light ? '#2b3547' : '#c5d0e6',
+                grid: light ? 'rgba(0,0,0,0.10)' : 'rgba(255,255,255,0.05)',
+                tick: light ? '#414d64' : '#9aaac4',
+                legend: light ? '#1b2432' : '#c5d0e6',
             };
         }
 

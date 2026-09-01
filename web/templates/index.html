@@ -12,7 +12,7 @@
                 'data-theme', localStorage.getItem('caparoc_theme') || 'dark');
         } catch (e) { }
     </script>
-    <link rel="stylesheet" href="/static/css/style.css?v=4.9.0" />
+    <link rel="stylesheet" href="/static/css/style.css?v=4.10.0" />
 </head>
 
 <body>
@@ -226,7 +226,7 @@
                             <!-- 全域批次列 -->
                             <div class="batch-bar">
                                 <span class="batch-label">全部套用</span>
-                                <input type="number" v-model="batchNominal" min="1" max="20" step="1" placeholder="A"
+                                <input type="number" v-model="batchNominal" :min="limits.nominalMin" :max="limits.nominalMax" step="1" placeholder="A"
                                     class="nominal-input" :disabled="!state.connected || batchBusy" />
                                 <button class="btn" @click="setAllNominal" :disabled="!state.connected || batchBusy">
                                     {{ batchBusy ? '設定中…' : '套用至全部通道' }}
@@ -249,7 +249,7 @@
                                 <!-- 模組批次列 -->
                                 <div class="mod-batch-bar">
                                     <span class="batch-label">本模組套用</span>
-                                    <input type="number" v-model="batchNominalByMod[mod]" min="1" max="20" step="1"
+                                    <input type="number" v-model="batchNominalByMod[mod]" :min="limits.nominalMin" :max="limits.nominalMax" step="1"
                                         placeholder="A" class="nominal-input"
                                         :disabled="!state.connected || isModNominalReadOnly(mod) || batchBusyByMod[mod]" />
                                     <button class="btn btn-sm" @click="setModuleNominal(mod)"
@@ -282,7 +282,7 @@
                                             <td class="td-ch">CH{{ ch.channel }}</td>
                                             <td class="td-nominal">{{ ch.nominal_amps }} A</td>
                                             <td>
-                                                <input type="number" v-model="nominalInputs[ch.id]" min="1" max="20"
+                                                <input type="number" v-model="nominalInputs[ch.id]" :min="limits.nominalMin" :max="limits.nominalMax"
                                                     step="1" :placeholder="ch.nominal_amps" class="nominal-input"
                                                     :disabled="!state.connected || isModNominalReadOnly(ch.module) || nominalBusy[ch.id]" />
                                             </td>
@@ -1136,7 +1136,7 @@
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="/static/js/app.js?v=4.9.0"></script>
+    <script src="/static/js/app.js?v=4.10.0"></script>
 </body>
 
 </html>

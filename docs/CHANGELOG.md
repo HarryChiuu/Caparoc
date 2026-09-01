@@ -2,6 +2,74 @@
 
 ---
 
+## [2026-09-01] 設定值外部化：合併為單一 `config/config.json`（4.3.1）
+
+> 原本設定散在 `config/device_config.json`（只有 `default_ip`）與
+> `config/logging_config.json`，另有一批寫死在程式碼裡的可調值
+> （WebSocket 推送間隔、閒置關閉秒數、監聽埠、額定電流範圍）。
+> 合併為單一 `config/config.json`，使用者只需編輯一個檔案。
+
+### ✨ 新增 `src/app_config.py`（統一載入器）
+
+規劃時沒有這一項——但三個模組各自開檔 parse 同一個檔案會是三份重複邏輯，
+且合併後 `save_device_ip()` **必須 read-modify-write**，否則寫 IP 會洗掉
+使用者的 logging/web 設定（舊架構每檔只有一個區塊，沒有這個問題）。
+
+- `DEFAULTS` 是所有設定的**權威來源**；使用者的 `config.json` 只需寫想改的鍵，
+  缺鍵深層合併補上，設定檔不存在或 JSON 壞掉都不會讓程式起不來
+- **只依賴標準函式庫** — `logging_manager` 會 import 本模組，不得反向依賴
+- API：`load()` / `section(name)` / `get(section, key)` / `nominal_range()` / `save_device_ip(ip)`
+
+### ✨ 自動遷移舊設定檔
+
+`config.json` 不存在但舊檔存在時，開機自動合併產生，**舊檔改名為 `.migrated` 保留**
+而非直接刪除（遷移邏輯萬一有誤，使用者還救得回來）。
+實測既有的 `default_ip = 192.168.50.111` 正確保留。
+
+順帶不遷移 `write_jsonl` — JSONL handler 已於 2026-05-14 移除，該設定無人讀取。
+
+### ♻️ 四個讀取端改接
+
+| 檔案 | 改動 |
+|---|---|
+| `web/app.py` | `default_ip`、`web.port`（`_resolve_port()` 的預設）、`ws_push_interval`（原 `asyncio.sleep(1.0)` 寫死）、`ws_idle_shutdown`（原 `_WS_IDLE_TIMEOUT = 10.0` 寫死） |
+| `src/logging_manager.py` | `_load_config()` 改走 `app_config.section('logging')`；`config_path` 參數保留以相容舊呼叫方式 |
+| `src/caparoc_backend.py` | `_validate_nominal_args()` 的 1-20A 改用 config 的 `nominal_current` |
+| `src/caparoc_controller.py` | `_load_default_ip()` / `_save_default_ip()` 縮為 `app_config` 的薄包裝（原本各自開檔讀寫） |
+
+### ✨ `GET /api/config/limits` — 前端不再寫死 1/20
+
+額定電流範圍原本寫死在**六個地方**：`index.html` 三個 input 的 `min`/`max`、
+`app.js` 三處 `val < 1 || val > 20` 驗證。改設定檔要同步六處，必漏。
+
+- 新增 `GET /api/config/limits`（**不檢查 `is_connected`** — 純設定值與連線無關，
+  未連線時前端仍要能正確渲染輸入欄）
+- `app.js` 新增 `limits` reactive + `fetchLimits()`（`onMounted` 呼叫，不等 WebSocket），
+  三處驗證合併為單一 `validateNominal()`
+- `index.html` 三個 input 改綁 `:min="limits.nominalMin" :max="limits.nominalMax"`
+- `?v=4.9.0 → 4.10.0`
+
+### 🧹 `.gitignore`
+
+改為忽略 `config/config.json`（含站點專屬 IP）與 `config/*.migrated`，只追蹤
+`config.example.json` 範本。原本 `logging_config.json` 是被追蹤的，與
+`device_config.json` 不進版控的慣例不一致，一併統一。
+
+### ✅ 驗證
+
+- 暫時改寫 `config.json`（range 2-16、port 8123、push 2.5、idle 45）→ 四項皆生效
+- `save_device_ip()` 寫入後 web / logging / nominal_current 三個區塊**完整保留**
+- demo 模式：`/api/config/limits` 回 200、`/api/status` 正常、`/` 帶新版號 4.10.0
+- `node --check app.js` 通過；`ruff check .` 全過
+  （**順帶抓到重構遺留的 3 個死 import** — 導入 ruff 當天就回本）
+
+### ⚠️ 尚未實機驗證
+
+以上皆為 demo 模式與單元層級驗證。接實機後需確認 CLI 的 `setting [3] 存為預設值`
+寫入 `config.json` 後重啟仍讀得到。
+
+---
+
 ## [2026-09-01] 導入 ruff 靜態檢查
 
 > **動機**：2026-08-28 `caparoc_ip_core.py` 的 `is_valid_ip()` 例外分支被寫成小寫 `false`，

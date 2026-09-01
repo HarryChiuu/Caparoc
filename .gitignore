@@ -45,8 +45,11 @@ logs/
 *.csv
 *.json
 !config/*.json
-config/device_config.json
+# 使用者的實際設定（含站點專屬 IP）不進版控，只追蹤 config.example.json 範本
+config/config.json
 config/nominal_probe_cache.json
+# app_config.py 遷移舊設定檔時產生的備份
+config/*.migrated
 !docs/diagrams/*.json
 *.xlsx
 output/*

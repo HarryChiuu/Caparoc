@@ -1,4 +1,0 @@
-{
-    "_comment": "CAPAROC 裝置連線設定。複製此檔為 device_config.json 並修改 default_ip。",
-    "default_ip": "192.168.2.111"
-}

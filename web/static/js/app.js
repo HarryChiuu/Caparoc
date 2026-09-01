@@ -613,6 +613,32 @@ createApp({
             }
         }
 
+        // -- 可調上下限（來源：config/config.json，經 GET /api/config/limits）--
+        // 額定電流範圍原本寫死在 index.html 三處 input 與 app.js 三處驗證，
+        // 改設定檔要同步六個地方。現在只有這一份，模板與驗證都引用它。
+        const limits = reactive({ nominalMin: 1, nominalMax: 20 });
+
+        async function fetchLimits() {
+            try {
+                const r = await fetch('/api/config/limits');
+                if (!r.ok) return;                       // 取不到就沿用內建預設
+                const d = await r.json();
+                if (d?.nominal_current) {
+                    limits.nominalMin = d.nominal_current.min;
+                    limits.nominalMax = d.nominal_current.max;
+                }
+            } catch (e) { /* 設定值非關鍵路徑，失敗沿用預設即可 */ }
+        }
+
+        // 額定電流輸入驗證：合法回 null，否則回錯誤訊息字串
+        function validateNominal(raw) {
+            const val = Math.round(parseFloat(raw));
+            if (isNaN(val) || val < limits.nominalMin || val > limits.nominalMax) {
+                return `請輸入 ${limits.nominalMin}–${limits.nominalMax} A`;
+            }
+            return null;
+        }
+
         // -- 通道設定 --
         const nominalInputs = reactive({});
         const nominalFeedback = reactive({});
@@ -624,8 +650,9 @@ createApp({
         async function setNominal(chId) {
             if (nominalBusy[chId]) return;
             const val = Math.round(parseFloat(nominalInputs[chId]));
-            if (isNaN(val) || val < 1 || val > 20) {
-                nominalFeedback[chId] = { ok: false, msg: '請輸入 1–20 A' };
+            const err = validateNominal(nominalInputs[chId]);
+            if (err) {
+                nominalFeedback[chId] = { ok: false, msg: err };
                 return;
             }
             // 後端寫入後最長等 3 秒驗證，期間給明確進度提示
@@ -674,9 +701,10 @@ createApp({
         async function setAllNominal() {
             if (batchBusy.value) return;
             const val = Math.round(parseFloat(batchNominal.value));
-            if (isNaN(val) || val < 1 || val > 20) {
+            const errAll = validateNominal(batchNominal.value);
+            if (errAll) {
                 batchStatus.ok = false;
-                batchStatus.msg = '請輸入 1–20 A';
+                batchStatus.msg = errAll;
                 return;
             }
             const ids = state.channels
@@ -720,8 +748,9 @@ createApp({
         async function setModuleNominal(mod) {
             if (batchBusyByMod[mod]) return;
             const val = Math.round(parseFloat(batchNominalByMod[mod]));
-            if (isNaN(val) || val < 1 || val > 20) {
-                batchStatusByMod[mod] = { ok: false, msg: '請輸入 1–20 A' };
+            const errMod = validateNominal(batchNominalByMod[mod]);
+            if (errMod) {
+                batchStatusByMod[mod] = { ok: false, msg: errMod };
                 return;
             }
             const ids = (channelsByModule.value[mod] || []).map(ch => ch.id);
@@ -1084,7 +1113,10 @@ createApp({
             if (connected) { nextTick(_initCharts); }
         });
 
-        onMounted(connectWs);
+        onMounted(() => {
+            fetchLimits();      // 設定值與連線無關，不等 WebSocket
+            connectWs();
+        });
         onUnmounted(() => {
             clearTimeout(wsRetryTimer);
             if (ws) ws.close();
@@ -1104,6 +1136,7 @@ createApp({
             refreshDeviceInfo, refreshNetworkInfo,
             webifInfo, webifInfoRefreshing, webifUnavailable, webifHasFaults, refreshWebifInfo,
             showLedHelp,
+            limits,
             nominalInputs, nominalFeedback, nominalBusy, batchNominal, batchStatus, batchBusy,
             setNominal, setAllNominal,
             batchNominalByMod, batchStatusByMod, batchBusyByMod,

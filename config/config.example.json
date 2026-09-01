@@ -1,0 +1,37 @@
+{
+    "_comment": "CAPAROC 統一設定檔範本。複製為 config.json 後編輯。所有鍵皆可省略，省略者取 src/app_config.py 的 DEFAULTS。",
+
+    "device": {
+        "_comment": "啟動時嘗試連線的設備 IP。CLI 的 setting [3] 與 Web 連線設定頁會寫回這裡。",
+        "default_ip": "192.168.2.111"
+    },
+
+    "web": {
+        "_comment": "port 覆寫優先序：--port N > 環境變數 CAPAROC_PORT > 本設定。8001 是為了避開 NVIDIA Overlay 間歇佔用的 8000。",
+        "port": 8001,
+        "ws_push_interval": 1.0,
+        "ws_idle_shutdown": 10.0
+    },
+
+    "logging": {
+        "_comment": "log_dir 為相對路徑時以專案根目錄為基準，不受 CWD 影響。retention_days 為 0 代表永不自動清除。",
+        "log_level": "INFO",
+        "retention_days": 0,
+        "log_dir": "logs",
+        "remote": {
+            "_comment": "未來擴充：推送 log 到 Linux 主機。將 enabled 改為 true 並填入 url 即可生效。",
+            "enabled": false,
+            "type": "http",
+            "url": "",
+            "batch_size": 50,
+            "flush_interval_sec": 60,
+            "token": ""
+        }
+    },
+
+    "nominal_current": {
+        "_comment": "額定電流可設定範圍（安培，整數）。依手冊 Table 7-11 & 7-18 為 1-20A。backend 參數驗證與 Web UI 輸入欄 min/max 皆以此為準。",
+        "min": 1,
+        "max": 20
+    }
+}

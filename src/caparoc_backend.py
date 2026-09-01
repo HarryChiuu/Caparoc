@@ -26,6 +26,12 @@ import threading
 import traceback
 from pathlib import Path
 
+import app_config
+
+# 額定電流可設定範圍（安培）。來源為 config/config.json 的 nominal_current 區塊，
+# 與 Web UI 輸入欄的 min/max（GET /api/config/limits）同一份設定。
+_NOMINAL_MIN, _NOMINAL_MAX = app_config.nominal_range()
+
 try:
     from logging_manager import setup as _log_setup, get_logger
     _log_setup()
@@ -922,8 +928,8 @@ class CaparocBackend:
             return f"模組編號超出範圍 (1-16): {module}"
         if channel < 1 or channel > self.channels_per_module:
             return f"通道編號超出範圍 (1-{self.channels_per_module}): {channel}"
-        if current_amps < 1 or current_amps > 20:
-            return f"額定電流超出範圍 (1-20A): {current_amps}"
+        if current_amps < _NOMINAL_MIN or current_amps > _NOMINAL_MAX:
+            return f"額定電流超出範圍 ({_NOMINAL_MIN}-{_NOMINAL_MAX}A): {current_amps}"
         return None
 
     def _channel_label(self, module, channel):

@@ -18,7 +18,6 @@ import math
 import signal
 import asyncio
 import threading
-import json
 import logging
 from collections import deque
 from contextlib import asynccontextmanager
@@ -49,6 +48,7 @@ from caparoc_ip_core import (  # noqa: E402
 # 原廠 Web 介面（HTTP/80，與 CIP 完全獨立）的補充唯讀資訊：硬體清單 / 韌體版本 /
 # LED 狀態 / 每模組故障事件記憶。純函式，任何失敗回 None，不 raise。
 import caparoc_http  # noqa: E402
+import app_config  # noqa: E402
 
 # 同時只允許一次網段掃描：掃描會開 32 條探測執行緒，兩個分頁同時按會互相干擾
 _discover_lock = threading.Lock()
@@ -139,14 +139,12 @@ logging.getLogger("caparoc").addHandler(_log_handler)
 _WEB_LOGGER = logging.getLogger("caparoc.web")
 
 # ==================== 全域設定 ====================
-_CONFIG_PATH = _ROOT_DIR / "config" / "device_config.json"
-_default_ip = "192.168.2.111"
-if _CONFIG_PATH.exists():
-    try:
-        with open(_CONFIG_PATH, encoding="utf-8") as _f:
-            _default_ip = json.load(_f).get("default_ip", _default_ip)
-    except Exception:
-        pass
+# 統一設定檔 config/config.json（見 src/app_config.py）。缺鍵一律取 DEFAULTS，
+# 設定檔不存在或壞掉也不會讓服務起不來。
+_default_ip = app_config.get("device", "default_ip")
+_WEB_CFG = app_config.section("web")
+_WS_PUSH_INTERVAL = float(_WEB_CFG.get("ws_push_interval", 1.0))
+_NOMINAL_MIN, _NOMINAL_MAX = app_config.nominal_range()
 
 backend = CaparocBackend(_default_ip)
 
@@ -256,6 +254,22 @@ async def index():
 
 
 # ==================== REST API ====================
+@app.get("/api/config/limits")
+def get_config_limits():
+    """
+    前端需要的可調上下限，來源為 config/config.json。
+
+    目前只有額定電流範圍。前端據此設定輸入欄的 min/max 與提示文字，
+    不再把 1/20 寫死在 index.html 與 app.js 兩處——改設定檔即可同步。
+
+    **不檢查 is_connected**：這是純設定值，與設備連線無關，未連線時前端
+    仍要能正確渲染通道設定頁的輸入欄。
+    """
+    return {
+        "nominal_current": {"min": _NOMINAL_MIN, "max": _NOMINAL_MAX},
+    }
+
+
 @app.get("/api/status")
 def get_status():
     """取得設備完整狀態快照。"""
@@ -931,7 +945,8 @@ _ws_client_count = 0
 _ws_had_client   = False   # 曾有人連線過才啟動自動關閉計時
 _ws_auto_task    = None    # asyncio.Task
 
-_WS_IDLE_TIMEOUT = 10.0    # 秒：無前端連線多久後自動 shutdown
+# 秒：無前端連線多久後自動 shutdown（config.json 的 web.ws_idle_shutdown）
+_WS_IDLE_TIMEOUT = float(_WEB_CFG.get("ws_idle_shutdown", 10.0))
 
 
 async def _ws_idle_shutdown():
@@ -978,7 +993,7 @@ async def ws_status(websocket: WebSocket):
                     'channels':      {str(ch['id']): ch['current_amps']
                                       for ch in payload['channels']},
                 })
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(_WS_PUSH_INTERVAL)
     except WebSocketDisconnect:
         pass  # 前端正常關閉頁面/重整，不需記錄
     except Exception as e:
@@ -997,12 +1012,13 @@ def _resolve_port() -> int:
     決定監聽埠，優先序：
       1. 命令列 --port N
       2. 環境變數 CAPAROC_PORT
-      3. 預設 8001（避開 NVIDIA Overlay 間歇佔用的 8000）
+      3. config/config.json 的 web.port（預設 8001，避開 NVIDIA Overlay
+         間歇佔用的 8000）
     選定埠若已被佔用，往上探 10 個埠取第一個可用的。
     """
     import socket
 
-    chosen = 8001
+    chosen = int(_WEB_CFG.get("port", 8001))
     if "--port" in sys.argv:
         try:
             chosen = int(sys.argv[sys.argv.index("--port") + 1])

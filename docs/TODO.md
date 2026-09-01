@@ -748,49 +748,44 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-##### 4.3.1 設定值外部化（config 合併）
+##### 4.3.1 設定值外部化（config 合併）✅ **已完成（2026-09-01）**
 
 > **目的**：將散落的多個 config 檔案合併為單一 `config/config.json`，集中管理所有可調參數  
-> **預估工時**：1 小時
+> **實際工時**：1.5 小時（多出的 0.5 小時花在遷移機制與 `save_device_ip` 的區塊保留）
 
-**目前配置檔案現況**：
-- `config/device_config.json` — 僅存 `default_ip`
-- `config/logging_config.json` — Log 等級、檔案大小、備份數
+**規劃時的結構與實際不符**，已依實際程式碼修正：原規劃寫的 `logging.max_bytes` /
+`backup_count` 在本專案並不存在（`logging_manager.py` 用的是 `retention_days` /
+`log_dir` / `remote` 區塊）；`web.port` 預設是 **8001** 而非 8000（避開 NVIDIA Overlay）。
 
-**合併後 `config/config.json` 結構**：
-
-```json
-{
-  "device": {
-    "default_ip": "192.168.50.111"
-  },
-  "web": {
-    "port": 8000,
-    "ws_push_interval": 1.0,
-    "ws_idle_shutdown": 10
-  },
-  "logging": {
-    "level": "INFO",
-    "max_bytes": 5242880,
-    "backup_count": 3
-  },
-  "nominal_current": {
-    "min": 1,
-    "max": 20
-  }
-}
-```
+**實際的 `config/config.json` 結構**：見 `config/config.example.json`（含逐區塊 `_comment` 說明）。
+權威來源是 `src/app_config.py` 的 `DEFAULTS`，新增可調參數時先加在那裡。
 
 **工作項目**：
-- [ ] 建立 `config/config.json`，合併 device + logging + web 設定
-- [ ] 刪除舊的 `device_config.json`、`logging_config.json`
-- [ ] `web/app.py` 改為讀取 `config/config.json`
-- [ ] `src/logging_manager.py` 改為讀取 `config/config.json` 的 `logging` 區塊
-- [ ] `src/caparoc_backend.py` 從 config 讀取 nominal range
-- [ ] `app.js` 從 `GET /api/config/limits` 取得 nominal_current_range，動態設定 input min/max
-- [ ] 建立 `config/config.example.json`（含註解說明，供首次部署參考）
+- [x] **新增 `src/app_config.py`（統一載入器）** — 規劃時沒有這一項，但三個模組各自
+      開檔 parse 同一個檔案會是三份重複邏輯，且合併後 `save_device_ip()` 必須
+      read-modify-write 才不會洗掉其他區塊。只依賴標準函式庫（`logging_manager`
+      會 import 它，不能反向依賴）
+- [x] 建立 `config/config.json`，合併 device + logging + web + nominal_current
+- [x] **自動遷移**：`config.json` 不存在但舊檔存在時，開機自動合併產生，
+      舊檔改名為 `.migrated` 保留（不直接刪除，遷移萬一有誤還救得回來）。
+      實測 `default_ip=192.168.50.111` 正確保留
+- [x] `web/app.py` 改讀 `config.json`：`default_ip` / `web.port` / `ws_push_interval`
+      （原本 `asyncio.sleep(1.0)` 寫死）/ `ws_idle_shutdown`（原本 `_WS_IDLE_TIMEOUT = 10.0` 寫死）
+- [x] `src/logging_manager.py` 改讀 `logging` 區塊（`config_path` 參數保留相容舊呼叫）
+- [x] `src/caparoc_backend.py` 的 `_validate_nominal_args()` 改用 config 的 nominal range
+- [x] 新增 `GET /api/config/limits`；`app.js` 新增 `limits` reactive + `fetchLimits()`，
+      **6 處寫死的 1/20 收斂為一份**（`index.html` 三個 input 的 `min`/`max`、
+      `app.js` 三處驗證合併為 `validateNominal()`）
+- [x] 建立 `config/config.example.json`（含註解說明）
+- [x] `.gitignore`：改為忽略 `config/config.json` 與 `config/*.migrated`，只追蹤範本
+- [x] `?v=4.9.0 → 4.10.0`
 
-**預估工時**：1 小時
+**驗證**：暫時改寫 `config.json`（range 2-16、port 8123、push 2.5、idle 45）確認四項皆生效；
+`save_device_ip()` 寫入後 web/logging/nominal 三個區塊完整保留；demo 模式
+`/api/config/limits` 回 200、`/` 帶新版號；`ruff check .` 全過（順帶抓到重構遺留的 3 個死 import）。
+
+**⚠️ 尚未實機驗證**：以上皆為 demo 模式與單元層級驗證。接實機後需確認 CLI 的
+`setting [3] 存為預設值` 寫入 `config.json` 後重啟仍讀得到。
 
 ---
 

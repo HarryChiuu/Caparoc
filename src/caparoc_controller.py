@@ -55,39 +55,23 @@ CAPAROC 控制器 (Production Version)
 from pycomm3 import CIPDriver
 import time
 import threading
-import json
-import os
 from caparoc_backend import CaparocBackend
 
-# 設定檔路徑（相對於本檔案所在目錄）
-_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            '..', 'config', 'device_config.json')
+# 設定統一由 app_config 提供（config/config.json）；下面兩支保留為薄包裝，
+# 讓既有呼叫點（_ask_save_default_ip / _handle_setting_connip 等）不需改動。
+import app_config
+
+_CONFIG_PATH = app_config.CONFIG_PATH
+
 
 def _load_default_ip():
-    """從 config/device_config.json 讀取預設 IP，讀取失敗則回傳 192.168.2.111"""
-    try:
-        with open(_CONFIG_PATH, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            ip = data.get('default_ip', '192.168.2.111')
-            return ip
-    except Exception:
-        return '192.168.2.111'
+    """從 config/config.json 的 device.default_ip 讀取預設 IP"""
+    return app_config.get('device', 'default_ip')
+
 
 def _save_default_ip(ip):
-    """將指定 IP 寫入 config/device_config.json 作為預設 IP"""
-    try:
-        try:
-            with open(_CONFIG_PATH, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except Exception:
-            data = {}
-        data['default_ip'] = ip
-        with open(_CONFIG_PATH, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-        return True
-    except Exception as e:
-        print(f"  ⚠️  無法寫入設定檔: {e}")
-        return False
+    """將指定 IP 寫入 config/config.json 的 device.default_ip（保留其他區塊）"""
+    return app_config.save_device_ip(ip)
 
 try:
     from logging_manager import setup as _log_setup, get_logger
@@ -378,7 +362,7 @@ class CaparocController(CaparocBackend):
             print("⚙️  連線設定")
             print("="*60)
             print(f"  目前連線 IP: {self.device_ip}")
-            print(f"  預設 IP:     {default_ip}  (config/device_config.json)")
+            print(f"  預設 IP:     {default_ip}  (config/config.json)")
             print("-"*60)
             print("  [1] 變更並連線       - 輸入新 IP，立即重連")
             print("  [2] 恢復預設值       - 使用 config.json 的 IP 重連")
@@ -863,7 +847,7 @@ class CaparocController(CaparocBackend):
                     print("   ⚠️  請輸入 R (重新連線)、C (變更 IP) 或 Q (退出)")
 
 def main():
-    controller = CaparocController()  # 自動從 config/device_config.json 讀取預設 IP
+    controller = CaparocController()  # 自動從 config/config.json 讀取預設 IP
     while True:
         result = controller.run()
         if result == 'reconnect':

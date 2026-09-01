@@ -35,7 +35,8 @@ def setup(config_path: str = None, enable_gui_queue: bool = False) -> 'LogManage
     初始化 LogManager（程式啟動時呼叫一次）。
 
     Args:
-        config_path:      logging_config.json 路徑。None = 自動尋找 config/logging_config.json
+        config_path:      設定檔路徑。None（預設）= 走 app_config 讀
+                          config/config.json 的 logging 區塊
         enable_gui_queue: True = 建立 GUI 用的 Queue（caparoc_gui.py 傳入 True）
 
     Returns:
@@ -94,7 +95,7 @@ class RemoteHandler(logging.Handler):
       - Redis LPUSH
       - Fluentd forward protocol
 
-    啟用方式（logging_config.json）：
+    啟用方式（config/config.json 的 logging 區塊）：
         "remote": {
             "enabled": true,
             "type": "http",
@@ -154,23 +155,38 @@ class LogManager:
 
     # ── 設定檔 ────────────────────────────────────────────────────────────────
     def _load_config(self, config_path: str) -> dict:
+        """
+        取得 logging 設定。
+
+        預設走 `app_config`（統一設定檔 `config/config.json` 的 `logging` 區塊，
+        已合併過預設值）。`config_path` 僅為相容舊呼叫方式而保留——傳入時
+        直接讀該檔案的扁平結構，不經過 app_config。
+        """
         cfg = dict(self.DEFAULT_CONFIG)
         cfg['remote'] = dict(self.DEFAULT_CONFIG['remote'])
 
         if config_path is None:
-            here = Path(__file__).parent
-            config_path = here.parent / 'config' / 'logging_config.json'
+            try:
+                import app_config
+                user_cfg = app_config.section('logging')
+            except Exception as e:
+                print(f'[LogManager] 無法讀取統一設定檔: {e}，使用預設值')
+                user_cfg = {}
+        else:
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    user_cfg = json.load(f)
+            except FileNotFoundError:
+                user_cfg = {}          # 使用預設值
+            except Exception as e:
+                print(f'[LogManager] 無法讀取設定檔: {e}，使用預設值')
+                user_cfg = {}
 
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                user_cfg = json.load(f)
-                cfg.update({k: v for k, v in user_cfg.items() if k != 'remote'})
-                if 'remote' in user_cfg:
-                    cfg['remote'].update(user_cfg['remote'])
-        except FileNotFoundError:
-            pass  # 使用預設值
-        except Exception as e:
-            print(f'[LogManager] 無法讀取設定檔: {e}，使用預設值')
+        cfg.update({k: v for k, v in user_cfg.items()
+                    if k != 'remote' and not k.startswith('_')})
+        if isinstance(user_cfg.get('remote'), dict):
+            cfg['remote'].update({k: v for k, v in user_cfg['remote'].items()
+                                  if not k.startswith('_')})
 
         return cfg
 

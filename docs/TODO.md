@@ -51,7 +51,8 @@
 | 4 | 低 | `_read_and_show_result` 位址算錯（`instance=0x101`）、對 web 無意義 | ✅ 改用 `input_instance` + `get_channel_offset()`；`set_channel()` 加 `show_result` 參數，web 傳 `False` 省下 0.5 秒與一次 CIP 往返 |
 | 5 | 低 | 30 處 `generic_message` 重複、易漏上鎖 | ✅ 抽出內建 `_cip_lock` 的 `_cip_get()`/`_cip_set()`/`_read_input_assembly()`；需要原子性的兩處（Config Assembly 回退、`set_channel` 寫入+驗證）刻意保留單次持鎖寫法並加註解 |
 
-**⚠️ 尚未實機驗證**：以上皆通過 mock driver 測試與 `--demo` 模式 API smoke test，接實機後需確認批次設定、連線探測快取、通道開關三條路徑。
+**✅ 實機驗證通過（2026-09-01）**：除 mock driver 測試與 `--demo` 模式 API smoke test 外，
+已接實機確認三條路徑——批次設定額定電流、連線時的探測快取命中、通道開關——行為皆符合預期，無需追加修正。
 
 ---
 
@@ -804,10 +805,10 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-##### 4.3.7 通道設定頁排版穩定化 + 白天模式對比度改善 ✅ 已完成（2026-08-31，尚未提交）
+##### 4.3.7 通道設定頁排版穩定化 + 白天模式對比度改善 ✅ 已完成（2026-08-31，`dfa1fa6`）
 
 > **目的**：修「設定中…」狀態切換時整列/整表跳動的問題，並提高白天模式下文字與強調色的對比度。
-> **狀態**：`style.css` / `app.js` / `index.html` 已在工作目錄完成，**尚未 commit**（本輪只補文件）。
+> **狀態**：`style.css` / `app.js` / `index.html` 已提交於 `dfa1fa6`，並經瀏覽器實際切換主題確認。
 
 **排版穩定化**（按鈕文字在「設定」↔「設定中…」間切換、回饋訊息出現/消失時，不應牽動版面）：
 - [x] `.ch-table` 改 `table-layout: fixed`，新增 `colgroup`（`col-ch` / `col-nominal` / `col-input` 固定寬度）
@@ -823,9 +824,9 @@ def _show_monitor_status(self, status, changes):
 - [x] `app.js` 圖表主題（`_chartTheme()`）的白天模式格線/刻度/圖例顏色同步加深
 - [x] `index.html` 版號 `?v=4.7.0 → 4.8.0`
 
-**⚠️ 尚待處理**：
-- [ ] 尚未在瀏覽器實際切換白天/夜間模式檢查（本輪僅靜態閱讀 diff，未啟動伺服器驗證畫面）
-- [ ] 尚未 commit——待人工確認畫面無誤後再提交
+**✅ 驗證與提交（2026-09-01 補記）**：
+- [x] 已在瀏覽器實際切換白天/夜間模式檢查畫面，兩主題皆無對比度或跳版問題
+- [x] 已提交（`dfa1fa6`）
 
 ---
 
@@ -1087,7 +1088,7 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-#### 4.9 原廠 Web 介面資料整合（`caparoc_http.py`）✅ 已接上 web（2026-08-31，尚待實機驗證）
+#### 4.9 原廠 Web 介面資料整合（`caparoc_http.py`）✅ 已完成（2026-08-31 接上 web，2026-09-01 實機驗證通過）
 
 > **目的**：設備除了 EtherNet/IP CIP，還有一個未公開的原廠 Web 介面
 > （`GET http://<ip>/webif/systeminfo`、`GET http://<ip>/webif/processdata`，皆無需認證），
@@ -1123,7 +1124,7 @@ def _show_monitor_status(self, status, changes):
       （原廠 API 兩支端點各 2.5 秒逾時，設備不可達時單次最長約 5 秒）
 - [x] `?v=4.8.0 → 4.9.0`（`index.html` 兩處）
 - [x] `WEB_UI_FEATURE_REFERENCE.md`：端點表、CIP vs webif 對照、NET LED 判讀、回應範例
-- [ ] `docs/CHANGELOG.md` 待實機驗證後再補條目
+- [x] `docs/CHANGELOG.md` 條目已於實機驗證後補上（2026-09-01）
 
 **關鍵設計決策：`/api/device/webif` 不檢查 `is_connected`**
 
@@ -1137,10 +1138,10 @@ CIP session 掉了但設備還活著時這裡仍讀得到，而**每模組的故
 紅閃＝連線逾時；紅恆亮＝IP 衝突。⚠️ 反映的是**任何 client** 的連線（PLC / 其他工具也算），
 **不可拿來取代 `backend.is_connected`** 判斷本程式的連線狀態。
 
-**⚠️ 尚未實機驗證**：demo 模式已通過（端點回 200、三面板渲染、靜態資源版號正確、
-不可達 IP 回 `{"available": false}` 不 raise）。接實機 192.168.50.111 後需確認：
+**✅ 實機驗證通過（2026-09-01）**：demo 模式先前已通過（端點回 200、三面板渲染、靜態資源版號正確、
+不可達 IP 回 `{"available": false}` 不 raise）。接實機 192.168.50.111 後四項確認全數符合：
 webif 讀回的 voltage/current 與同刻 `/api/status` 的 CIP 值一致、模組清單與實體相符、
-LED 顏色與面板實況相符、CIP 斷線狀態下此頁仍讀得到。
+LED 顏色與面板實況相符、CIP 斷線狀態下此頁仍讀得到（驗證了本節「不檢查 `is_connected`」的設計決策）。
 
 **不在本次範圍**（另立項目）：用 webif 的 `nominal_min`/`nominal_max` 去驅動 4.3.5
 通道設定頁的輸入範圍與反灰。本次三個面板皆為唯讀顯示。

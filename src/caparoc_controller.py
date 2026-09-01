@@ -145,6 +145,10 @@ class CaparocController(CaparocBackend):
         print("  off <ch>                     - 關閉通道")
         print("\n【狀態查詢】")
         print("  s                            - 顯示完整狀態")
+        print("  device info                  - 設備識別資訊與全域設定")
+        print("                                 （產品名稱/韌體版本/序號/運作模式/鎖定狀態）")
+        print("  network info                 - 設備網路資訊")
+        print("                                 （IP/遮罩/閘道/DNS/主機名稱/MAC）")
         print("\n【即時監控】")
         print("  monitor start [interval] [mode]  - 啟動監控")
         print("                                     interval: 更新頻率(秒), 預設2")
@@ -468,6 +472,104 @@ class CaparocController(CaparocBackend):
             else:
                 print("  ⚠️  請輸入 0、1 或 2")
 
+    # ==================== 設備資訊顯示（4.4.2 / 4.4.3）====================
+    # 兩支都只做顯示，資料來源是 CaparocBackend 既有的 get_device_info() /
+    # get_network_info()（Web UI 系統狀態頁與連線設定頁用的是同兩支）。
+    # 用語刻意與 Web UI 的面板一致，避免同一個欄位在兩個介面叫不同名字。
+
+    # 未知代碼一律顯示原始數值，不要猜——設備韌體版本不同可能有新值
+    _PARAM_LOCK_TEXT = {0: '未鎖定', 1: '已鎖定'}
+    _OPERATING_MODE_TEXT = {0: 'Independent（獨立控制）', 1: 'Wait for fieldbus（等待匯流排）'}
+
+    @staticmethod
+    def _fmt_val(val, suffix=''):
+        """None（讀取失敗的欄位）統一顯示為 —，其餘加上單位。"""
+        return '—' if val is None else f"{val}{suffix}"
+
+    @classmethod
+    def _fmt_enum(cls, val, table):
+        """列舉值轉文字；表中沒有的值顯示 `原始值 (未知)`，不隱瞞。"""
+        if val is None:
+            return '—'
+        return table.get(val, f"{val} (未知)")
+
+    def show_device_info(self):
+        """顯示設備識別資訊與全域設定（CLI `device info`）。"""
+        if not self.is_connected:
+            print("\n⚠️  尚未連線，無法讀取設備資訊")
+            return
+
+        print("\n📇 讀取設備識別資訊中...")
+        info = self.get_device_info()
+        ident = info.get('identity', {})
+        sysc = info.get('system_config', {})
+
+        rev = '—'
+        if ident.get('revision_major') is not None and ident.get('revision_minor') is not None:
+            rev = f"{ident['revision_major']}.{ident['revision_minor']}"
+
+        vendor = '—'
+        if ident.get('vendor_id') is not None:
+            vendor = f"{ident['vendor_id']} (Phoenix Contact)"
+
+        print("\n" + "="*52)
+        print("📇 設備識別")
+        print("="*52)
+        print(f"  產品名稱:     {self._fmt_val(ident.get('product_name'))}")
+        print(f"  廠商 ID:      {vendor}")
+        print(f"  裝置類型:     {self._fmt_val(ident.get('device_type'))}")
+        print(f"  產品代碼:     {self._fmt_val(ident.get('product_code'))}")
+        print(f"  韌體版本:     {rev}")
+        print(f"  序號:         {self._fmt_val(ident.get('serial_number'))}")
+        print("-"*52)
+        print("⚙️  全域設定")
+        print("-"*52)
+        print(f"  運作模式:         {self._fmt_enum(sysc.get('operating_mode'), self._OPERATING_MODE_TEXT)}")
+        print(f"  通道循序啟動延遲: {self._fmt_val(sysc.get('switch_on_delay_ms'), ' ms')}")
+        print(f"  電流參數鎖定:     {self._fmt_enum(sysc.get('param_lock'), self._PARAM_LOCK_TEXT)}")
+        print(f"  按鈕介面鎖定:     {self._fmt_enum(sysc.get('ui_lock'), self._PARAM_LOCK_TEXT)}")
+        print("="*52)
+
+        # 全部欄位都是 None 代表 CIP 讀取整批失敗，而非設備真的沒有這些資料。
+        # ⚠️ 必須用 `is None` 而非 `any()`——param_lock / ui_lock / operating_mode /
+        # switch_on_delay_ms 四者同時為 0 是完全正常的設備狀態（未鎖定 + 無延遲 +
+        # Independent 模式），`any()` 會把這種合法狀態誤判成讀取失敗。
+        if (all(v is None for v in ident.values())
+                and all(v is None for v in sysc.values())):
+            print("  ⚠️  所有欄位皆讀取失敗，設備可能不支援 Identity Object 或連線已中斷")
+
+    def show_network_info(self):
+        """顯示設備網路資訊（CLI `network info`）。"""
+        if not self.is_connected:
+            print("\n⚠️  尚未連線，無法讀取網路資訊")
+            return
+
+        print("\n🌐 讀取設備網路資訊中...")
+        net = self.get_network_info()
+
+        print("\n" + "="*52)
+        print("🌐 設備網路資訊")
+        print("="*52)
+        print(f"  IP 位址:      {self._fmt_val(net.get('ip'))}")
+        print(f"  子網路遮罩:   {self._fmt_val(net.get('subnet_mask'))}")
+        print(f"  預設閘道:     {self._fmt_val(net.get('gateway'))}")
+        print(f"  DNS 1:        {self._fmt_val(net.get('dns1'))}")
+        print(f"  DNS 2:        {self._fmt_val(net.get('dns2'))}")
+        print(f"  主機名稱:     {self._fmt_val(net.get('hostname'))}")
+        print(f"  MAC 位址:     {self._fmt_val(net.get('mac'))}")
+        print("="*52)
+
+        # 這裡讀到的 IP 是設備自己回報的，與我們連線用的位址不一定相同
+        # （例如設備剛改過 IP 但我們還連在舊 session 上），不一致時明講
+        dev_ip = net.get('ip')
+        if dev_ip and dev_ip != self.device_ip:
+            print(f"  ⚠️  設備回報的 IP ({dev_ip}) 與連線位址 ({self.device_ip}) 不同")
+        # 同 show_device_info()：用 `is None` 而非 `any()`，空字串主機名稱不算失敗
+        if all(v is None for v in net.values()):
+            print("  ⚠️  所有欄位皆讀取失敗，設備可能不支援 CIP Class 0xF5/0xF6 或連線已中斷")
+        else:
+            print("  💡 本頁為唯讀。要變更設備 IP 請用 `setting` → [4] 硬體 IP 修改")
+
 # ========== 主程式入口 ==========
     def run(self):
         self.logger.info("CAPAROC PM EIP Controller v3.8 啟動", extra={'log_module': 'CLI'})
@@ -756,6 +858,14 @@ class CaparocController(CaparocBackend):
                             global_ch = int(cmd.split()[1])
                             _mod, _ch = self.get_module_and_channel(global_ch)
                             self.set_channel(_mod, _ch, False)
+                        elif cmd in ('device info', 'device', 'devinfo'):
+                            self._update_activity()
+                            self.show_device_info()
+
+                        elif cmd in ('network info', 'network', 'netinfo'):
+                            self._update_activity()
+                            self.show_network_info()
+
                         elif cmd == 'setting':
                             result = self._handle_setting_connip(driver)
                             if result == 'reconnect':

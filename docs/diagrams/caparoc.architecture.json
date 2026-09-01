@@ -1,0 +1,292 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "CAPAROC PM EIP ECB 控制系統架構",
+    "output": "caparoc-architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1290,
+      690
+    ]
+  },
+  "components": [
+    {
+      "id": "webui",
+      "type": "frontend",
+      "label": "Web UI",
+      "sublabel": "瀏覽器 · static/js/app.js",
+      "pos": [
+        40,
+        330
+      ],
+      "size": [
+        170,
+        74
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "FastAPI 服務",
+      "sublabel": "web/app.py :8000",
+      "tag": "REST + WebSocket",
+      "pos": [
+        300,
+        330
+      ],
+      "size": [
+        170,
+        74
+      ]
+    },
+    {
+      "id": "core",
+      "type": "backend",
+      "label": "CaparocBackend",
+      "sublabel": "src/caparoc_backend.py",
+      "tag": "邏輯層",
+      "pos": [
+        560,
+        330
+      ],
+      "size": [
+        170,
+        74
+      ]
+    },
+    {
+      "id": "cip",
+      "type": "external",
+      "label": "pycomm3 CIPDriver",
+      "sublabel": "EtherNet/IP 協定堆疊",
+      "pos": [
+        820,
+        330
+      ],
+      "size": [
+        170,
+        74
+      ]
+    },
+    {
+      "id": "device",
+      "type": "external",
+      "label": "CAPAROC 裝置",
+      "sublabel": "PM EIP ECB · 電子斷路器",
+      "pos": [
+        1080,
+        330
+      ],
+      "size": [
+        170,
+        74
+      ]
+    },
+    {
+      "id": "ipcore",
+      "type": "backend",
+      "label": "caparoc_ip_core",
+      "sublabel": "探索 / 靜態 IP / DHCP",
+      "pos": [
+        300,
+        110
+      ],
+      "size": [
+        170,
+        74
+      ]
+    },
+    {
+      "id": "logmgr",
+      "type": "backend",
+      "label": "logging_manager",
+      "sublabel": "file · jsonl · queue · remote",
+      "pos": [
+        560,
+        110
+      ],
+      "size": [
+        170,
+        74
+      ]
+    },
+    {
+      "id": "logs",
+      "type": "database",
+      "label": "日誌檔",
+      "sublabel": "logs/*.log · logs/*.jsonl",
+      "pos": [
+        800,
+        110
+      ],
+      "size": [
+        170,
+        74
+      ]
+    },
+    {
+      "id": "cli",
+      "type": "backend",
+      "label": "CLI",
+      "sublabel": "caparoc_controller / ip_config",
+      "pos": [
+        300,
+        560
+      ],
+      "size": [
+        170,
+        74
+      ]
+    },
+    {
+      "id": "http",
+      "type": "backend",
+      "label": "caparoc_http",
+      "sublabel": "原廠 Web 介面 JSON 客戶端",
+      "pos": [
+        560,
+        560
+      ],
+      "size": [
+        170,
+        74
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "webui-api",
+      "from": "webui",
+      "to": "api",
+      "label": "HTTP /api/* · WS /ws/status",
+      "variant": "emphasis",
+      "labelDy": -54
+    },
+    {
+      "id": "api-core",
+      "from": "api",
+      "to": "core",
+      "label": "通道控制 · 狀態查詢",
+      "variant": "emphasis",
+      "labelDy": -54
+    },
+    {
+      "id": "core-cip",
+      "from": "core",
+      "to": "cip",
+      "label": "generic_message（上鎖）",
+      "variant": "emphasis",
+      "labelDy": -54
+    },
+    {
+      "id": "cip-device",
+      "from": "cip",
+      "to": "device",
+      "label": "EtherNet/IP CIP :44818",
+      "variant": "emphasis",
+      "labelDy": -54
+    },
+    {
+      "id": "cli-core",
+      "from": "cli",
+      "to": "core",
+      "label": "直接呼叫",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "api-ipcore",
+      "from": "api",
+      "to": "ipcore",
+      "label": "探索 / 設定 IP",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelDy": -30
+    },
+    {
+      "id": "core-http",
+      "from": "core",
+      "to": "http",
+      "label": "加值 /webif",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 22,
+      "labelDx": -14
+    },
+    {
+      "id": "http-device",
+      "from": "http",
+      "to": "device",
+      "label": "HTTP GET /webif/*（無認證）",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "bottom"
+    },
+    {
+      "id": "ipcore-device",
+      "from": "ipcore",
+      "to": "device",
+      "label": "UDP 廣播探索",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [
+          385,
+          62
+        ],
+        [
+          1165,
+          62
+        ]
+      ],
+      "labelAt": [
+        900,
+        50
+      ]
+    },
+    {
+      "id": "core-logmgr",
+      "from": "core",
+      "to": "logmgr",
+      "label": "記錄事件",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelDy": -18
+    },
+    {
+      "id": "logmgr-logs",
+      "from": "logmgr",
+      "to": "logs"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "介面層",
+      "items": [
+        "Web UI 走 FastAPI REST + WebSocket 推播",
+        "CLI 兩支入口直接呼叫後端邏輯層"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "核心邏輯",
+      "items": [
+        "CaparocBackend 統一 CIP 通訊與通道控制",
+        "caparoc_ip_core 供 CLI 與 web 共用探索 / IP 設定",
+        "caparoc_http 抓原廠 /webif 加值即時資料"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "裝置通訊",
+      "items": [
+        "pycomm3 CIPDriver 走 EtherNet/IP CIP，關鍵即時值來源",
+        "原廠 Web 介面為無認證 HTTP GET，與 CIP 獨立",
+        "generic_message 呼叫以鎖序列化避免破壞 TCP 串流"
+      ]
+    }
+  ]
+}

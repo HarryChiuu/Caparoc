@@ -1,0 +1,268 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "CAPAROC CLI 控制器操作流程",
+    "output": "caparoc-cli-workflow.html",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    {
+      "id": "startup",
+      "label": "啟動與互動"
+    },
+    {
+      "id": "devctrl",
+      "label": "通道控制（經 CaparocBackend）"
+    },
+    {
+      "id": "devread",
+      "label": "狀態與監控"
+    },
+    {
+      "id": "exceptions",
+      "label": "例外處理",
+      "variant": "exception"
+    }
+  ],
+  "mainPath": [
+    "launch",
+    "conncheck",
+    "sysstatus",
+    "syncstate",
+    "repl"
+  ],
+  "nodes": [
+    {
+      "id": "launch",
+      "lane": "startup",
+      "col": 0,
+      "type": "backend",
+      "label": "啟動 CLI",
+      "sublabel": "controller.py",
+      "width": 110
+    },
+    {
+      "id": "conncheck",
+      "lane": "startup",
+      "col": 1,
+      "type": "backend",
+      "label": "連線檢查",
+      "sublabel": "CIPDriver TCP",
+      "tag": "步驟 0",
+      "width": 120
+    },
+    {
+      "id": "sysstatus",
+      "lane": "startup",
+      "col": 2,
+      "type": "backend",
+      "label": "全域狀態檢查",
+      "sublabel": "電壓/錯誤/80%",
+      "width": 130
+    },
+    {
+      "id": "syncstate",
+      "lane": "startup",
+      "col": 3,
+      "type": "backend",
+      "label": "同步 + 建立連線",
+      "sublabel": "Input 0x65 · 心跳",
+      "width": 140
+    },
+    {
+      "id": "repl",
+      "lane": "startup",
+      "col": 4,
+      "type": "frontend",
+      "label": "指令迴圈",
+      "sublabel": "提示字元 >",
+      "tag": "h 顯示說明",
+      "width": 110
+    },
+    {
+      "id": "setnom",
+      "lane": "devctrl",
+      "col": 4,
+      "type": "backend",
+      "label": "init / verify",
+      "sublabel": "額定電流 RMW",
+      "width": 140
+    },
+    {
+      "id": "setch",
+      "lane": "devctrl",
+      "col": 5,
+      "type": "backend",
+      "label": "on / off <ch>",
+      "sublabel": "set_channel · 0x64",
+      "width": 140
+    },
+    {
+      "id": "readstatus",
+      "lane": "devread",
+      "col": 4,
+      "type": "database",
+      "label": "s（狀態）",
+      "sublabel": "show_status · 0x65",
+      "width": 140
+    },
+    {
+      "id": "monitor",
+      "lane": "devread",
+      "col": 5,
+      "type": "messagebus",
+      "label": "monitor",
+      "sublabel": "背景輪詢 0.5–60s",
+      "width": 125
+    },
+    {
+      "id": "connfail",
+      "lane": "exceptions",
+      "col": 1,
+      "type": "security",
+      "label": "連線失敗",
+      "sublabel": "[R] / [C] / [Q] 選單",
+      "width": 130
+    },
+    {
+      "id": "unsafe",
+      "lane": "exceptions",
+      "col": 2,
+      "type": "security",
+      "label": "狀態異常",
+      "sublabel": "[y] 繼續 / [N] 退出",
+      "width": 125
+    },
+    {
+      "id": "reconnect",
+      "lane": "exceptions",
+      "col": 5,
+      "type": "security",
+      "label": "reconnect / setting",
+      "sublabel": "停監控+心跳→重跑",
+      "width": 140
+    }
+  ],
+  "edges": [
+    {
+      "from": "launch",
+      "to": "conncheck",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "from": "conncheck",
+      "to": "sysstatus",
+      "label": "連線成功",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "from": "sysstatus",
+      "to": "syncstate",
+      "label": "狀態安全",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "from": "syncstate",
+      "to": "repl",
+      "label": "顯示說明",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "from": "repl",
+      "to": "setnom",
+      "label": "init <ch> <amps>",
+      "role": "branch"
+    },
+    {
+      "from": "repl",
+      "to": "setch",
+      "label": "on/off <ch>",
+      "role": "branch"
+    },
+    {
+      "from": "repl",
+      "to": "readstatus",
+      "label": "s",
+      "role": "branch"
+    },
+    {
+      "from": "repl",
+      "to": "monitor",
+      "label": "monitor …",
+      "role": "async"
+    },
+    {
+      "from": "readstatus",
+      "to": "repl",
+      "label": "回到 >",
+      "role": "return",
+      "variant": "dashed"
+    },
+    {
+      "from": "conncheck",
+      "to": "connfail",
+      "label": "連線失敗",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "from": "connfail",
+      "to": "reconnect",
+      "label": "[R] / [C]",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "from": "sysstatus",
+      "to": "unsafe",
+      "label": "狀態異常",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "from": "unsafe",
+      "to": "syncstate",
+      "label": "[y] 繼續",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "from": "repl",
+      "to": "reconnect",
+      "label": "reconnect / setting",
+      "role": "branch",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "啟動即檢查",
+      "items": [
+        "連線檢查 → 全域系統狀態 → 讀 Input Assembly 同步",
+        "系統電壓 9–30.5V、欠壓/過壓、系統錯誤、80% 總電流警告"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "互動指令",
+      "items": [
+        "init / verify 走 Parameter Object 0x0F 的 Read-Modify-Write",
+        "on/off 寫 Output Assembly 0x64；s 讀 Input Assembly 0x65"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "連線韌性",
+      "items": [
+        "300 秒閒置自動送心跳，保 CIP 連線不逾時",
+        "連線失敗與狀態異常都停在互動選單等使用者決定"
+      ]
+    }
+  ]
+}

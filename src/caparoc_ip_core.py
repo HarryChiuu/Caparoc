@@ -158,7 +158,7 @@ def probe_eip_hosts(ips: list[str], timeout: float = 0.5, workers: int = 32) -> 
         return set()
     with ThreadPoolExecutor(max_workers=min(workers, len(ips))) as ex:
         results = ex.map(lambda ip: eip_port_open(ip, timeout), ips)
-    return {ip for ip, ok in zip(ips, results) if ok}
+    return {ip for ip, ok in zip(ips, results, strict=True) if ok}
 
 
 def discover_devices(timeout: float = 2.0, broadcasts: list[str] | None = None,

@@ -122,8 +122,10 @@
 而不是預期的 422。合法輸入走 `return True` 完全正常，所以只有「使用者輸入錯誤」時才會炸——
 這種只在錯誤分支發作的 bug 特別容易漏測。已修正，並全檔掃描確認無其他小寫 `true`/`false`。
 
-- [ ] **建議**：專案沒有 linter/型別檢查。`ruff` 或 `pyflakes` 掃一次就能抓到這類 NameError，
-      成本極低（`caparoc_ip_core.py` 是純函式，最適合當第一個納管對象）
+- [x] **已導入 ruff（2026-09-01）**：專案根目錄新增 `ruff.toml`，規則聚焦真實缺陷
+      （`E4`/`E7`/`E9`/`F`/`B`，不收風格規則、不導入 formatter），涵蓋全專案而非只有
+      `caparoc_ip_core.py`。首次掃描 63 條全部修畢（無 `F821`，但揪出 `web/app.py` 重複
+      import `_date`、`caparoc_ip_config.py` 11 個下沉後殘留 import 等）。細節見 CHANGELOG。
 
 ## 🌐 Web「IP 設定」側邊欄分頁 ✅ 已完成（2026-08-27，分支 fix/web-cip-concurrency）
 

@@ -22,7 +22,6 @@ import sys
 import struct
 import socket
 import time
-import subprocess
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -33,15 +32,12 @@ from caparoc_backend import CaparocBackend
 # 探索與 IP 格式判斷等不含互動 I/O 的邏輯統一放在 caparoc_ip_core，
 # 與 web/app.py 共用同一份實作——修改探索行為只需改那一個檔案。
 from caparoc_ip_core import (
-    CLASS_TCPIP, INST, SVC_GET, SVC_SET, ATTR_CTRL, ATTR_IFACE, CTRL_NAMES,
-    EIP_PORT, DEVICE_ONLINE_MAX_WAIT, _le2ip,
+    CLASS_TCPIP, INST, SVC_GET, ATTR_CTRL, ATTR_IFACE, CTRL_NAMES,
+    DEVICE_ONLINE_MAX_WAIT, _le2ip,
     is_valid_ip, same_subnet, discover, wait_for_device,
     # DHCP 原語（新裝置設定／失聯救援共用）
-    DHCP_SERVER_PORT, DHCP_CLIENT_PORT, DHCP_MAGIC, DHCP_LEASE_SECONDS,
-    DHCP_LIMITED_BROADCAST, DHCP_DISCOVER, DHCP_OFFER, DHCP_REQUEST, DHCP_ACK,
-    DHCP_SERVE_TIMEOUT,
+    DHCP_SERVER_PORT, DHCP_MAGIC, DHCP_DISCOVER, DHCP_SERVE_TIMEOUT,
     open_dhcp_socket, detect_dhcp_macs, build_dhcp_reply, serve_dhcp,
-    dhcp_msg_type, normalize_mac, iface_mac_for,
 )
 
 # 等待／逾時（秒）；其餘 DHCP 常數由 caparoc_ip_core 提供

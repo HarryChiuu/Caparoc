@@ -32,7 +32,6 @@ _demo_tick: int = 0  # 每秒遞增，用於電流波形模擬
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -61,8 +60,7 @@ _dhcp_lock = threading.Lock()
 _dhcp_cancel = threading.Event()
 
 # ==================== Log 攔截器 ====================
-import re as _re
-from datetime import date as _date
+import re as _re  # noqa: E402
 
 # 自訂 SYSTEM 等級（25，介於 INFO=20 與 WARNING=30 之間）
 _SYSTEM_LEVEL = 25

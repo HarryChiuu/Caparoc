@@ -773,7 +773,7 @@ class CaparocBackend:
         try:
             # 找模組內第一個實體通道（存在於 _ch_id_map）
             first_ch = None
-            for gch, (m, c) in self._ch_id_map.items():
+            for _gch, (m, c) in self._ch_id_map.items():
                 if m == module:
                     first_ch = c
                     break

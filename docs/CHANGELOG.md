@@ -2,6 +2,52 @@
 
 ---
 
+## [2026-09-01] 導入 ruff 靜態檢查
+
+> **動機**：2026-08-28 `caparoc_ip_core.py` 的 `is_valid_ip()` 例外分支被寫成小寫 `false`，
+> 使所有「輸入格式錯誤」的路徑從預期的 HTTP 422 變成 `NameError` → HTTP 500。
+> 合法輸入走 `return True` 完全正常，只有錯誤分支才發作，人工測試極易漏掉。
+> `F821 undefined-name` 一秒就能抓到這類問題，本專案先前沒有任何 linter。
+
+### ✨ 新增 `ruff.toml`
+
+規則選擇原則：**只收會指出真實缺陷的規則，不收風格規則**。
+
+- `select = ["E4", "E7", "E9", "F", "B"]` — import 錯誤、語句層級錯誤、語法錯誤、
+  pyflakes（含 `F821`）、bugbear（可變預設引數、迴圈變數綁定等）
+- `ignore` 掉 `F541`（無佔位符 f-string，本專案刻意用於視覺一致的輸出樣板）與
+  `E701`/`E702`/`E731`/`E741` 四項實為風格的規則
+- 不啟用 `E1`/`E2`/`E3`/`E5`（縮排、空白、行長）與 `I`（import 排序），
+  也**刻意不導入 formatter** — 既有風格一致，全檔重排會淹沒 git blame
+- `web/app.py` per-file 忽略 `E402`：`sys.path.insert(0, ROOT/"src")` 必須先執行，
+  之後才 import 得到 `caparoc_backend`，import 順序是架構要求而非疏漏
+- 排除 `archive/`（歷史版本存檔，不再維護）、`output/`、`logs/`
+
+### 🧹 首次掃描修掉的實際問題（63 → 0）
+
+**掃描結果沒有 `F821`** — 目前無未定義名稱潛伏。修正的是以下幾類：
+
+- `web/app.py`：`from datetime import date as _date` **重複 import 兩次**（第 25 與 65 行，F811）；
+  `fastapi.requests.Request` 未使用
+- `src/caparoc_ip_config.py`：**11 個殘留 import** — `SVC_SET` / `EIP_PORT` /
+  `DHCP_CLIENT_PORT` / `DHCP_LEASE_SECONDS` / `DHCP_LIMITED_BROADCAST` / `DHCP_OFFER` /
+  `DHCP_REQUEST` / `DHCP_ACK` / `dhcp_msg_type` / `normalize_mac` / `iface_mac_for`，
+  外加 `subprocess`。皆為 2026-08-27 把函式下沉到 `caparoc_ip_core` 後遺留
+  （確認全 repo 無人 `import caparoc_ip_config`，它只作為 CLI 執行，故非 re-export）
+- `src/caparoc_controller.py`：`struct` 未使用（2026-05-14 刪除 1513 行冗餘方法後遺留）
+- `src/caparoc_ip_core.py:161`：`zip(ips, results)` 補上 `strict=True`（B905）。
+  `results` 由 `ex.map` 對 `ips` 產生，長度恆等，加 `strict` 零風險且能防未來改動
+- `src/caparoc_backend.py:776`：`_probe_nominal_writable()` 內未使用的迴圈變數 `gch` → `_gch`（B007）
+- `tests/check_connection.py:84`：bare `except:` → `except Exception:`（E722）
+
+### ✅ 驗證
+
+- `python -m ruff check .` → All checks passed
+- `pytest tests/test_caparoc_http.py` → 8 passed
+- conda `sv` env 下 `src/` 五個模組與 `web/app.py` 全部匯入成功（30 條路由）
+
+---
+
 ## [2026-09-01] 實機驗證：webif 三面板、CIP 並發 refactor、白天模式
 
 > 本則不含程式碼變更，記錄三批「已寫好但尚未實機確認」的功能通過驗證，

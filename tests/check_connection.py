@@ -81,7 +81,7 @@ def check_cip_driver():
             import pycomm3
             version = pycomm3.__version__
             print(f"      版本: {version}")
-        except:
+        except Exception:
             pass
         
         return True

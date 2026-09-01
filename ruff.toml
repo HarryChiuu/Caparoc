@@ -1,0 +1,53 @@
+# Ruff 設定 — CAPAROC 控制器
+#
+# 導入動機：2026-08-28 `caparoc_ip_core.py` 的 `is_valid_ip()` 例外分支被寫成小寫
+# `false`（Python 沒有這個名字），使所有「輸入格式錯誤」的路徑從預期的 HTTP 422
+# 變成 NameError → HTTP 500。合法輸入走 `return True` 完全正常，所以只有錯誤分支
+# 才會發作，人工測試極易漏掉。`F821 undefined-name` 一秒就能抓到這類問題。
+#
+# 用法：
+#   python -m ruff check .          # 檢查
+#   python -m ruff check . --fix    # 自動修正可修的部分
+#
+# 規則選擇原則：**只收會指出真實缺陷的規則，不收風格規則**。
+# 本專案沒有 formatter，也刻意不導入（既有程式碼風格一致，全檔重排會淹沒 git blame）。
+# 因此不啟用 E1/E2/E3/E5（縮排、空白、行長）與 I（import 排序）。
+
+target-version = "py312"
+line-length = 120
+
+exclude = [
+    "archive",      # 歷史版本存檔，不再維護
+    "output",
+    "logs",
+    ".claude",
+    "**/__pycache__",
+]
+
+[lint]
+select = [
+    "E4",   # import 相關錯誤
+    "E7",   # 語句層級錯誤（如 `== None`、bare except 之外的比較問題）
+    "E9",   # 語法錯誤 / IO 錯誤（絕不可忽略）
+    "F",    # pyflakes：undefined-name（F821）、unused-import、f-string 缺佔位符等
+    "B",    # flake8-bugbear：可變預設引數、迴圈變數綁定等真實陷阱
+]
+
+ignore = [
+    # f-string 沒有佔位符。本專案大量使用 f"..." 作為視覺一致的輸出樣板
+    # （同一段 print 區塊內有的有變數有的沒有），統一寫法比省一個 f 前綴重要。
+    "F541",
+    # 以下四項屬 E7 但實為風格規則，與「只收真實缺陷」的原則不符：
+    "E701",  # `if x: return` 單行寫法，本專案在短的防呆判斷上刻意使用
+    "E702",  # 分號分隔語句，同上
+    "E731",  # 指派 lambda（如 `_le2ip`），短小的位元轉換輔助式寫成 lambda 更緊湊
+    "E741",  # 變數名 l/I/O，區域迴圈變數命名不值得為此改動
+]
+
+[lint.per-file-ignores]
+# 測試與診斷工具允許未使用的 import 與變數（探索性腳本，留著方便手動改測項目）
+"tests/*" = ["F401", "F841"]
+# web/app.py 的 import 順序是**架構要求**，不是疏漏：
+# `sys.path.insert(0, ROOT/"src")` 必須先執行，之後才 import 得到 caparoc_backend
+# 與 caparoc_ip_core。檔內既有的 `# noqa: E402` 註解保留作為意圖說明。
+"web/app.py" = ["E402"]

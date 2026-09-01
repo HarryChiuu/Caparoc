@@ -53,7 +53,6 @@ CAPAROC 控制器 (Production Version)
 """
 
 from pycomm3 import CIPDriver
-import struct
 import time
 import threading
 import json

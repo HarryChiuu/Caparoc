@@ -2,6 +2,44 @@
 
 ---
 
+## [2026-09-01] 修正 demo 模式看不到 nominal_readonly UI（4.3.5 補完）
+
+> 核對 4.3.5 是否可標記完成時，確認五個 Step 全數實作且超出原計畫
+> （badge 做成可點擊的說明 modal、伺服器端也擋 read-only 模組、探測結果快取），
+> 但發現兩個缺陷。
+
+### 🐛 demo 模式完全沒有這條路徑
+
+`_generate_demo_payload()` 的 8 個通道**都沒有 `nominal_readonly` 欄位**。
+前端 `channelsByModule.value[mod]?.[0]?.nominal_readonly ?? false` 於是恆為
+`false`，badge 與輸入欄反灰在 `--demo` 下**永遠不會出現**——
+也就是說沒有實機就無法檢視或除錯這個 UI。
+
+> 這正是 `docs/TODO.md` 技術債表第 10 項預言的情況：
+> 「每個新端點都要手寫 `_DEMO_MODE` 分支，漏寫 → `--demo` 在該頁靜默壞掉，
+> 且無測試會抓到」。**它真的發生了**，從實作到發現隔了約一週。
+
+- demo 的**模組 2 標記為 read-only**（對應實機 M2 正是這種 2 通道模組；
+  `nominal_probe_cache.json` 記錄實機為 3 模組、M2 read-only）
+- `POST /api/device/reprobe-nominal` 的 demo 分支從回 `[]` 改為 `[2]`
+  ——原本會讓「重新探測」看起來把 M2 變回可寫，與狀態推送前後矛盾
+- 抽出 `_DEMO_READONLY_MODULES` 常數，讓兩處共用同一份定義
+
+### 🐛 說明 modal 的錯字
+
+「通道 LED 開始閃**激**綠色」「LED 停止閃**激**」共 2 處，應為「閃**爍**」。
+這是使用者實際會照著操作的步驟文字。
+
+### ✅ 驗證
+
+`--demo` 下 `/api/status` 的 M1 四通道回 `false`、M2 四通道回 `true`；
+`/api/device/reprobe-nominal` 回 `{"readonly_modules":[2]}`；
+首頁帶新版號且錯字已清除。`ruff check .` 全過。
+
+**版號**：`?v=4.10.0 → 4.11.0`
+
+---
+
 ## [2026-09-01] CLI 新增 `device info` / `network info` 指令（4.4.2 / 4.4.3）
 
 > 後端的 `get_device_info()`（2026-05-22）與 `get_network_info()`（2026-05-21）

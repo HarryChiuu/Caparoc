@@ -827,44 +827,65 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-##### 4.3.5 通道設定頁 nominal_readonly 主動探測（2 通道模組反灰 + 說明）
+##### 4.3.5 通道設定頁 nominal_readonly 主動探測（2 通道模組反灰 + 說明）✅ **已完成**（實作於 2026-08-26 前後，2026-09-01 補記）
 
 > **背景**：CAPAROC 2 通道斷路器模組的額定電流無法透過 EIP CIP 遠端設定（Config Assembly / Parameter Object 寫入均被靜默忽略），需在 UI 明確標示並禁用輸入。  
 > **設計**：連線後自動探測每個模組是否支援 CIP nominal 寫入，結果記錄為 `nominal_readonly` 欄位隨 WebSocket 推送到前端。  
-> **預估工時**：2-3 小時
+> **實際狀態**：五個 Step 全數完成且**超出原計畫**（見下方「計畫外的追加」）。
+> 本節先前一直未勾選，是文件落後於程式碼，非未實作。
 
 **實作步驟**：
 
-**Step 1 — `src/caparoc_backend.py`**
-- [ ] `__init__` 新增 `self._nominal_readonly_modules: set[int] = set()`
-- [ ] 新增 `_probe_nominal_writable(module: int) -> bool`：
-  1. 讀取 module 第一個實體通道的目前 nominal（Input Assembly）
-  2. 透過 Class 0x0F Parameter Object 寫入 nominal ± 1（probe 值）
-  3. 等 0.8 秒
-  4. 讀回 Input Assembly 驗證；若已改變 → 可寫（True），立即還原原值
-  5. 若未改變 → read-only（False），不需還原
-- [ ] 新增 `_probe_all_modules()`：對 module 1..module_count 逐一呼叫，失敗的加入 `_nominal_readonly_modules`，並寫入 log
-- [ ] `connect()` 成功後呼叫 `_probe_all_modules()`
-- [ ] 新增 `is_module_nominal_readonly(module: int) -> bool`（查 set）
+**Step 1 — `src/caparoc_backend.py`** ✅
+- [x] `__init__` 新增 `self._nominal_readonly_modules: set = set()`（`caparoc_backend.py:61`）
+- [x] `_probe_nominal_writable(module)`（`:761`）：寫入 probe 值 → 等待 → 讀回驗證 → `finally` 還原
+- [x] `_probe_all_modules(force=False)`（`:864`）
+- [x] `connect()` 成功後呼叫（`:327`）
+- [x] `is_module_nominal_readonly(module)`（`:757`）
 
-**Step 2 — `web/app.py`**
-- [ ] `_format_status()` 每個 channel 物件加入：`"nominal_readonly": backend.is_module_nominal_readonly(ch["module"])`
+**Step 2 — `web/app.py`** ✅
+- [x] `_format_status()` 加入 `nominal_readonly`（`:220`）
 
-**Step 3 — `web/static/js/app.js`**
-- [ ] 移除 `length < 4` 判斷邏輯（如有）
-- [ ] 新增 `isModNominalReadOnly(mod)` function：`return channelsByModule.value[mod]?.[0]?.nominal_readonly ?? false`
-- [ ] `setAllNominal` 加 filter：只對 `!isModNominalReadOnly(ch.module)` 的通道呼叫 API
-- [ ] `return {}` 加入 `isModNominalReadOnly`
+**Step 3 — `web/static/js/app.js`** ✅
+- [x] `isModNominalReadOnly(mod)`（`:741`）
+- [x] `setAllNominal` 的 filter（`:711`）
+- [x] `return {}` 已納入（`:1143`）
+- [x] 無 `length < 4` 殘留（grep 確認）——**readonly 與通道數刻意解耦**，
+      判斷依據是探測結果而非模組通道數
 
-**Step 4 — `web/templates/index.html`**
-- [ ] 模組標題列加說明 badge：`v-if="isModNominalReadOnly(mod)"` 顯示「⚙ 額定電流需手動設定（旋鈕）」
-- [ ] 模組批次列 input + button：`:disabled` 加入 `|| isModNominalReadOnly(mod)`
-- [ ] 通道表格每列 input + button：`:disabled` 加入 `|| isModNominalReadOnly(ch.module)`
+**Step 4 — `web/templates/index.html`** ✅
+- [x] 模組標題列 badge（`:243`）、模組批次列反灰（`:254`/`:256`）、通道列反灰（`:287`/`:292`）
 
-**Step 5 — `web/static/css/style.css`**
-- [ ] 新增 `.mod-readonly-badge` 樣式：小字灰色標籤（不影響現有版型）
+**Step 5 — `web/static/css/style.css`** ✅
+- [x] `.mod-readonly-badge`（`:689`）
 
-**預估工時**：2-3 小時
+### 計畫外的追加（比原規劃更完整）
+
+| 項目 | 說明 |
+|---|---|
+| Badge 可點擊 | 原規劃只要靜態標籤；實際做成按鈕，點擊開啟說明 modal，內含**旋鈕 + 長按 LED > 2 秒**的完整操作步驟與「僅轉旋鈕不會儲存」的警告 |
+| 伺服器端也擋 | `POST /api/channels/nominal`（`web/app.py:508`）會跳過 read-only 模組並回報 `skipped`；前端反灰之外多一層防護，全部被跳過時回 422 |
+| 探測結果快取 | 以序號為索引存於 `config/nominal_probe_cache.json`，命中時零寫入（見本檔「Web CIP 並發修正」節）。實機快取內容：3 模組、M2 為 read-only |
+| 重新探測逃生口 | `POST /api/device/reprobe-nominal` |
+
+### 🐛 2026-09-01 補記時發現的兩個缺陷（已修）
+
+**1. demo 模式完全沒有這條路徑** — `_generate_demo_payload()` 的 8 個通道
+**都沒有 `nominal_readonly` 欄位**，前端 `?? false` 讓 badge 與反灰在 `--demo`
+下永遠不出現。也就是說**沒有實機就無法檢視或除錯這個 UI**。
+
+> 這正是本檔技術債表第 10 項預言的情況：「每個新端點都要手寫 `_DEMO_MODE` 分支，
+> 漏寫 → `--demo` 在該頁靜默壞掉，且無測試會抓到」。**它真的發生了**，
+> 而且從實作到發現隔了約一週。
+
+修正：demo 的模組 2 標記為 read-only（對應實機 M2 正是這種模組），
+`POST /api/device/reprobe-nominal` 的 demo 分支也從回 `[]` 改為 `[2]`
+（原本會讓「重新探測」看起來把 M2 變回可寫，前後矛盾）。
+
+**2. 說明 modal 的錯字** — 「通道 LED 開始閃**激**綠色」「LED 停止閃**激**」
+（2 處，應為「閃**爍**」）。這是使用者會讀到的操作步驟文字。
+
+**版號**：`?v=4.10.0 → 4.11.0`
 
 ---
 

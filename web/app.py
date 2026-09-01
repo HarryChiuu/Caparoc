@@ -406,7 +406,9 @@ async def api_reprobe_nominal():
     ⚠️ 探測會短暫改寫設備的額定電流再還原。
     """
     if _DEMO_MODE:
-        return {"success": True, "readonly_modules": []}
+        # 與 _generate_demo_payload() 的 _DEMO_READONLY_MODULES 一致；
+        # 回空陣列會讓 demo 下的重新探測看起來「把 M2 變回可寫」，前後矛盾
+        return {"success": True, "readonly_modules": [2]}
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="設備未連線")
     await asyncio.to_thread(backend._probe_all_modules, True)
@@ -895,31 +897,47 @@ def _generate_demo_payload() -> dict:
     def wave(base: float, amp: float, period: float, offset: float = 0.0) -> float:
         return round(base + amp * math.sin(2 * math.pi * (t + offset) / period), 2)
 
+    # 模組 2 模擬「額定電流無法遠端設定」的斷路器模組（實機上 M2 正是這種）。
+    # 通道設定頁據此顯示 ⚙️ badge 並反灰輸入欄；沒有這個旗標的話 --demo 下
+    # 整條 read-only 路徑都看不到，等於無法在沒有實機時檢視或除錯該 UI。
+    _DEMO_READONLY_MODULES = {2}
+
+    def _ro(module: int) -> bool:
+        return module in _DEMO_READONLY_MODULES
+
     channels = [
         # 模組 1 — 涵蓋所有常見狀態
         {"id": 1, "module": 1, "channel": 1, "on": True,  "current_amps": wave(1.5, 0.30, 20,  0), "nominal_amps": 4.0,
+         "nominal_readonly": _ro(1),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # warn_80: 電流超過額定 80%
         {"id": 2, "module": 1, "channel": 2, "on": True,  "current_amps": wave(3.4, 0.20, 25,  5), "nominal_amps": 4.0,
+         "nominal_readonly": _ro(1),
          "warn_80": True,  "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # overload: 過載
         {"id": 3, "module": 1, "channel": 3, "on": True,  "current_amps": wave(4.6, 0.10, 18, 10), "nominal_amps": 4.0,
+         "nominal_readonly": _ro(1),
          "warn_80": True,  "overload": True,  "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # short_circuit: 短路
         {"id": 4, "module": 1, "channel": 4, "on": True,  "current_amps": 25.5,                    "nominal_amps": 4.0,
+         "nominal_readonly": _ro(1),
          "warn_80": True,  "overload": True,  "short_circuit": True,  "hardware_fault": False, "total_shutdown": False},
-        # 模組 2 — 更多狀態範例
+        # 模組 2 — 更多狀態範例（額定電流為 read-only）
         # hardware_fault: 硬體故障
         {"id": 5, "module": 2, "channel": 1, "on": False, "current_amps": 0.0,                     "nominal_amps": 4.0,
+         "nominal_readonly": _ro(2),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": True,  "total_shutdown": False},
         # total_shutdown: 總電流關斷
         {"id": 6, "module": 2, "channel": 2, "on": False, "current_amps": 0.0,                     "nominal_amps": 4.0,
+         "nominal_readonly": _ro(2),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": True},
         # 關閉 (正常)
         {"id": 7, "module": 2, "channel": 3, "on": False, "current_amps": 0.0,                     "nominal_amps": 2.0,
+         "nominal_readonly": _ro(2),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # 開啟 (正常運行)
         {"id": 8, "module": 2, "channel": 4, "on": True,  "current_amps": wave(1.2, 0.15, 22, 15), "nominal_amps": 4.0,
+         "nominal_readonly": _ro(2),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
     ]
     total_current = round(sum(ch["current_amps"] for ch in channels), 2)

@@ -2,6 +2,63 @@
 
 ---
 
+## [2026-09-01] 新增 demo/真實 payload 結構一致性測試
+
+> `web/app.py` 有兩條產生前端 payload 的路徑必須保持結構一致：
+> 真實走 `_read_current_status()` → `_format_status()`，demo 走
+> `_generate_demo_payload()`。新增欄位時只改真實路徑、忘了改 demo，
+> `--demo` 會**靜默壞掉**——前端讀到 `undefined`，該功能就是不出現，
+> 沒有錯誤訊息、沒有 log。`nominal_readonly` 就是這樣潛伏了約一週。
+>
+> 本測試把「漏寫 demo 分支」從人工複查變成自動偵測。
+
+### ✨ `tests/test_demo_payload.py`（6 項檢查，不需設備與網路）
+
+| 測試 | 擋下的問題 |
+|---|---|
+| `test_top_level_keys_match` | 頂層欄位漏寫或多寫 |
+| `test_channel_keys_match` | 通道欄位漏寫，**逐通道檢查**（漏寫常只發生在某幾列，例如改了模組 1 忘了模組 2） |
+| `test_top_level_types_match` | 型別漂移（str vs 數字這類前端會出錯的） |
+| `test_channel_types_match` | 同上，通道層級 |
+| `test_demo_covers_nominal_readonly_both_ways` | demo 的 `nominal_readonly` 必須**同時有 True 與 False**——只有欄位存在還不夠，全 False 的話 read-only UI 在 `--demo` 下依然看不到 |
+| `test_demo_module_count_matches_channels` | `module_count` 與通道實際涵蓋的模組數不符 |
+
+**型別比對用「家族」而非精確型別**：int 與 float 視為同族（真實路徑的
+`round()` 與 demo 的字面值可能一邊 int 一邊 float，那不是缺陷），
+但 str vs 數字、None vs 值會被抓到。
+⚠️ `bool` 必須排在 `int` 之前判斷——Python 的 `bool` 是 `int` 子類別，
+順序寫反會讓「布林欄位變成數字」漏檢。
+
+### 🐛 測試立刻抓到的既有漂移：`timestamp` 型別不一致
+
+- 真實路徑：`_read_current_status()` 給 `time.time()` → **float**
+- demo：`_datetime.now().isoformat()` → **str**
+
+前端目前沒有讀 `payload.timestamp`（圖表的時間標籤是前端自己產的），
+所以是**潛伏而非現行故障**——但正是這支測試該攔的東西。
+真實路徑是契約，已改 demo 為 `time.time()` 對齊。
+
+### ✅ 驗證方式
+
+不只跑過就算——**實際注入迴歸驗證測試會失敗**：暫時移除 demo 模組 2 的
+`nominal_readonly` 欄位後，測試回報
+「demo 通道 id=5（模組 2）欄位不一致 — 只在真實 payload 有（demo 漏寫）：
+['nominal_readonly']」，還原後 6/6 通過。
+
+過程中順帶修掉測試自身的兩個弱點：
+- `test_demo_covers_nominal_readonly_both_ways` 原本用 `ch["..."]` 直接存取，
+  欄位整個消失時會拋 `KeyError` 蓋掉真正的診斷訊息 → 改用 `.get()` 先檢查
+- 直接執行的 harness 原本只接 `AssertionError`，一支崩潰會中斷其餘測試 →
+  補接一般例外。漏寫欄位通常同時打到好幾支，一次看到全部比逐次修快
+
+### ⚠️ 執行環境
+
+本測試會 `import web/app.py`，**需在裝有 fastapi 的環境執行**（conda env `sv`）。
+該環境目前沒有 pytest，所以 `python tests/test_demo_payload.py` 直接執行
+是實際驗證過的路徑。
+
+---
+
 ## [2026-09-01] 修正 demo 模式看不到 nominal_readonly UI（4.3.5 補完）
 
 > 核對 4.3.5 是否可標記完成時，確認五個 Step 全數實作且超出原計畫

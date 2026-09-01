@@ -15,6 +15,7 @@ Demo 模式（不需要實際設備）：
 import sys
 import os
 import math
+import time
 import signal
 import asyncio
 import threading
@@ -953,7 +954,10 @@ def _generate_demo_payload() -> dict:
         "warn_80_global": False,
         "total_shutdown": False,
         "channels":       channels,
-        "timestamp":      _datetime.now().isoformat(),
+        # 必須與真實路徑同型別：_read_current_status() 給的是 time.time() 浮點數，
+        # 這裡若給 ISO 字串，任何日後開始使用此欄位的前端邏輯都會在 demo 與實機
+        # 之間表現不一致（tests/test_demo_payload.py 會擋下這種漂移）
+        "timestamp":      time.time(),
     }
 
 

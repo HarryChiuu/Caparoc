@@ -1274,8 +1274,8 @@ class CaparocBackend:
             print(f"[控制] M{module}-CH{channel} -> {'開啟' if state else '關閉'}")
             print(f"       byte[{byte_offset}]: 0x{current_value:02X} -> 0x{new_value:02X}")
             self.logger.info(
-                f"CH{channel} {'開啟' if state else '關閉'}",
-                extra={'log_module': 'CTRL', 'channel': channel}
+                f"M{module}.CH{channel} {'開啟' if state else '關閉'} 命令送出",
+                extra={'log_module': 'CTRL', 'mod': module, 'channel': channel}
             )
 
             if self.implicit_mode_enabled:
@@ -1311,15 +1311,30 @@ class CaparocBackend:
                                     if actual_byte == new_value:
                                         print(f"       ✅ 驗證成功 (設備 byte[{byte_offset}]=0x{actual_byte:02X})")
                                     else:
+                                        # 只 print 的話，這條「設備收下了寫入但沒套用」的關鍵訊號
+                                        # 在 Web 模式下完全看不到（終端機沒人盯），日誌又只留下
+                                        # 一條看似成功的 INFO，導致此故障無從追查。
                                         print(f"       ⚠️ 驗證警告：設備 byte[{byte_offset}]=0x{actual_byte:02X}, 預期=0x{new_value:02X}")
+                                        self.logger.warning(
+                                            f"M{module}.CH{channel} 寫入未生效："
+                                            f"設備 byte[{byte_offset}]=0x{actual_byte:02X}，"
+                                            f"預期 0x{new_value:02X}",
+                                            extra={'log_module': 'CTRL', 'mod': module,
+                                                   'channel': channel}
+                                        )
                             except Exception as ve:
                                 print(f"       ⚠️ 無法驗證: {ve}")
+                                self.logger.warning(
+                                    f"M{module}.CH{channel} 寫入後無法讀回驗證: {ve}",
+                                    extra={'log_module': 'CTRL', 'mod': module,
+                                           'channel': channel}
+                                )
                         else:
                             error_msg = response.error if hasattr(response, 'error') else '未知'
                             print(f"       ❌ 寫入失敗: {error_msg}")
                             self.logger.error(
-                                f"CH{channel} {'開啟' if state else '關閉'}失敗: {error_msg}",
-                                extra={'log_module': 'CTRL', 'channel': channel}
+                                f"M{module}.CH{channel} {'開啟' if state else '關閉'}失敗: {error_msg}",
+                                extra={'log_module': 'CTRL', 'mod': module, 'channel': channel}
                             )
                             return False
 
@@ -1327,8 +1342,8 @@ class CaparocBackend:
                     print(f"       ❌ 寫入異常: {e}")
                     traceback.print_exc()
                     self.logger.error(
-                        f"CH{channel} {'開啟' if state else '關閉'}異常: {e}",
-                        extra={'log_module': 'CTRL', 'channel': channel}
+                        f"M{module}.CH{channel} {'開啟' if state else '關閉'}異常: {e}",
+                        extra={'log_module': 'CTRL', 'mod': module, 'channel': channel}
                     )
                     return False
 

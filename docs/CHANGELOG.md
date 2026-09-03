@@ -2,6 +2,86 @@
 
 ---
 
+## [2026-09-03] 接上 `retention_days`：log 自動清除從「死設定」變成真的會動
+
+> 起因：使用者把 `retention_days` 改成 10，問「程式一啟動就會刪舊 log 嗎」。
+> 逐鍵追蹤呼叫點後發現 **答案是不會** —— 而且不只這一個鍵有問題。
+
+### 🐛 根因：功能寫好了，但沒有任何呼叫者
+
+`cleanup_old_logs()`（`logging_manager.py`）**全 repo 沒有任何呼叫者** ——
+不在啟動流程、沒有排程器、CLI 與 web 都沒接。docstring 寫「手動呼叫或由排程觸發」，
+但兩者都不存在。
+
+實測：`retention_days` 設 10，`logs/` 內 25 個檔（最舊 2026-05-25，遠超 10 天）
+**一個都沒刪**。與 `RemoteHandler` 同屬「寫好卻沒接上」的預留骨架。
+
+### 🐛 連帶挖出的兩個路徑／時間缺陷
+
+**1. `log_dir` 相對路徑沒轉絕對**（潛伏缺陷，接線當下才會爆）
+
+`_setup_logger()` 有做相對轉絕對，`cleanup_old_logs()` **沒有**（直接
+`Path(self.config['log_dir'])`）。兩者不一致的後果是從不同工作目錄啟動時
+**「寫入 A 目錄、清除 B 目錄」**。
+
+**2. 截止日帶著當下時刻**（原稽核未察覺，修復過程中才發現）
+
+`cutoff = datetime.now() - timedelta(days=N)` 帶著**當下時刻**，但檔名只有
+日期（零時）。於是「剛好第 N 天」的檔案會因**啟動時刻**不同而時留時刪 ——
+**早上開服存活、晚上開服被刪**。
+
+### 🔧 修法
+
+- `_resolve_log_dir()` 抽出，`_setup_logger()` 與 `cleanup_old_logs()`
+  **共用同一份路徑解析**（測試釘住，不得再各自 `Path()` 一次）
+- 截止日正規化到**當日零時** → 語意變成穩定的「保留最近 N 天」
+- `web/app.py` lifespan 啟動段呼叫，**刻意放在 `_DEMO_MODE` early return 之前**
+  ——log 保留策略與有沒有接設備無關；包 try/except，清不掉舊 log 不該擋住服務啟動
+- 新增模組層 `logging_manager.cleanup_old_logs()` 入口（呼叫端不需持有實例）
+
+> ⚠️ **給維護者**：這是目前**唯一**的清除觸發點，且只在 **Web 服務啟動**時執行 ——
+> CLI 不會清，長時間不重啟 web 也不會清。
+
+### 📝 另外兩個死設定：改為明確標註（不實作）
+
+| 設定 | 現況 | 處置 |
+|---|---|---|
+| `logging.remote.*` | `RemoteHandler.emit()` 是 `pass`，六個子鍵全部無作用 | `config.example.json` 標「🚧 尚未實作，設定無效」＋ README 新增小節 |
+| `web.port` | `_resolve_port()` 只在 `if __name__ == "__main__":` 內被呼叫，`uvicorn web.app:app` 啟動時完全忽略 | 兩處註明「僅 `python web/app.py` 適用」＋ README 給 ✅/❌ 對照 |
+
+`web.port` **刻意不改行為**：把 `_resolve_port()` 搬到 module level 會讓 uvicorn
+啟動時也去探測／佔用埠，與 uvicorn 自己的 `--port` 打架。註明限制比讓兩套埠邏輯互搶安全。
+
+### ✅ 驗證
+
+- `tests/test_log_retention.py` **6/6 通過**
+- demo 模式實跑 lifespan：`log_dir=logs_probe` / `retention_days=10`，播種
+  0/3/20/90 天四個檔 → 確實只剩 0 天與 3 天兩個（真實 `logs/` 全程未觸碰）
+- 正式套用 `retention_days=30`：`logs/` **25 → 16 個檔**，刪除的 9 個正是
+  42–101 天的舊檔，與事前 dry-run 預測**完全一致**。
+  邊界檔 `caparoc_2026-08-04.log`（剛好 30 天）**保留** —— 零時為界在作用；
+  若用原本的 `datetime.now()` 寫法，它會因為當下是 17:21 而被誤刪
+- 二次啟動 16 → 16，no-op
+
+### 🧪 `tests/test_log_retention.py`（6 項，不需設備與網路）
+
+| 測試 | 擋下的問題 |
+|---|---|
+| `test_removes_only_files_older_than_retention` | 清除門檻與**邊界日**（剛好第 N 天不得刪） |
+| `test_retention_zero_removes_nothing` | `0 = 永不清除`（範本預設值）必須是 no-op |
+| `test_relative_log_dir_is_cwd_independent` | 相對 `log_dir` 不得受 CWD 影響 |
+| `test_setup_and_cleanup_share_one_resolution` | 兩條路徑不得再各自建路徑 |
+| `test_cleanup_is_actually_wired_to_web_startup` | **回歸「功能寫好但沒接上」**，且須早於 `_DEMO_MODE` early return |
+| `test_module_level_helper_safe_before_setup` | 尚未 `setup()` 時呼叫不得拋例外 |
+
+### 📋 `docs/TODO.md` 重整
+
+頂端新增 **🎯 目前的工作佇列** —— 唯一需要先讀的一節，底下 1600 行退為歷史記錄。
+內含建議順序與一張**零散技術債表格**（`?v=` 兩處手改、BOOTP `op` 誤判、
+`arp -a` 語系依賴等 7 項），這些原本散落在各章節註腳，很容易被遺忘。
+
+---
+
 ## [2026-09-03] 修正 stdout 導向時 cp950 編碼錯誤被誤判為「設備連線失敗」
 
 > 上一則的真機驗證途中撞到：設備 ping 通、`CaparocBackend` 直連也成功，

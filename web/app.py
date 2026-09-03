@@ -57,6 +57,7 @@ from caparoc_ip_core import (  # noqa: E402
 # LED 狀態 / 每模組故障事件記憶。純函式，任何失敗回 None，不 raise。
 import caparoc_http  # noqa: E402
 import app_config  # noqa: E402
+from logging_manager import cleanup_old_logs as _cleanup_old_logs  # noqa: E402
 
 # 同時只允許一次網段掃描：掃描會開 32 條探測執行緒，兩個分頁同時按會互相干擾
 _discover_lock = threading.Lock()
@@ -160,7 +161,19 @@ backend = CaparocBackend(_default_ip)
 # ==================== Lifespan ====================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """服務啟動時嘗試連線；停止時安全斷線。"""
+    """服務啟動時清除舊 log 並嘗試連線；停止時安全斷線。"""
+    # 舊 log 清除：唯一的觸發點。config 的 logging.retention_days 為 0 時不做事。
+    # 放在 demo 判斷之前——log 保留策略與有沒有接設備無關。
+    try:
+        removed = await asyncio.to_thread(_cleanup_old_logs)
+        if removed:
+            _WEB_LOGGER.log(_SYSTEM_LEVEL,
+                            f"啟動清除 {len(removed)} 個舊 log 檔",
+                            extra={'log_module': 'WEB'})
+    except Exception as e:
+        # 清不掉舊 log 不該擋住服務啟動
+        _WEB_LOGGER.warning(f"舊 log 清除失敗: {e}", extra={'log_module': 'WEB'})
+
     if _DEMO_MODE:
         _WEB_LOGGER.warning("*** DEMO 模式：使用模擬資料，不連線實際設備 ***",
                              extra={'log_module': 'WEB'})

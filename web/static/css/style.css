@@ -704,6 +704,29 @@ code {
     color: var(--text-bright);
 }
 
+/* 鎖定狀態：需要使用者採取行動（轉 RC），用琥珀色凸顯 */
+.mod-readonly-badge.warn {
+    color: var(--amber);
+    background: rgba(240, 180, 41, 0.08);
+    border-color: rgba(240, 180, 41, 0.35);
+}
+
+.mod-readonly-badge.warn:hover {
+    background: rgba(240, 180, 41, 0.16);
+    color: var(--amber);
+}
+
+/* Modal 內的「重新偵測」動作列 */
+.modal-reprobe {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 16px 0 10px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+}
+
 /* ── 說明 Modal ──────────────────────────── */
 .modal-overlay {
     position: fixed;

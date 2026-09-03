@@ -27,6 +27,7 @@ import traceback
 from pathlib import Path
 
 import app_config
+import caparoc_http
 
 # 額定電流可設定範圍（安培）。來源為 config/config.json 的 nominal_current 區塊，
 # 與 Web UI 輸入欄的 min/max（GET /api/config/limits）同一份設定。
@@ -59,6 +60,10 @@ class CaparocBackend:
         self._ch_id_map: dict[int, tuple[int, int]] = {}
         # 不支援 CIP 遠端設定額定電流的模組（連線時主動探測）
         self._nominal_readonly_modules: set = set()
+        # 各模組型號可調範圍 { module: (lo, hi) }，來源為設備 HTTP /webif/systeminfo。
+        # EtherNet/IP 不提供模組型號，只能走 HTTP；取不到時該模組不在字典內，
+        # 驗證會退回全域範圍（軟性驗證，不因 HTTP 失效而阻斷設定）。
+        self._module_nominal_range: dict[int, tuple[int, int]] = {}
 
         # I/O 狀態
         self.implicit_mode_enabled = False
@@ -324,6 +329,7 @@ class CaparocBackend:
             # 先讀一次狀態建立 _ch_id_map，再探測額定電流可寫性
             # ❗ 必須在 _connected = True 之前完成，避免 WebSocket 讀取與 probe 並發損寮 TCP
             self._read_current_status()
+            self._load_module_ranges()
             self._probe_all_modules()
 
             # probe 完成後才開啟 WebSocket 讀取
@@ -758,6 +764,52 @@ class CaparocBackend:
         """True 表示此模組的額定電流無法透過 CIP 遠端設定（連線時主動探測確認）。"""
         return module in self._nominal_readonly_modules
 
+    def get_module_nominal_range(self, module: int):
+        """
+        取得模組型號標示的額定電流可調範圍 (lo, hi)。
+
+        取不到回 None——呼叫端應退回全域範圍，不可據此阻斷設定
+        （見 _load_module_ranges 的說明）。
+        """
+        return self._module_nominal_range.get(module)
+
+    def _load_module_ranges(self):
+        """
+        從設備 HTTP 介面讀取各模組型號，解析出額定電流可調範圍。
+
+        ⚠️ 型號只存在於 HTTP /webif/systeminfo，EtherNet/IP 的 Input/Config
+           Assembly 都沒有模組型號欄位，因此這是唯一來源。
+
+        HTTP 與 CIP 是兩條獨立連線，HTTP 失效不應讓額定電流設定整個不能用，
+        所以這裡的失敗一律**靜默降級**（字典留空 → 驗證退回全域範圍）：
+          - requests 未安裝、HTTP 逾時、韌體無此端點 → fetch 回 None
+          - 固定額定型號（如 E1 12-24DC/16A）解析回 None → 不寫入字典
+            （這類模組本來就不可調，會由 _probe_all_modules 判為 read-only）
+        """
+        self._module_nominal_range.clear()
+        try:
+            info = caparoc_http.fetch_http_info(self.device_ip)
+        except Exception as e:
+            self.logger.warning(f"讀取模組型號失敗（額定範圍改用全域設定）: {e}",
+                                extra={'log_module': 'CONN'})
+            return
+        if not info:
+            self.logger.info("HTTP 介面無回應，額定電流範圍改用全域設定",
+                             extra={'log_module': 'CONN'})
+            return
+
+        for m in info.get("modules", []):
+            idx = m.get("index")
+            lo, hi = m.get("nominal_min"), m.get("nominal_max")
+            if idx and lo is not None and hi is not None:
+                self._module_nominal_range[int(idx)] = (int(lo), int(hi))
+
+        if self._module_nominal_range:
+            desc = "、".join(f"M{k} {v[0]}-{v[1]}A"
+                             for k, v in sorted(self._module_nominal_range.items()))
+            self.logger.info(f"模組額定範圍（依型號）：{desc}",
+                             extra={'log_module': 'CONN'})
+
     def _probe_nominal_writable(self, module: int) -> bool:
         """
         探測某模組是否支援 CIP 額定電流寫入。
@@ -928,6 +980,15 @@ class CaparocBackend:
             return f"模組編號超出範圍 (1-16): {module}"
         if channel < 1 or channel > self.channels_per_module:
             return f"通道編號超出範圍 (1-{self.channels_per_module}): {channel}"
+        # 優先用模組型號標示的範圍（精準），取不到才退回全域範圍。
+        # 不因型號讀取失敗而阻斷設定——見 _load_module_ranges。
+        rng = self.get_module_nominal_range(module)
+        if rng:
+            lo, hi = rng
+            if current_amps < lo or current_amps > hi:
+                return (f"額定電流超出本模組範圍 ({lo}-{hi}A): {current_amps}"
+                        f"——M{module} 型號僅支援此範圍")
+            return None
         if current_amps < _NOMINAL_MIN or current_amps > _NOMINAL_MAX:
             return f"額定電流超出範圍 ({_NOMINAL_MIN}-{_NOMINAL_MAX}A): {current_amps}"
         return None

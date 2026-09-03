@@ -228,6 +228,9 @@ def _format_status(raw: dict | None) -> dict:
             "current_amps": round(ch["flowing_current"], 2),
             "nominal_amps": round(ch["nominal_current"], 1),
             "nominal_readonly": backend.is_module_nominal_readonly(ch["module"]),
+            # 型號標示的可調範圍；HTTP 讀不到型號時為 None，前端退回全域 limits
+            "nominal_min": (backend.get_module_nominal_range(ch["module"]) or (None, None))[0],
+            "nominal_max": (backend.get_module_nominal_range(ch["module"]) or (None, None))[1],
             "warn_80":      ch["warning_80"],
             "overload":     ch["overload"],
             "short_circuit": ch["short_circuit"],
@@ -968,39 +971,55 @@ def _generate_demo_payload() -> dict:
     def _ro(module: int) -> bool:
         return module in _DEMO_READONLY_MODULES
 
+    # 型號可調範圍：對應實機的 E4 12-24DC/1-4A 與 E2 12-24DC/2-10A。
+    # 需與線上 payload 的 nominal_min/max 同步，否則 --demo 下的
+    # 逐模組範圍驗證（輸入框 min/max、超範圍提示）無法檢視。
+    _DEMO_RANGES = {1: (1, 4), 2: (2, 10)}
+
+    def _rng(module: int, idx: int):
+        return _DEMO_RANGES.get(module, (None, None))[idx]
+
     channels = [
         # 模組 1 — 涵蓋所有常見狀態
         {"id": 1, "module": 1, "channel": 1, "on": True,  "current_amps": wave(1.5, 0.30, 20,  0), "nominal_amps": 4.0,
          "nominal_readonly": _ro(1),
+         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # warn_80: 電流超過額定 80%
         {"id": 2, "module": 1, "channel": 2, "on": True,  "current_amps": wave(3.4, 0.20, 25,  5), "nominal_amps": 4.0,
          "nominal_readonly": _ro(1),
+         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1),
          "warn_80": True,  "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # overload: 過載
         {"id": 3, "module": 1, "channel": 3, "on": True,  "current_amps": wave(4.6, 0.10, 18, 10), "nominal_amps": 4.0,
          "nominal_readonly": _ro(1),
+         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1),
          "warn_80": True,  "overload": True,  "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # short_circuit: 短路
         {"id": 4, "module": 1, "channel": 4, "on": True,  "current_amps": 25.5,                    "nominal_amps": 4.0,
          "nominal_readonly": _ro(1),
+         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1),
          "warn_80": True,  "overload": True,  "short_circuit": True,  "hardware_fault": False, "total_shutdown": False},
         # 模組 2 — 更多狀態範例（額定電流為 read-only）
         # hardware_fault: 硬體故障
         {"id": 5, "module": 2, "channel": 1, "on": False, "current_amps": 0.0,                     "nominal_amps": 4.0,
          "nominal_readonly": _ro(2),
+         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": True,  "total_shutdown": False},
         # total_shutdown: 總電流關斷
         {"id": 6, "module": 2, "channel": 2, "on": False, "current_amps": 0.0,                     "nominal_amps": 4.0,
          "nominal_readonly": _ro(2),
+         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": True},
         # 關閉 (正常)
         {"id": 7, "module": 2, "channel": 3, "on": False, "current_amps": 0.0,                     "nominal_amps": 2.0,
          "nominal_readonly": _ro(2),
+         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # 開啟 (正常運行)
         {"id": 8, "module": 2, "channel": 4, "on": True,  "current_amps": wave(1.2, 0.15, 22, 15), "nominal_amps": 4.0,
          "nominal_readonly": _ro(2),
+         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
     ]
     total_current = round(sum(ch["current_amps"] for ch in channels), 2)

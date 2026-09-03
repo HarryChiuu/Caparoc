@@ -240,19 +240,25 @@
                                 <div class="mod-header">
                                     <span class="mod-title">模組 {{ mod }}</span>
                                     <span class="mod-ch-count">{{ channelsByModule[mod].length }} 通道</span>
-                                    <button class="mod-readonly-badge" v-if="isModNominalReadOnly(mod)"
-                                        @click="showNominalHelp = true" title="點擊查看旋鈕設定步驟">
-                                        ⚙️ 額定電流需旋鈕手動設定 ℹ️
+                                    <button class="mod-readonly-badge warn" v-if="isModNominalReadOnly(mod)"
+                                        @click="showNominalHelp = true" title="點擊查看如何開啟遠端設定">
+                                        🔒 目前無法遠端設定 — 查看解法 ℹ️
+                                    </button>
+                                    <button class="mod-readonly-badge" v-else-if="isModRotary(mod)"
+                                        @click="showNominalHelp = true" title="此模組為旋鈕型，點擊查看說明">
+                                        🎛️ 旋鈕型（RC 已開啟） ℹ️
                                     </button>
                                 </div>
 
                                 <!-- 模組批次列 -->
                                 <div class="mod-batch-bar">
                                     <span class="batch-label">本模組套用</span>
-                                    <input type="number" v-model="batchNominalByMod[mod]" :min="limits.nominalMin" :max="limits.nominalMax" step="1"
+                                    <input type="number" v-model="batchNominalByMod[mod]" :min="modRange(mod).min" :max="modRange(mod).max" step="1"
                                         placeholder="A" class="nominal-input"
+                                        :title="isModNominalReadOnly(mod) ? '此模組旋鈕不在 RC 位置，無法遠端設定——點右上角說明' : ''"
                                         :disabled="!state.connected || isModNominalReadOnly(mod) || batchBusyByMod[mod]" />
                                     <button class="btn btn-sm" @click="setModuleNominal(mod)"
+                                        :title="isModNominalReadOnly(mod) ? '此模組旋鈕不在 RC 位置，無法遠端設定——點右上角說明' : ''"
                                         :disabled="!state.connected || isModNominalReadOnly(mod) || batchBusyByMod[mod]">
                                         {{ batchBusyByMod[mod] ? '設定中…' : '套用' }}
                                     </button>
@@ -282,13 +288,15 @@
                                             <td class="td-ch">CH{{ ch.channel }}</td>
                                             <td class="td-nominal">{{ ch.nominal_amps }} A</td>
                                             <td>
-                                                <input type="number" v-model="nominalInputs[ch.id]" :min="limits.nominalMin" :max="limits.nominalMax"
+                                                <input type="number" v-model="nominalInputs[ch.id]" :min="modRange(ch.module).min" :max="modRange(ch.module).max"
                                                     step="1" :placeholder="ch.nominal_amps" class="nominal-input"
+                                                    :title="isModNominalReadOnly(ch.module) ? '此模組旋鈕不在 RC 位置，無法遠端設定——點模組標題列的說明' : ''"
                                                     :disabled="!state.connected || isModNominalReadOnly(ch.module) || nominalBusy[ch.id]" />
                                             </td>
                                             <td>
                                                 <div class="td-action">
                                                     <button class="btn btn-sm" @click="setNominal(ch.id)"
+                                                        :title="isModNominalReadOnly(ch.module) ? '此模組旋鈕不在 RC 位置，無法遠端設定——點模組標題列的說明' : ''"
                                                         :disabled="!state.connected || isModNominalReadOnly(ch.module) || nominalBusy[ch.id]">
                                                         {{ nominalBusy[ch.id] ? '設定中…' : '設定' }}
                                                     </button>
@@ -308,26 +316,62 @@
 
                     </section>
 
-                    <!-- 手動設定說明 Modal -->
+                    <!-- 旋鈕型模組（2 通道）額定電流設定說明 Modal -->
                     <div class="modal-overlay" v-if="showNominalHelp" @click.self="showNominalHelp = false">
-                        <div class="modal-box">
+                        <div class="modal-box wide">
                             <div class="modal-header">
-                                <span>⚙️ 手動設定額定電流（旋鈕操作）</span>
+                                <span>🎛️ 旋鈕型模組（2 通道）如何設定額定電流</span>
                                 <button class="modal-close" @click="showNominalHelp = false">✕</button>
                             </div>
                             <div class="modal-body">
                                 <p class="modal-note">
-                                    此模組的額定電流由實體旋鈕決定，Web UI 無法透過 EtherNet/IP 遠端修改。
+                                    2 通道模組（如 CAPAROC E2）的額定電流由<strong>模組正面的實體旋鈕</strong>決定。
+                                    旋鈕上除了安培刻度，還有一個 <strong>RC</strong>（Remote Control）位置——
+                                    <strong>只有轉到 RC，才能從這個網頁遠端設定</strong>。
                                 </p>
+
+                                <h4 class="modal-sub">方式 A：開啟遠端設定（建議，可用本頁批次套用）</h4>
                                 <ol class="modal-steps">
-                                    <li>將旋鈕轉到目標安培數（例如 3A）</li>
-                                    <li>通道 LED 開始閃爍綠色（「待確認」狀態）</li>
-                                    <li><strong>長按 LED 按鈕 &gt; 2 秒</strong></li>
-                                    <li>LED 停止閃爍 → 新安培已儲存到裝置</li>
-                                    <li>Web UI 約 1 秒後自動顯示更新後的額定電流</li>
+                                    <li>把該通道的旋鈕轉到 <strong>RC</strong> 位置（不是安培刻度）</li>
+                                    <li><strong>長按該通道的 LED 按鈕 &gt; 2 秒</strong>存檔</li>
+                                    <li>LED 停止閃爍 → RC 模式已生效</li>
+                                    <li>模組有幾個通道，就要<strong>每個通道各做一次</strong></li>
+                                    <li>回到本頁按下方的
+                                        <strong>「重新偵測」</strong>，欄位就會解鎖</li>
                                 </ol>
+                                <p class="modal-note">
+                                    RC 模式下可設 <strong>1–10 A、每 1 A 一階</strong>，比旋鈕刻度
+                                    （2/4/6/8/10 A）更細。
+                                </p>
+
+                                <h4 class="modal-sub">方式 B：直接用旋鈕設定（不需要本頁）</h4>
+                                <ol class="modal-steps">
+                                    <li>將旋鈕轉到目標安培數（例如 4A）</li>
+                                    <li>通道 LED 開始閃爍（「待確認」狀態）</li>
+                                    <li><strong>長按 LED 按鈕 &gt; 2 秒</strong>存檔</li>
+                                    <li>LED 停止閃爍 → 新安培已寫入裝置</li>
+                                    <li>本頁約 1 秒後自動顯示更新後的額定電流</li>
+                                </ol>
+
                                 <p class="modal-warn">
-                                    ⚠ 僅轉旋鈕不會儲存，必須長按按鈕才能生效。
+                                    ⚠ 無論哪種方式，<strong>只轉旋鈕不會儲存</strong>，一定要長按 LED 按鈕 &gt; 2 秒。
+                                    設定模式閒置 60 秒會自動退出，未存檔的變更會被捨棄。
+                                </p>
+                                <p class="modal-warn">
+                                    ⓘ 本系統<strong>無法自動得知旋鈕轉到哪一格</strong>——EtherNet/IP 協定沒有提供旋鈕位置。
+                                    所以每次轉動旋鈕後，都要按「重新偵測」讓系統重新確認。
+                                </p>
+
+                                <div class="modal-reprobe">
+                                    <button class="btn" @click="reprobeNominal"
+                                        :disabled="!state.connected || reprobeBusy">
+                                        {{ reprobeBusy ? '偵測中…' : '🔄 重新偵測可設定的模組' }}
+                                    </button>
+                                    <span class="feedback-msg" :class="reprobeStatus.ok ? 'ok' : 'err'"
+                                        v-if="reprobeStatus.msg">{{ reprobeStatus.msg }}</span>
+                                </div>
+                                <p class="modal-note">
+                                    偵測會對每個模組寫入一次測試值再立刻還原，額定電流不會被改變。
                                 </p>
                             </div>
                         </div>

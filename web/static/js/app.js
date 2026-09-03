@@ -691,11 +691,23 @@ createApp({
             } catch (e) { /* 設定值非關鍵路徑，失敗沿用預設即可 */ }
         }
 
-        // 額定電流輸入驗證：合法回 null，否則回錯誤訊息字串
-        function validateNominal(raw) {
+        // 模組型號標示的可調範圍；型號讀不到時回全域 limits（軟性降級）
+        function modRange(mod) {
+            const ch = channelsByModule.value[mod]?.[0];
+            return (ch?.nominal_min != null && ch?.nominal_max != null)
+                ? { min: ch.nominal_min, max: ch.nominal_max }
+                : { min: limits.nominalMin, max: limits.nominalMax };
+        }
+
+        // 額定電流輸入驗證：合法回 null，否則回錯誤訊息字串。
+        // 傳入 mod 時用該模組型號範圍（較嚴），否則用全域範圍。
+        function validateNominal(raw, mod) {
+            const { min, max } = mod != null
+                ? modRange(mod)
+                : { min: limits.nominalMin, max: limits.nominalMax };
             const val = Math.round(parseFloat(raw));
-            if (isNaN(val) || val < limits.nominalMin || val > limits.nominalMax) {
-                return `請輸入 ${limits.nominalMin}–${limits.nominalMax} A`;
+            if (isNaN(val) || val < min || val > max) {
+                return `請輸入 ${min}–${max} A`;
             }
             return null;
         }
@@ -711,7 +723,8 @@ createApp({
         async function setNominal(chId) {
             if (nominalBusy[chId]) return;
             const val = Math.round(parseFloat(nominalInputs[chId]));
-            const err = validateNominal(nominalInputs[chId]);
+            const err = validateNominal(nominalInputs[chId],
+                                        state.channels.find(c => c.id === chId)?.module);
             if (err) {
                 nominalFeedback[chId] = { ok: false, msg: err };
                 return;
@@ -768,12 +781,36 @@ createApp({
                 batchStatus.msg = errAll;
                 return;
             }
+            // 各模組型號範圍可能不同（例如 E4 1-4A 與 E2 2-10A），
+            // 全域套用時要逐模組檢查，否則會對超出範圍的模組白跑一趟 CIP 寫入。
+            const outOfRange = [...new Set(
+                state.channels
+                    .filter(ch => !isModNominalReadOnly(ch.module))
+                    .filter(ch => {
+                        const { min, max } = modRange(ch.module);
+                        return val < min || val > max;
+                    })
+                    .map(ch => ch.module)
+            )].sort((a, b) => a - b);
+            if (outOfRange.length) {
+                const detail = outOfRange
+                    .map(m => { const r = modRange(m); return `M${m} ${r.min}-${r.max}A`; })
+                    .join('、');
+                batchStatus.ok = false;
+                batchStatus.msg = `${val}A 超出這些模組的型號範圍：${detail}`;
+                return;
+            }
+            // 前端先濾掉鎖定模組（後端也會擋），但要讓使用者知道少做了哪些，
+            // 否則「套用至全部通道」看起來全部成功、實際漏掉旋鈕未轉 RC 的模組。
+            const lockedMods = [...new Set(
+                state.channels.filter(ch => isModNominalReadOnly(ch.module)).map(ch => ch.module)
+            )].sort((a, b) => a - b);
             const ids = state.channels
                 .filter(ch => !isModNominalReadOnly(ch.module))
                 .map(ch => ch.id);
             if (!ids.length) {
                 batchStatus.ok = false;
-                batchStatus.msg = '沒有可遠端設定的通道';
+                batchStatus.msg = '沒有可遠端設定的通道——請先將旋鈕轉到 RC（見模組說明）';
                 return;
             }
             batchBusy.value = true;
@@ -782,7 +819,10 @@ createApp({
             try {
                 const body = await postNominalBatch(ids, val);
                 batchStatus.ok = body.fail === 0;
-                batchStatus.msg = batchResultMsg(body);
+                batchStatus.msg = batchResultMsg(body)
+                    + (lockedMods.length
+                        ? `；模組 ${lockedMods.join('、')} 旋鈕未轉 RC，未套用`
+                        : '');
                 batchNominal.value = '';
             } catch (e) {
                 batchStatus.ok = false;
@@ -803,13 +843,47 @@ createApp({
             return channelsByModule.value[mod]?.[0]?.nominal_readonly ?? false;
         }
 
+        // 旋鈕型模組（2 通道）判定。
+        // 協定沒有「模組是否為旋鈕型」的欄位，也讀不到旋鈕位置（含 RC），
+        // 因此以通道數推定：2 通道 = E2 旋鈕型。用途僅為顯示 RC 說明入口。
+        function isModRotary(mod) {
+            return (channelsByModule.value[mod]?.length ?? 0) === 2;
+        }
+
         // 手動設定說明視窗開關
         const showNominalHelp = ref(false);
+
+        // 重新探測額定電流可寫性（使用者轉動 RC 旋鈕後需手動觸發）
+        const reprobeBusy = ref(false);
+        const reprobeStatus = reactive({ ok: true, msg: '' });
+
+        async function reprobeNominal() {
+            if (reprobeBusy.value) return;
+            reprobeBusy.value = true;
+            reprobeStatus.ok = true;
+            reprobeStatus.msg = '偵測中…';
+            try {
+                const r = await fetch('/api/device/reprobe-nominal', { method: 'POST' });
+                const body = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(body.detail ?? `偵測失敗 (HTTP ${r.status})`);
+                const ro = body.readonly_modules ?? [];
+                reprobeStatus.ok = true;
+                reprobeStatus.msg = ro.length
+                    ? `完成：模組 ${ro.join('、')} 仍無法遠端設定`
+                    : '完成：所有模組都可遠端設定';
+            } catch (e) {
+                reprobeStatus.ok = false;
+                reprobeStatus.msg = e.message || '偵測失敗';
+            } finally {
+                reprobeBusy.value = false;
+                setTimeout(() => { reprobeStatus.msg = ''; }, 6000);
+            }
+        }
 
         async function setModuleNominal(mod) {
             if (batchBusyByMod[mod]) return;
             const val = Math.round(parseFloat(batchNominalByMod[mod]));
-            const errMod = validateNominal(batchNominalByMod[mod]);
+            const errMod = validateNominal(batchNominalByMod[mod], mod);
             if (errMod) {
                 batchStatusByMod[mod] = { ok: false, msg: errMod };
                 return;
@@ -1208,8 +1282,8 @@ createApp({
             nominalInputs, nominalFeedback, nominalBusy, batchNominal, batchStatus, batchBusy,
             setNominal, setAllNominal,
             batchNominalByMod, batchStatusByMod, batchBusyByMod,
-            setModuleNominal, isModNominalReadOnly,
-            showNominalHelp,
+            setModuleNominal, isModNominalReadOnly, isModRotary, modRange,
+            showNominalHelp, reprobeNominal, reprobeBusy, reprobeStatus,
             logEntries, logTotal, logPage, logPageSize, logFilter,
             logAutoScroll, logTotalPages,
             fetchLogs, clearLogs, setPageSize,

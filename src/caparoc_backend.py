@@ -64,6 +64,9 @@ class CaparocBackend:
         # EtherNet/IP 不提供模組型號，只能走 HTTP；取不到時該模組不在字典內，
         # 驗證會退回全域範圍（軟性驗證，不因 HTTP 失效而阻斷設定）。
         self._module_nominal_range: dict[int, tuple[int, int]] = {}
+        # 固定額定電流的模組 { module: 安培數 }，例如 E1 12-24DC/16A。
+        # 這類模組硬體上就不可調，與「可調但旋鈕未轉 RC」不同，UI 需分開說明。
+        self._module_nominal_fixed: dict[int, int] = {}
 
         # I/O 狀態
         self.implicit_mode_enabled = False
@@ -773,6 +776,14 @@ class CaparocBackend:
         """
         return self._module_nominal_range.get(module)
 
+    def get_module_fixed_nominal(self, module: int):
+        """
+        固定額定型號的安培數（如 E1 12-24DC/16A 回 16）；可調型或未知回 None。
+
+        用於區分反灰的兩種原因：不可調（換模組才能改）vs 旋鈕未轉 RC（可解）。
+        """
+        return self._module_nominal_fixed.get(module)
+
     def _load_module_ranges(self):
         """
         從設備 HTTP 介面讀取各模組型號，解析出額定電流可調範圍。
@@ -787,6 +798,7 @@ class CaparocBackend:
             （這類模組本來就不可調，會由 _probe_all_modules 判為 read-only）
         """
         self._module_nominal_range.clear()
+        self._module_nominal_fixed.clear()
         try:
             info = caparoc_http.fetch_http_info(self.device_ip)
         except Exception as e:
@@ -800,14 +812,21 @@ class CaparocBackend:
 
         for m in info.get("modules", []):
             idx = m.get("index")
+            if not idx:
+                continue
             lo, hi = m.get("nominal_min"), m.get("nominal_max")
-            if idx and lo is not None and hi is not None:
+            if lo is not None and hi is not None:
                 self._module_nominal_range[int(idx)] = (int(lo), int(hi))
+            fixed = m.get("nominal_fixed")
+            if fixed is not None:
+                self._module_nominal_fixed[int(idx)] = int(fixed)
 
-        if self._module_nominal_range:
-            desc = "、".join(f"M{k} {v[0]}-{v[1]}A"
-                             for k, v in sorted(self._module_nominal_range.items()))
-            self.logger.info(f"模組額定範圍（依型號）：{desc}",
+        if self._module_nominal_range or self._module_nominal_fixed:
+            parts = [f"M{k} {v[0]}-{v[1]}A"
+                     for k, v in sorted(self._module_nominal_range.items())]
+            parts += [f"M{k} {v}A(固定)"
+                      for k, v in sorted(self._module_nominal_fixed.items())]
+            self.logger.info(f"模組額定範圍（依型號）：{'、'.join(parts)}",
                              extra={'log_module': 'CONN'})
 
     def _probe_nominal_writable(self, module: int) -> bool:
@@ -980,6 +999,12 @@ class CaparocBackend:
             return f"模組編號超出範圍 (1-16): {module}"
         if channel < 1 or channel > self.channels_per_module:
             return f"通道編號超出範圍 (1-{self.channels_per_module}): {channel}"
+        # 固定額定型號（如 E1 12-24DC/16A）硬體上不可調，直接擋並說明原因，
+        # 免得使用者以為是旋鈕沒轉到 RC 而白忙一場。
+        fixed = self.get_module_fixed_nominal(module)
+        if fixed is not None:
+            return (f"M{module} 為固定額定電流型號（{fixed}A），不支援調整"
+                    f"——需更換為可調型模組")
         # 優先用模組型號標示的範圍（精準），取不到才退回全域範圍。
         # 不因型號讀取失敗而阻斷設定——見 _load_module_ranges。
         rng = self.get_module_nominal_range(module)

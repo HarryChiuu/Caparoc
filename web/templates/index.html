@@ -240,12 +240,16 @@
                                 <div class="mod-header">
                                     <span class="mod-title">模組 {{ mod }}</span>
                                     <span class="mod-ch-count">{{ channelsByModule[mod].length }} 通道</span>
-                                    <button class="mod-readonly-badge warn" v-if="isModNominalReadOnly(mod)"
-                                        @click="showNominalHelp = true" title="點擊查看如何開啟遠端設定">
+                                    <button class="mod-readonly-badge" v-if="modFixedNominal(mod) != null"
+                                        @click="openNominalHelp(mod)" title="此型號額定電流固定，無法調整">
+                                        🔧 固定 {{ modFixedNominal(mod) }}A（不可調整） ℹ️
+                                    </button>
+                                    <button class="mod-readonly-badge warn" v-else-if="isModNominalReadOnly(mod)"
+                                        @click="openNominalHelp(mod)" title="點擊查看如何開啟遠端設定">
                                         🔒 目前無法遠端設定 — 查看解法 ℹ️
                                     </button>
                                     <button class="mod-readonly-badge" v-else-if="isModRotary(mod)"
-                                        @click="showNominalHelp = true" title="此模組為旋鈕型，點擊查看說明">
+                                        @click="openNominalHelp(mod)" title="此模組為旋鈕型，點擊查看說明">
                                         🎛️ 旋鈕型（RC 已開啟） ℹ️
                                     </button>
                                 </div>
@@ -255,10 +259,10 @@
                                     <span class="batch-label">本模組套用</span>
                                     <input type="number" v-model="batchNominalByMod[mod]" :min="modRange(mod).min" :max="modRange(mod).max" step="1"
                                         placeholder="A" class="nominal-input"
-                                        :title="isModNominalReadOnly(mod) ? '此模組旋鈕不在 RC 位置，無法遠端設定——點右上角說明' : ''"
+                                        :title="modFixedNominal(mod) != null ? '此型號額定電流固定，無法調整' : (isModNominalReadOnly(mod) ? '此模組旋鈕不在 RC 位置，無法遠端設定——點右上角說明' : '')"
                                         :disabled="!state.connected || isModNominalReadOnly(mod) || batchBusyByMod[mod]" />
                                     <button class="btn btn-sm" @click="setModuleNominal(mod)"
-                                        :title="isModNominalReadOnly(mod) ? '此模組旋鈕不在 RC 位置，無法遠端設定——點右上角說明' : ''"
+                                        :title="modFixedNominal(mod) != null ? '此型號額定電流固定，無法調整' : (isModNominalReadOnly(mod) ? '此模組旋鈕不在 RC 位置，無法遠端設定——點右上角說明' : '')"
                                         :disabled="!state.connected || isModNominalReadOnly(mod) || batchBusyByMod[mod]">
                                         {{ batchBusyByMod[mod] ? '設定中…' : '套用' }}
                                     </button>
@@ -290,13 +294,13 @@
                                             <td>
                                                 <input type="number" v-model="nominalInputs[ch.id]" :min="modRange(ch.module).min" :max="modRange(ch.module).max"
                                                     step="1" :placeholder="ch.nominal_amps" class="nominal-input"
-                                                    :title="isModNominalReadOnly(ch.module) ? '此模組旋鈕不在 RC 位置，無法遠端設定——點模組標題列的說明' : ''"
+                                                    :title="modFixedNominal(ch.module) != null ? '此型號額定電流固定，無法調整' : (isModNominalReadOnly(ch.module) ? '此模組旋鈕不在 RC 位置，無法遠端設定——點模組標題列的說明' : '')"
                                                     :disabled="!state.connected || isModNominalReadOnly(ch.module) || nominalBusy[ch.id]" />
                                             </td>
                                             <td>
                                                 <div class="td-action">
                                                     <button class="btn btn-sm" @click="setNominal(ch.id)"
-                                                        :title="isModNominalReadOnly(ch.module) ? '此模組旋鈕不在 RC 位置，無法遠端設定——點模組標題列的說明' : ''"
+                                                        :title="modFixedNominal(ch.module) != null ? '此型號額定電流固定，無法調整' : (isModNominalReadOnly(ch.module) ? '此模組旋鈕不在 RC 位置，無法遠端設定——點模組標題列的說明' : '')"
                                                         :disabled="!state.connected || isModNominalReadOnly(ch.module) || nominalBusy[ch.id]">
                                                         {{ nominalBusy[ch.id] ? '設定中…' : '設定' }}
                                                     </button>
@@ -320,10 +324,32 @@
                     <div class="modal-overlay" v-if="showNominalHelp" @click.self="showNominalHelp = false">
                         <div class="modal-box wide">
                             <div class="modal-header">
-                                <span>🎛️ 旋鈕型模組（2 通道）如何設定額定電流</span>
+                                <span v-if="modFixedNominal(helpMod) != null">
+                                    🔧 模組 {{ helpMod }}：固定額定電流型號
+                                </span>
+                                <span v-else>🎛️ 旋鈕型模組（2 通道）如何設定額定電流</span>
                                 <button class="modal-close" @click="showNominalHelp = false">✕</button>
                             </div>
-                            <div class="modal-body">
+
+                            <!-- 固定額定型號（如 E1 12-24DC/16A）：硬體不可調，與旋鈕未轉 RC 無關 -->
+                            <div class="modal-body" v-if="modFixedNominal(helpMod) != null">
+                                <p class="modal-note">
+                                    此模組的額定電流<strong>固定為 {{ modFixedNominal(helpMod) }} A</strong>，
+                                    由型號決定，<strong>無法透過本頁或設備按鈕調整</strong>。
+                                </p>
+                                <p class="modal-note">
+                                    依原廠手冊 6.1.1：只有型號中標示<strong>電流範圍</strong>的模組才能程式化設定
+                                    （例如 <code>1-4A</code>、<code>2-10A</code>）。型號只標單一安培數
+                                    （例如 <code>16A</code>）即為固定額定型。
+                                </p>
+                                <p class="modal-warn">
+                                    ⓘ 需要不同的額定電流時，只能<strong>更換為可調型模組</strong>。
+                                    這與 2 通道模組「旋鈕未轉到 RC」是不同狀況——那種情況可自行解除。
+                                </p>
+                            </div>
+
+                            <!-- 旋鈕型（2 通道）：可調，但需先轉到 RC -->
+                            <div class="modal-body" v-else>
                                 <p class="modal-note">
                                     2 通道模組（如 CAPAROC E2）的額定電流由<strong>模組正面的實體旋鈕</strong>決定。
                                     旋鈕上除了安培刻度，還有一個 <strong>RC</strong>（Remote Control）位置——

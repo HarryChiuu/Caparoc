@@ -231,6 +231,8 @@ def _format_status(raw: dict | None) -> dict:
             # 型號標示的可調範圍；HTTP 讀不到型號時為 None，前端退回全域 limits
             "nominal_min": (backend.get_module_nominal_range(ch["module"]) or (None, None))[0],
             "nominal_max": (backend.get_module_nominal_range(ch["module"]) or (None, None))[1],
+            # 固定額定型號的安培數；可調型為 None。反灰原因由此區分
+            "nominal_fixed": backend.get_module_fixed_nominal(ch["module"]),
             "warn_80":      ch["warning_80"],
             "overload":     ch["overload"],
             "short_circuit": ch["short_circuit"],
@@ -976,6 +978,10 @@ def _generate_demo_payload() -> dict:
     # 逐模組範圍驗證（輸入框 min/max、超範圍提示）無法檢視。
     _DEMO_RANGES = {1: (1, 4), 2: (2, 10)}
 
+    # 模組 2 另外模擬固定額定型號（如 E1 12-24DC/16A）：--demo 下才看得到
+    # 「不可調」與「旋鈕未轉 RC」兩種反灰文案的差異。
+    _DEMO_FIXED: dict[int, int] = {}
+
     def _rng(module: int, idx: int):
         return _DEMO_RANGES.get(module, (None, None))[idx]
 
@@ -983,43 +989,43 @@ def _generate_demo_payload() -> dict:
         # 模組 1 — 涵蓋所有常見狀態
         {"id": 1, "module": 1, "channel": 1, "on": True,  "current_amps": wave(1.5, 0.30, 20,  0), "nominal_amps": 4.0,
          "nominal_readonly": _ro(1),
-         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1),
+         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1), "nominal_fixed": _DEMO_FIXED.get(1),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # warn_80: 電流超過額定 80%
         {"id": 2, "module": 1, "channel": 2, "on": True,  "current_amps": wave(3.4, 0.20, 25,  5), "nominal_amps": 4.0,
          "nominal_readonly": _ro(1),
-         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1),
+         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1), "nominal_fixed": _DEMO_FIXED.get(1),
          "warn_80": True,  "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # overload: 過載
         {"id": 3, "module": 1, "channel": 3, "on": True,  "current_amps": wave(4.6, 0.10, 18, 10), "nominal_amps": 4.0,
          "nominal_readonly": _ro(1),
-         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1),
+         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1), "nominal_fixed": _DEMO_FIXED.get(1),
          "warn_80": True,  "overload": True,  "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # short_circuit: 短路
         {"id": 4, "module": 1, "channel": 4, "on": True,  "current_amps": 25.5,                    "nominal_amps": 4.0,
          "nominal_readonly": _ro(1),
-         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1),
+         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1), "nominal_fixed": _DEMO_FIXED.get(1),
          "warn_80": True,  "overload": True,  "short_circuit": True,  "hardware_fault": False, "total_shutdown": False},
         # 模組 2 — 更多狀態範例（額定電流為 read-only）
         # hardware_fault: 硬體故障
         {"id": 5, "module": 2, "channel": 1, "on": False, "current_amps": 0.0,                     "nominal_amps": 4.0,
          "nominal_readonly": _ro(2),
-         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1),
+         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1), "nominal_fixed": _DEMO_FIXED.get(2),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": True,  "total_shutdown": False},
         # total_shutdown: 總電流關斷
         {"id": 6, "module": 2, "channel": 2, "on": False, "current_amps": 0.0,                     "nominal_amps": 4.0,
          "nominal_readonly": _ro(2),
-         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1),
+         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1), "nominal_fixed": _DEMO_FIXED.get(2),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": True},
         # 關閉 (正常)
         {"id": 7, "module": 2, "channel": 3, "on": False, "current_amps": 0.0,                     "nominal_amps": 2.0,
          "nominal_readonly": _ro(2),
-         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1),
+         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1), "nominal_fixed": _DEMO_FIXED.get(2),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # 開啟 (正常運行)
         {"id": 8, "module": 2, "channel": 4, "on": True,  "current_amps": wave(1.2, 0.15, 22, 15), "nominal_amps": 4.0,
          "nominal_readonly": _ro(2),
-         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1),
+         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1), "nominal_fixed": _DEMO_FIXED.get(2),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
     ]
     total_current = round(sum(ch["current_amps"] for ch in channels), 2)

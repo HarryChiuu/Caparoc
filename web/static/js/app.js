@@ -846,12 +846,27 @@ createApp({
         // 旋鈕型模組（2 通道）判定。
         // 協定沒有「模組是否為旋鈕型」的欄位，也讀不到旋鈕位置（含 RC），
         // 因此以通道數推定：2 通道 = E2 旋鈕型。用途僅為顯示 RC 說明入口。
+        // 固定額定型號沒有旋鈕，先排除。
         function isModRotary(mod) {
-            return (channelsByModule.value[mod]?.length ?? 0) === 2;
+            return modFixedNominal(mod) == null
+                && (channelsByModule.value[mod]?.length ?? 0) === 2;
         }
 
-        // 手動設定說明視窗開關
+        // 固定額定型號的安培數（如 E1 12-24DC/16A 回 16）；可調型回 null。
+        // 反灰的兩種原因由此區分：不可調 vs 旋鈕未轉 RC。
+        function modFixedNominal(mod) {
+            return channelsByModule.value[mod]?.[0]?.nominal_fixed ?? null;
+        }
+
+        // 手動設定說明視窗開關；helpMod 記錄由哪個模組開啟，
+        // 讓 Modal 依模組型別顯示對應說明（固定型 vs 旋鈕型）
         const showNominalHelp = ref(false);
+        const helpMod = ref(null);
+
+        function openNominalHelp(mod) {
+            helpMod.value = mod;
+            showNominalHelp.value = true;
+        }
 
         // 重新探測額定電流可寫性（使用者轉動 RC 旋鈕後需手動觸發）
         const reprobeBusy = ref(false);
@@ -1282,8 +1297,9 @@ createApp({
             nominalInputs, nominalFeedback, nominalBusy, batchNominal, batchStatus, batchBusy,
             setNominal, setAllNominal,
             batchNominalByMod, batchStatusByMod, batchBusyByMod,
-            setModuleNominal, isModNominalReadOnly, isModRotary, modRange,
-            showNominalHelp, reprobeNominal, reprobeBusy, reprobeStatus,
+            setModuleNominal, isModNominalReadOnly, isModRotary, modRange, modFixedNominal,
+            showNominalHelp, helpMod, openNominalHelp,
+            reprobeNominal, reprobeBusy, reprobeStatus,
             logEntries, logTotal, logPage, logPageSize, logFilter,
             logAutoScroll, logTotalPages,
             fetchLogs, clearLogs, setPageSize,

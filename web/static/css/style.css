@@ -956,6 +956,173 @@ code {
     border-color: var(--accent);
 }
 
+/* 最近連線過的 IP 下拉：自繪而非原生 <select>，因為要同時容納
+   「可自由輸入」「一列顯示 IP + 設備名 + 時間」「單筆刪除」三件事。 */
+.ip-picker {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+}
+
+.conn-form .ip-picker input {
+    width: 100%;
+    /* 讓出右側空間給下拉箭頭，避免長 IP 的游標壓在按鈕底下 */
+    padding-right: 32px;
+}
+
+.ip-picker-toggle {
+    position: absolute;
+    right: 5px;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, transform 0.15s;
+}
+
+.ip-picker-toggle:hover {
+    background: var(--hover);
+    color: var(--text);
+}
+
+.ip-picker.open .ip-picker-toggle {
+    transform: rotate(180deg);
+    color: var(--accent);
+}
+
+.ip-picker-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 30;
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px var(--shadow);
+    max-height: 264px;
+    overflow-y: auto;
+}
+
+.ip-picker-menu li {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: 6px;
+}
+
+.ip-picker-menu li:hover {
+    background: var(--hover);
+}
+
+.ip-picker-item {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 7px 8px;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+/* 全域 button:hover 會塞進主色底，這裡要讓 li:hover 的淡色 highlight 透出來 */
+.ip-picker-item:hover {
+    background: none;
+}
+
+.ip-picker-ip {
+    font-size: 0.92rem;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+.ip-picker-meta,
+.ip-picker-time {
+    font-size: 0.74rem;
+    color: var(--text-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ip-picker-time {
+    flex: none;
+    color: var(--text-dim);
+}
+
+.ip-picker-del {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    margin-right: 4px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-fainter);
+    font-size: 0.72rem;
+    line-height: 1;
+    cursor: pointer;
+    /* 常駐但淡化：藏到 hover 才出現的話，觸控裝置永遠點不到 */
+    opacity: 0.45;
+    transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.ip-picker-menu li:hover .ip-picker-del {
+    opacity: 1;
+}
+
+.ip-picker-del:hover {
+    background: var(--danger-bg);
+    color: #fff;
+}
+
+/* 連線設定頁內的掃描捷徑：與「IP 設定」頁共用同一份掃描狀態，
+   只是把入口搬到最需要它的地方——手邊沒有 IP 可打的時候。 */
+.conn-scan {
+    max-width: 640px;
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-soft);
+}
+
+.conn-scan .action-row {
+    margin-bottom: 10px;
+}
+
+.iface-sel {
+    max-width: 260px;
+    padding: 7px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-inset);
+    color: var(--text);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.iface-sel:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
 /* 多欄表單：靜態 IP / 救援指派共用，避免每欄各佔一整列 */
 .form-grid {
     display: grid;

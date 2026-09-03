@@ -167,6 +167,8 @@ async def lifespan(app: FastAPI):
         if ok:
             _WEB_LOGGER.log(_SYSTEM_LEVEL, f"設備連線成功 ({backend.device_ip})",
                              extra={'log_module': 'WEB'})
+            # 開機自動連上的也算一次成功連線，更新時間戳讓下拉清單排序正確
+            await asyncio.to_thread(_remember_connection)
         else:
             _WEB_LOGGER.warning(f"設備連線失敗 ({backend.device_ip})，可透過連線設定頁手動重試",
                                 extra={'log_module': 'WEB'})
@@ -293,7 +295,8 @@ async def api_connect(ip: str = Query(default=None)):
     if success:
         _WEB_LOGGER.log(_SYSTEM_LEVEL, f"手動連線成功 ({backend.device_ip})",
                          extra={'log_module': 'WEB'})
-        return {"success": True, "ip": backend.device_ip}
+        recent = await asyncio.to_thread(_remember_connection)
+        return {"success": True, "ip": backend.device_ip, "recent": recent}
     _WEB_LOGGER.warning(f"手動連線失敗 ({backend.device_ip})", extra={'log_module': 'WEB'})
     raise HTTPException(status_code=503, detail=f"無法連線至 {backend.device_ip}")
 
@@ -304,6 +307,58 @@ async def api_disconnect():
     await asyncio.to_thread(backend.disconnect)
     _WEB_LOGGER.log(_SYSTEM_LEVEL, f"手動斷線 ({backend.device_ip})", extra={'log_module': 'WEB'})
     return {"success": True}
+
+
+# ==================== 最近連線設備 ====================
+# 清單存在 config.json 的 device.recent（見 src/app_config.py），不是 localStorage：
+# 現場換一台筆電、換瀏覽器或清快取都不該遺失，且打包成 exe 後跟著 config/ 一起走。
+def _remember_connection() -> list[dict]:
+    """
+    把剛連上的設備寫進最近連線清單，並同步 device.default_ip。
+
+    只在**連線成功**後呼叫——連不上的位址進了清單只會變成下次的干擾項。
+    設備識別資訊純粹用來讓使用者認得出哪台是哪台，讀不到就留 None，
+    絕不能因此讓連線流程失敗，故整段包在 try 內。
+
+    同步函式（get_device_info 會做多次 CIP 讀取），呼叫端請包 asyncio.to_thread。
+    """
+    name = serial = None
+    try:
+        identity = (backend.get_device_info() or {}).get("identity") or {}
+        name = identity.get("product_name")
+        sn = identity.get("serial_number")
+        serial = str(sn) if sn is not None else None
+    except Exception as e:
+        _WEB_LOGGER.debug(f"讀取設備識別資訊失敗，最近連線清單僅記錄 IP: {e}",
+                          extra={'log_module': 'WEB'})
+    return app_config.record_connection(backend.device_ip, name, serial)
+
+
+@app.get("/api/connect/recent")
+def api_recent_list():
+    """
+    最近成功連線過的設備，最新在前。連線設定頁的 IP 下拉清單來源。
+
+    **不檢查 is_connected**：這支的用途正是在還沒連線時讓使用者挑一個位址。
+    """
+    if _DEMO_MODE:
+        return {"recent": [
+            {"ip": "192.168.2.111", "name": "CAPAROC-PM-EIP [DEMO]",
+             "serial": "DEMO0001", "last_connected": "2026-01-01T09:30:00"},
+            {"ip": "192.168.2.112", "name": "CAPAROC-PM-EIP [DEMO2]",
+             "serial": "DEMO0002", "last_connected": "2025-12-30T16:05:00"},
+        ]}
+    return {"recent": app_config.recent_devices()}
+
+
+@app.delete("/api/connect/recent/{ip}")
+def api_recent_delete(ip: str):
+    """從最近連線清單移除一筆（設備退場、或位址已改，留著只會誤點）。"""
+    if _DEMO_MODE:
+        return {"success": True, "recent": []}
+    if not is_valid_ip(ip):
+        raise HTTPException(status_code=422, detail=f"「{ip}」不是合法的 IP 格式")
+    return {"success": True, "recent": app_config.forget_device_ip(ip)}
 
 
 @app.get("/api/device/network")

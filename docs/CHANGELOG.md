@@ -2,6 +2,68 @@
 
 ---
 
+## [2026-09-03] 連線設定頁：最近連線過的 IP 下拉 + 頁內網段掃描
+
+> 現場每次要連設備都得手動 key 一次 IP。Web 連線成功後**不會**把 IP 寫回設定檔
+>（只有 CLI 的 `setting [3]` 會），所以連過的位址下次一樣要重打。
+
+### ✨ 減少手動輸入的兩條路（兩者互補，缺一不可）
+
+| 情境 | 解法 |
+|---|---|
+| 連過的設備要再連一次 | 連線設定頁 IP 欄改為**可輸入的下拉**，列出最近成功連線過的設備 |
+| 第一次接觸的設備，手邊沒有 IP | 把既有的**網段掃描**搬一份到連線設定頁，掃到直接一鍵連線 |
+
+歷史清單只解決前者；真正的「零輸入」是後者。掃描 API（`POST /api/ipconfig/discover`）
+早就寫好了，只是入口埋在「IP 設定」頁——這次讓它出現在最需要它的地方，
+兩頁共用同一份掃描狀態，掃過一次兩邊都看得到。
+
+### 🗄️ 清單存後端 `config.json`，**不是** localStorage
+
+`config/config.json` 的 `device.recent`（`src/app_config.py`）。理由：
+
+- 現場換一台筆電、換瀏覽器、清快取都不該讓清單消失——這是**設備資產**，不是瀏覽器偏好。
+- `default_ip` 本來就住在這裡，兩者放同一區塊才不會各記各的。
+- 打包成 exe 後跟著 `config/` 一起走。
+
+行為：
+
+- **只在連線成功後寫入**（`web/app.py` 的 `_remember_connection()`）。
+  打錯的位址不該污染下拉清單——那正是這個功能要省掉的麻煩。
+- 寫入時**一併更新 `default_ip`**，順帶補上「Web 連線後不記得 IP」這個既有缺口。
+- 設備名／序號取自 Identity Object，**整段包在 try 內**：讀不到就留 `null`，
+  絕不能因為一個顯示用的標籤讓連線流程失敗。
+- 同 IP 只留一筆（重連即移到最前，未帶 name 時沿用舊值）；上限 `device.recent_max`（預設 5）。
+- 單筆刪除（`DELETE /api/connect/recent/{ip}`）**刻意不動 `default_ip`**：
+  「這台不想再出現在下拉」與「換開機預設值」是兩件事。
+
+`_sanitize_recent()` 會把使用者手改壞的設定檔（塞字串、缺 `ip`、重複、非法 IP）
+全部吸收掉，API 與前端永遠拿到乾淨清單。
+
+### 🎨 下拉是自繪的，不是原生 `<select>`
+
+要同時容納「可自由輸入」「一列顯示 IP + 設備名 + 相對時間」「單筆刪除」三件事，
+原生 `<select>` 與 `<datalist>` 都做不到。
+
+- ⚠️ **踩到的坑**：全域 `button:hover { background: var(--btn-bg-hover) }` 特異性
+  (0,1,1) 蓋過 `.ip-picker-item` 的 (0,1,0)，hover 時整列會變成藍色按鈕底。
+  補 `.ip-picker-item:hover { background: none }` 才讓 `li:hover` 的淡色 highlight 透出來。
+  深淺色主題都已實測。
+- 刪除鈕常駐但淡化（`opacity: 0.45`），不是藏到 hover 才出現——觸控裝置點不到。
+
+### 📁 異動
+
+| 檔案 | 內容 |
+|---|---|
+| `src/app_config.py` | `device.recent` / `recent_max` 預設值；`record_connection()`、`recent_devices()`、`forget_device_ip()`、`recent_max()`；抽出 `_write_config()`；`_deep_merge()` 補上 list 複製（否則 DEFAULTS 的可變物件會被共用進快取） |
+| `web/app.py` | `_remember_connection()`；`GET/DELETE /api/connect/recent`；`POST /api/connect` 成功時回傳更新後清單；啟動自動連線成功時也記一筆 |
+| `web/templates/index.html` | IP 欄改為 `.ip-picker` 下拉；連線設定頁新增掃描區塊；靜態資源版號 `4.11.0` → `4.12.0` |
+| `web/static/js/app.js` | `recentIps` / `fetchRecent` / `pickRecent` / `forgetRecent` / `relTime`；點選單外收起 |
+| `web/static/css/style.css` | `.ip-picker*`、`.conn-scan`、`.iface-sel` |
+| `config/config.example.json` | 補上 `recent` / `recent_max` 與說明 |
+
+---
+
 ## [2026-09-01] 新增 demo/真實 payload 結構一致性測試
 
 > `web/app.py` 有兩條產生前端 payload 的路徑必須保持結構一致：

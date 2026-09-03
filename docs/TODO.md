@@ -1,6 +1,6 @@
 # CAPAROC 控制器 - 待實作功能清單
 
-更新日期: 2026-08-31
+更新日期: 2026-09-03
 
 ## ✅ 已完成功能
 
@@ -17,6 +17,60 @@
 - [x] **EtherNet/IP List Identity 設備探索**（UDP 廣播，無需管理員）
 - [x] **ARP table fallback 探索**（port 44818 連線測試）
 - [x] **mini DHCP server**（port 67，綁定指定 IP，廣播走子網路廣播）
+
+---
+
+## 🔌 Web 連線設定頁：最近連線 IP 下拉 + 頁內掃描 ✅ 已完成（2026-09-03）
+
+> **起因**：現場每次要連設備都得手動 key 一次 IP。而且 Web 連線成功後**不會**
+> 把 IP 寫回設定檔（只有 CLI 的 `setting [3]` 會），連過的位址下次一樣要重打。
+
+### 兩條路互補，缺一不可
+
+| 情境 | 解法 |
+|---|---|
+| 連過的設備要再連一次 | 連線設定頁 IP 欄改為**可輸入的下拉**，列出最近成功連線過的設備 |
+| 第一次接觸的設備，手邊沒有 IP | 把既有的**網段掃描**搬一份到連線設定頁，掃到直接一鍵連線 |
+
+歷史清單只解決前者。真正的「零輸入」是後者——掃描 API（`POST /api/ipconfig/discover`）
+早就寫好了，只是入口埋在「IP 設定」頁。兩頁共用同一份掃描狀態，掃過一次兩邊都看得到。
+
+### 完成項目
+
+- [x] `src/app_config.py`：`device.recent` / `device.recent_max`（預設 5）
+  - [x] `record_connection(ip, name, serial)`：移到最前 + 更新時間 + 同步 `default_ip`
+  - [x] `recent_devices()` / `forget_device_ip(ip)` / `recent_max()`
+  - [x] `_sanitize_recent()`：吸收手改壞的設定檔（塞字串、缺 `ip`、重複、非法 IP）
+  - [x] 抽出 `_write_config()`，三條寫入路徑共用 read-modify-write
+- [x] `web/app.py`：`_remember_connection()`、`GET/DELETE /api/connect/recent`
+- [x] 前端：`.ip-picker` 自繪下拉（IP + 設備名/序號 + 相對時間 + 單筆刪除）、頁內掃描區塊
+- [x] `config/config.example.json`、`WEB_UI_FEATURE_REFERENCE.md`、`CHANGELOG.md`
+
+### 📌 設計決策：清單存後端 `config.json`，**不是** localStorage
+
+- 現場換一台筆電、換瀏覽器、清快取都不該讓清單消失——這是**設備資產**，不是瀏覽器偏好
+- `default_ip` 本來就住在 `device` 區塊，兩者放一起才不會各記各的
+- 打包成 exe 後跟著 `config/` 一起走
+
+### ⚠️ 刻意的行為（改動前先讀）
+
+| 行為 | 為什麼 |
+|---|---|
+| **只在連線成功後**寫入清單 | 打錯的位址進了清單只會變成下次的干擾項——那正是這功能要省掉的麻煩 |
+| 寫入時**一併更新 `default_ip`** | 順帶補掉「Web 連線後不記得 IP」這個既有缺口 |
+| 設備名／序號讀取**整段包在 try 內** | 那只是顯示用標籤，不能因為它讓連線流程失敗。讀不到就留 `null` |
+| `DELETE` **不動 `default_ip`** | 「這台不想再出現在下拉」與「換開機預設值」是兩件事 |
+| 選取只填入、**不自動連線** | 已連線時換 IP 需先斷線，靜靜幫使用者做會很意外 |
+| 刪除鈕常駐但淡化（`opacity: 0.45`） | 藏到 hover 才出現的話，觸控裝置永遠點不到 |
+
+### ⚠️ 踩到的坑：全域 `button:hover` 蓋掉下拉項目
+
+`style.css` 的 `button:hover { background: var(--btn-bg-hover) }` 特異性 (0,1,1)
+蓋過 `.ip-picker-item` 的 (0,1,0)，hover 時整列會變成藍色按鈕底、字幾乎看不見。
+補 `.ip-picker-item:hover { background: none }` 才讓 `li:hover` 的淡色 highlight 透出來。
+
+> **通則**：這份 CSS 有 `button`／`.btn` 的**裸元素**規則，任何「長得不像按鈕的
+> `<button>`」（下拉項目、圖示鈕、卡片）都要記得覆蓋 `:hover`，光蓋 base 狀態不夠。
 
 ---
 
@@ -251,7 +305,7 @@
 | 8 | `app.js` 的單一巨型 `setup()` 會從 751 行漲到約 870 行，`return {}` 再多約 17 個鍵 | 全案最大長期債，本次讓它更肥 | **不在本次償還**（引入 build step / SFC 是另一層級改動）。折衷：IP 設定的 state 與函式集中在**單一 banner 註解區塊**、`return {}` 也集中成一個群組，讓日後抽 composable 時是「一刀切」而非大海撈針 |
 | 9 | `/api/device/network`（`get_network_info`，MAC/hostname）與 `/api/ipconfig/current`（`read_device_network_config`，0xF5 Attr1/3/5 含 Static/DHCP 模式）**語意重疊** | 日後易搞混、或在錯的端點加欄位 | 不合併（新頁面**必須**有 `config_control`，舊端點沒有）。改為兩者 docstring 互相指路 + `WEB_UI_FEATURE_REFERENCE.md` 表格明列差異 |
 | 10 | 每個新端點都要手寫 `_DEMO_MODE` 分支 | 漏寫 → `--demo` 在該頁靜默壞掉，且無測試會抓到 | ~~既有慣例的固定稅，無法迴避。列入驗證清單逐項點過~~ **已部分償還（2026-09-01）**：新增 `tests/test_demo_payload.py`，自動比對 demo 與真實 payload 的欄位集合與型別，漏寫 status 欄位會被擋下（已用注入迴歸驗證）。⚠️ 僅涵蓋 **status payload**；其他端點的 `_DEMO_MODE` 分支仍是人工把關 |
-| 11 | `?v=` 版號在 `index.html:8` 與 `:553` **兩處手動更新** | 漏改 → 使用者拿到舊 JS，回報「新功能沒出現」，除錯成本高 | 本次照舊手動改。未來可改由 `/` 路由注入單一版號常數——但那要把 `FileResponse` 換成模板渲染，超出本次範圍 |
+| 11 | `?v=` 版號在 `index.html:8` 與 `:553` **兩處手動更新** | 漏改 → 使用者拿到舊 JS，回報「新功能沒出現」，除錯成本高 | 本次照舊手動改。未來可改由 `/` 路由注入單一版號常數——但那要把 `FileResponse` 換成模板渲染，超出本次範圍。**2026-09-03 又手動付了一次**（`4.11.0` → `4.12.0`）：這筆債每次動前端都要繳，且**沒有任何機制會提醒**——漏繳的症狀是「使用者說新功能沒出現」，最難查 |
 
 ---
 

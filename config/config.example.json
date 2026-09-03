@@ -2,8 +2,10 @@
     "_comment": "CAPAROC 統一設定檔範本。複製為 config.json 後編輯。所有鍵皆可省略，省略者取 src/app_config.py 的 DEFAULTS。",
 
     "device": {
-        "_comment": "啟動時嘗試連線的設備 IP。CLI 的 setting [3] 與 Web 連線設定頁會寫回這裡。",
-        "default_ip": "192.168.2.111"
+        "_comment": "default_ip 為啟動時嘗試連線的設備 IP，CLI 的 setting [3] 與 Web 連線設定頁會寫回這裡。recent 由程式自動維護（每次連線成功後更新），是 Web 連線設定頁 IP 下拉清單的來源，最新在前，最多留 recent_max 筆；平常不需手動編輯。",
+        "default_ip": "192.168.2.111",
+        "recent": [],
+        "recent_max": 5
     },
 
     "web": {

@@ -12,7 +12,7 @@
                 'data-theme', localStorage.getItem('caparoc_theme') || 'dark');
         } catch (e) { }
     </script>
-    <link rel="stylesheet" href="/static/css/style.css?v=4.11.0" />
+    <link rel="stylesheet" href="/static/css/style.css?v=4.12.0" />
 </head>
 
 <body>
@@ -810,7 +810,28 @@
                         <div class="conn-form-block">
                             <label class="field-label">設備 IP 位址</label>
                             <div class="conn-form">
-                                <input v-model="ipInput" placeholder="192.168.50.111" @keyup.enter="doConnect" />
+                                <!-- 可自由輸入的下拉：歷史清單只是捷徑，永遠保留手動打字 -->
+                                <div class="ip-picker" :class="{ open: ipPickerOpen }">
+                                    <input v-model="ipInput" placeholder="192.168.50.111"
+                                        @keyup.enter="doConnect" @keyup.esc="ipPickerOpen = false" />
+                                    <button class="ip-picker-toggle" v-if="recentIps.length"
+                                        @click="ipPickerOpen = !ipPickerOpen"
+                                        :title="'最近連線過的 ' + recentIps.length + ' 台設備'">▾</button>
+                                    <ul class="ip-picker-menu" v-if="ipPickerOpen && recentIps.length">
+                                        <li v-for="d in recentIps" :key="d.ip">
+                                            <button class="ip-picker-item" @click="pickRecent(d.ip)">
+                                                <span class="ip-picker-ip">{{ d.ip }}</span>
+                                                <span class="ip-picker-meta">
+                                                    {{ d.name || '—' }}<template v-if="d.serial"> · S/N {{ d.serial
+                                                        }}</template>
+                                                </span>
+                                            </button>
+                                            <span class="ip-picker-time">{{ relTime(d.last_connected) }}</span>
+                                            <button class="ip-picker-del" @click.stop="forgetRecent(d.ip)"
+                                                title="從清單移除（不影響設備）">✕</button>
+                                        </li>
+                                    </ul>
+                                </div>
                                 <button class="btn" v-if="!state.connected" @click="doConnect" :disabled="connecting">{{
                                     connecting ? '連線中...' : '連線' }}</button>
                                 <button class="btn btn-danger" v-else @click="doDisconnect">斷線</button>
@@ -819,6 +840,50 @@
                             <p class="conn-status-text" v-if="state.connected">
                                 ✅ 已連線至 {{ state.device_ip }}，{{ state.module_count }} 個模組
                             </p>
+                        </div>
+
+                        <!-- 找不到 IP 時的出路：直接在本頁掃描，不必先跑去「IP 設定」頁。
+                             狀態與該頁共用，掃過一次兩邊都看得到結果。 -->
+                        <div class="conn-scan">
+                            <div class="action-row">
+                                <button class="btn btn-ghost" @click="scanDevices" :disabled="ipScanBusy">
+                                    {{ ipScanBusy ? '掃描中…' : '🔍 掃描網段找設備' }}
+                                </button>
+                                <select v-model="ipIfaceSel" class="iface-sel" title="多網卡環境請指定設備所在的網卡">
+                                    <option value="">全部網卡</option>
+                                    <option v-for="itf in ipIfaces" :key="itf.ip" :value="itf.ip">
+                                        {{ itf.ip }} — {{ itf.description }}
+                                    </option>
+                                </select>
+                                <span class="feedback-msg err" v-if="ipScanError">{{ ipScanError }}</span>
+                            </div>
+                            <template v-if="ipScanResult">
+                                <table class="net-info-table data-table" v-if="ipScanResult.devices.length">
+                                    <thead>
+                                        <tr>
+                                            <th>IP 位址</th>
+                                            <th>名稱 / S/N</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="d in ipScanResult.devices" :key="d.ip">
+                                            <td>{{ d.ip }}</td>
+                                            <td>
+                                                {{ d.name || '—' }}
+                                                <span v-if="d.serial">（S/N: {{ d.serial }}）</span>
+                                            </td>
+                                            <td>
+                                                <button class="btn btn-sm" @click="connectToFound(d.ip)"
+                                                    :disabled="connecting || state.connected">連線</button>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                                <p class="hint-text" v-else>
+                                    未發現設備。請確認設備已上電、與本機同網段；多網卡環境請指定正確的掃描網卡。
+                                </p>
+                            </template>
                         </div>
                     </section>
                     <!-- 設備網路資訊 -->
@@ -1137,7 +1202,7 @@
     <script src="/static/vendor/hammer.min.js?v=2.0.8"></script>
     <script src="/static/vendor/chartjs-plugin-zoom.min.js?v=2.2.0"></script>
     <script src="/static/vendor/vue.global.prod.js?v=3.5.42"></script>
-    <script src="/static/js/app.js?v=4.11.0"></script>
+    <script src="/static/js/app.js?v=4.12.0"></script>
 </body>
 
 </html>

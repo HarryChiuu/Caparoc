@@ -24,10 +24,14 @@ CAPAROC 統一設定載入器
     port = app_config.get("web", "port")
     log  = app_config.section("logging")        # 整個區塊（已合併預設值）
     app_config.save_device_ip("192.168.50.222")
+    app_config.record_connection("192.168.50.222", name="CAPAROC-PM-EIP")
+    hist = app_config.recent_devices()          # 最近連線過的設備，最新在前
 """
 
+import ipaddress
 import json
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 # ─── 路徑 ────────────────────────────────────────────────────────────────────
@@ -49,6 +53,13 @@ DEFAULTS: dict = {
     "device": {
         # 啟動時嘗試連線的 IP。CLI 的 `setting [3]` 與 Web 連線設定頁會寫回這裡。
         "default_ip": "192.168.2.111",
+        # 最近**成功**連線過的設備，最新在前。Web 連線設定頁的 IP 下拉清單來源。
+        # 每筆 {"ip", "name", "serial", "last_connected"}；後三者可為 null。
+        # 放伺服器端而非 localStorage：現場換一台筆電或清瀏覽器快取就不該遺失，
+        # 且打包成 exe 後這份清單跟著 config/ 一起走。
+        "recent": [],
+        # recent 保留筆數上限，超出淘汰最舊的一筆。
+        "recent_max": 5,
     },
     "web": {
         # 預設 8001（避開 NVIDIA Overlay 間歇佔用的 8000）。
@@ -95,7 +106,14 @@ def _deep_merge(base: dict, override: dict) -> dict:
         elif key in override:
             out[key] = override[key]
         else:
-            out[key] = dict(val) if isinstance(val, dict) else val
+            # list 也要複製：DEFAULTS 的可變物件若被共用進快取，
+            # 任何一次就地修改都會污染預設值（device.recent 就是 list）。
+            if isinstance(val, dict):
+                out[key] = dict(val)
+            elif isinstance(val, list):
+                out[key] = list(val)
+            else:
+                out[key] = val
     # 使用者自行新增、不在 DEFAULTS 中的鍵一併保留（例如手動加的實驗性設定）
     for key, val in override.items():
         if key not in out:
@@ -114,6 +132,59 @@ def _read_json(path: Path) -> dict:
     except Exception as e:
         print(f"[app_config] 無法讀取 {path.name}: {e}，改用預設值")
         return {}
+
+
+def _write_config(data: dict) -> bool:
+    """
+    把完整設定 dict 寫回 config.json 並重新載入快取。
+
+    所有寫入路徑（save_device_ip / record_connection / forget_device_ip）都走這裡，
+    避免各自複製一份 mkdir + dump + reload 的流程。
+    """
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+        load(force_reload=True)
+        return True
+    except Exception as e:
+        print(f"  ⚠️  無法寫入設定檔: {e}")
+        return False
+
+
+def _is_ipv4(value: str) -> bool:
+    """IPv4 格式檢查。本模組不得 import 專案模組，故不重用 caparoc_ip_core.is_valid_ip。"""
+    try:
+        return isinstance(ipaddress.ip_address(value), ipaddress.IPv4Address)
+    except ValueError:
+        return False
+
+
+def _sanitize_recent(raw) -> list[dict]:
+    """
+    把設定檔中的 device.recent 正規化成 [{ip, name, serial, last_connected}]。
+
+    使用者手改設定檔改壞（塞成字串、缺 ip、同一台重複）都在這裡吸收掉，
+    讓 API 與前端永遠拿到乾淨、無重複、順序即為新舊的清單。
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        ip = str(item.get("ip", "")).strip()
+        if not _is_ipv4(ip) or ip in seen:
+            continue
+        seen.add(ip)
+        out.append({
+            "ip": ip,
+            "name": item.get("name") or None,
+            "serial": item.get("serial") or None,
+            "last_connected": item.get("last_connected") or None,
+        })
+    return out
 
 
 def _migrate_legacy() -> dict:
@@ -202,14 +273,71 @@ def save_device_ip(ip: str) -> bool:
     走 read-modify-write 並**保留檔案中其他所有區塊**——合併設定檔後，
     直接覆寫整個檔案會洗掉使用者的 logging/web 設定。
     """
+    data = _read_json(CONFIG_PATH)
+    data.setdefault("device", {})["default_ip"] = ip
+    return _write_config(data)
+
+
+def recent_max() -> int:
+    """recent 清單保留筆數。夾在 1~50 之間，避免設定檔填 0 或天文數字。"""
     try:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        data = _read_json(CONFIG_PATH)
-        data.setdefault("device", {})["default_ip"] = ip
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-        load(force_reload=True)
-        return True
-    except Exception as e:
-        print(f"  ⚠️  無法寫入設定檔: {e}")
-        return False
+        n = int(section("device").get("recent_max", 5))
+    except (TypeError, ValueError):
+        n = 5
+    return max(1, min(n, 50))
+
+
+def recent_devices() -> list[dict]:
+    """最近成功連線過的設備，最新在前。清單已正規化，可直接餵給 API。"""
+    return _sanitize_recent(section("device").get("recent"))
+
+
+def record_connection(ip: str, name: str | None = None,
+                      serial: str | None = None) -> list[dict]:
+    """
+    記錄一次**成功**的連線：把該 IP 移到清單最前、更新時間，並同步 default_ip。
+
+    只在連線成功後呼叫——打錯的位址不該污染下拉清單，那正是這個功能要省掉的麻煩。
+    同一 IP 永遠只留一筆；未帶 name/serial 時沿用該筆舊值（讀不到識別資訊的
+    連線路徑不會把既有的設備名洗成 null）。
+
+    Returns:
+        更新後的清單（寫檔失敗時為記憶體中的舊清單，呼叫端不必特別處理）。
+    """
+    if not _is_ipv4(ip):
+        return recent_devices()
+
+    data = _read_json(CONFIG_PATH)
+    device = data.setdefault("device", {})
+    entries = _sanitize_recent(device.get("recent"))
+    prev = next((e for e in entries if e["ip"] == ip), {})
+
+    entries = [e for e in entries if e["ip"] != ip]
+    entries.insert(0, {
+        "ip": ip,
+        "name": name or prev.get("name"),
+        "serial": serial or prev.get("serial"),
+        # 本地時間、秒精度。前端只拿來顯示「幾分鐘前 / 昨天 14:22」，不做時區換算。
+        "last_connected": datetime.now().isoformat(timespec="seconds"),
+    })
+    device["recent"] = entries[:recent_max()]
+    device["default_ip"] = ip
+    _write_config(data)
+    return recent_devices()
+
+
+def forget_device_ip(ip: str) -> list[dict]:
+    """
+    從最近連線清單移除一筆。
+
+    **不動 default_ip**：那是下次開機要連的位址，與「這台不想再出現在下拉清單」
+    是兩件事；使用者若要換預設值，連線一次新設備即可。
+    """
+    data = _read_json(CONFIG_PATH)
+    device = data.setdefault("device", {})
+    entries = _sanitize_recent(device.get("recent"))
+    remaining = [e for e in entries if e["ip"] != ip]
+    if len(remaining) != len(entries):
+        device["recent"] = remaining
+        _write_config(data)
+    return recent_devices()

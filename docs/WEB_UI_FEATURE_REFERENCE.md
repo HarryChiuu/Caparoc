@@ -322,7 +322,7 @@ set_nominal_current(1, 2, 4, verify=True)   # 模組1 通道2 設為 4A
 | 通道設定 | `channel-settings` | `set_nominal_current()` / `POST /api/channels/nominal` | 額定電流表格（依模組分區，可編輯） |
 | 系統日誌 | `logs` | `GET /api/logs` | 等級篩選、顏色編碼、分頁、自動更新 |
 | 系統狀態 | `system-status` | `GET /api/device/info`、`GET /api/device/webif` | 上半：Identity Object + Class 0x0F（CIP）；下半三個「原廠介面」面板：硬體與韌體、LED 狀態、故障事件記憶（HTTP） |
-| 連線設定 | `connection` | `GET /api/device/network` / `POST /api/connect` | IP 連線表單 + 網路資訊面板（MAC / hostname） |
+| 連線設定 | `connection` | `GET /api/device/network`、`POST /api/connect`、`GET/DELETE /api/connect/recent` | IP 連線表單（可下拉最近連線過的 IP）+ 頁內網段掃描 + 網路資訊面板（MAC / hostname） |
 | IP 設定 | `ip-config` | `GET /api/ipconfig/{current,interfaces}`、`POST /api/ipconfig/{discover,static,dhcp,detect-mac,assign}` | 網卡選擇 + 網段搜尋（含 MAC）、讀取/變更設備 IP、切換 DHCP、DHCP 失聯救援 |
 
 > ⚠️ **`/api/device/network` 與 `/api/ipconfig/current` 容易混淆**：
@@ -348,6 +348,20 @@ set_nominal_current(1, 2, 4, verify=True)   # 模組1 通道2 設為 4A
 | `/api/device/network` | GET | 讀取設備網路資訊（IP / MAC / 閘道 / 子網路遮罩） | `get_network_info()` |
 | `/api/device/info` | GET | 讀取設備識別與全域設定（廠商 ID、CIP 版本、序號等） | `get_device_info()` |
 | `/api/history` | GET | 讀取最近 N 分鐘歷史資料，最多 30 分鐘 | `_history_buffer` |
+| `/api/connect/recent` | GET | 最近**成功**連線過的設備（最新在前），連線設定頁 IP 下拉來源 | `app_config.recent_devices()` |
+| `/api/connect/recent/{ip}` | DELETE | 從最近連線清單移除一筆（不影響 `default_ip`） | `app_config.forget_device_ip()` |
+
+#### 最近連線清單
+
+清單存在 **`config/config.json` 的 `device.recent`**，不是 localStorage——現場換一台
+筆電、換瀏覽器或清快取都不該讓它消失，且打包成 exe 後跟著 `config/` 一起走。
+
+- **只在連線成功後寫入**（`_remember_connection()`）：連不上的位址進了清單只會變成下次的干擾項。
+- 寫入時**一併更新 `device.default_ip`**，下次開機自動連最後一台連上的設備。
+- 每筆 `{ip, name, serial, last_connected}`；`name`/`serial` 取自 Identity Object，
+  讀不到就留 `null`，**絕不讓它影響連線流程**。
+- 同 IP 只留一筆（重連即移到最前）；上限 `device.recent_max`（預設 5）。
+- `DELETE` 刻意**不動 `default_ip`**：「這台不想再出現在下拉」與「換開機預設值」是兩件事。
 
 #### `GET /api/device/network` 回應範例
 
@@ -562,10 +576,31 @@ CIPDriver.__exit__()           ← 連線關閉
 ## 5. 設定與 Log
 
 ### 5.1 IP 設定檔
-- 路徑：`config/device_config.json`
-- 格式：`{"default_ip": "192.168.2.111"}`
-- 讀取：`_load_default_ip()`
-- 寫入：`_save_default_ip(ip)`
+- 路徑：`config/config.json` 的 `device` 區塊（舊的 `config/device_config.json` 已於
+  設定檔合併時遷移，見 `src/app_config.py`）
+- 格式：
+
+  ```json
+  "device": {
+      "default_ip": "192.168.2.111",
+      "recent": [
+          {"ip": "192.168.50.111", "name": "CAPAROC-PM-EIP",
+           "serial": "305419896", "last_connected": "2026-09-03T11:42:10"}
+      ],
+      "recent_max": 5
+  }
+  ```
+
+| 鍵 | 誰寫 | 說明 |
+|---|---|---|
+| `default_ip` | CLI `setting [3]`、Web 連線成功時 | 開機自動連線的位址 |
+| `recent` | **程式自動維護**，連線成功時更新 | Web 連線設定頁 IP 下拉清單，最新在前 |
+| `recent_max` | 手動 | `recent` 保留筆數，讀取時夾在 1~50 |
+
+- 讀取：`app_config.get("device", "default_ip")` / `app_config.recent_devices()`
+- 寫入：`app_config.save_device_ip(ip)` / `app_config.record_connection(ip, name, serial)`
+  / `app_config.forget_device_ip(ip)`
+- 所有寫入都走 read-modify-write（`_write_config()`），**不會洗掉 logging/web 等其他區塊**
 
 ### 5.2 Log 系統
 - 管理：`logging_manager.py`（`setup()` 初始化）

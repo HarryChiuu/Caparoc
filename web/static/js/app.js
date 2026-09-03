@@ -196,8 +196,11 @@ createApp({
             const qs = ip ? `?ip=${encodeURIComponent(ip)}` : '';
             try {
                 const r = await fetch(`/api/connect${qs}`, { method: 'POST' });
-                if (!r.ok) {
-                    const body = await r.json();
+                const body = await r.json().catch(() => ({}));
+                if (r.ok) {
+                    // 後端連線成功時順手回傳更新後的清單，省一次 round trip
+                    if (body.recent) recentIps.value = body.recent;
+                } else {
                     state.error = body.detail ?? '連線失敗';
                 }
             } catch (e) {
@@ -209,6 +212,64 @@ createApp({
 
         async function doDisconnect() {
             await fetch('/api/disconnect', { method: 'POST' });
+        }
+
+        // -- 最近連線過的設備（來源是後端 config.json，不是 localStorage）--
+        // 放伺服器端的理由：現場換一台筆電、換瀏覽器或清快取都不該讓清單消失。
+        const recentIps = ref([]);
+        const ipPickerOpen = ref(false);
+
+        async function fetchRecent() {
+            try {
+                const r = await fetch('/api/connect/recent');
+                if (!r.ok) return;
+                const body = await r.json();
+                recentIps.value = body.recent ?? [];
+                // 未連線時預填最近一次的位址，開頁即可直接按「連線」
+                if (!ipInput.value && recentIps.value.length)
+                    ipInput.value = recentIps.value[0].ip;
+            } catch (_) { }
+        }
+
+        function pickRecent(ip) {
+            ipInput.value = ip;
+            ipPickerOpen.value = false;
+            // 刻意不自動連線：已連線時換 IP 需先斷線，靜靜幫使用者做會很意外
+        }
+
+        async function forgetRecent(ip) {
+            try {
+                const r = await fetch('/api/connect/recent/' + encodeURIComponent(ip),
+                                      { method: 'DELETE' });
+                const body = await r.json().catch(() => ({}));
+                if (r.ok) recentIps.value = body.recent ?? [];
+            } catch (_) { }
+        }
+
+        // ISO 時間 → 「剛剛 / 12 分鐘前 / 今天 14:22 / 昨天 14:22 / 8/28」
+        // 後端寫的是不帶時區的本地時間，瀏覽器會以本地時區解讀，兩邊同一台機器故一致。
+        function relTime(iso) {
+            if (!iso) return '';
+            const t = new Date(iso);
+            if (isNaN(t.getTime())) return '';
+            const now = new Date();
+            const mins = Math.floor((now - t) / 60000);
+            if (mins < 1) return '剛剛';
+            if (mins < 60) return mins + ' 分鐘前';
+            const hhmm = String(t.getHours()).padStart(2, '0') + ':'
+                       + String(t.getMinutes()).padStart(2, '0');
+            const days = Math.round(
+                (new Date(now.getFullYear(), now.getMonth(), now.getDate())
+                 - new Date(t.getFullYear(), t.getMonth(), t.getDate())) / 86400000);
+            if (days <= 0) return '今天 ' + hhmm;
+            if (days === 1) return '昨天 ' + hhmm;
+            return (t.getMonth() + 1) + '/' + t.getDate();
+        }
+
+        // 點選單以外的任何地方就收起（下拉是自繪的，沒有原生 select 的行為）
+        function _closeIpPicker(e) {
+            if (!e.target.closest || !e.target.closest('.ip-picker'))
+                ipPickerOpen.value = false;
         }
 
         const networkInfoRefreshing = ref(false);
@@ -1080,8 +1141,11 @@ createApp({
                 if (state.connected) refreshDeviceInfo();
                 refreshWebifInfo();
             }
-            // 進入連線設定頁且已連線 → 自動重新讀取網路資訊
-            if (page === 'connection' && state.connected) refreshNetworkInfo();
+            // 進入連線設定頁：網卡列舉供頁內掃描用（不需連線）；已連線則刷新網路資訊
+            if (page === 'connection') {
+                if (!ipIfaces.value.length) fetchIfaces();
+                if (state.connected) refreshNetworkInfo();
+            }
             // 進入 IP 設定頁且已連線 → 自動讀取目前網路設定
             if (page === 'ip-config') {
                 if (!ipIfaces.value.length) fetchIfaces();   // 網卡列舉不需連線
@@ -1115,12 +1179,15 @@ createApp({
 
         onMounted(() => {
             fetchLimits();      // 設定值與連線無關，不等 WebSocket
+            fetchRecent();      // 同上：未連線時更需要這份清單
             connectWs();
+            document.addEventListener('click', _closeIpPicker);
         });
         onUnmounted(() => {
             clearTimeout(wsRetryTimer);
             if (ws) ws.close();
             clearInterval(_logTimer);
+            document.removeEventListener('click', _closeIpPicker);
             _destroyCharts();
         });
 
@@ -1132,6 +1199,7 @@ createApp({
             fmt, barPct, cardClass, barClass,
             connecting,
             doConnect, doDisconnect, toggleCh, channelToggling, channelToggleError,
+            recentIps, ipPickerOpen, pickRecent, forgetRecent, relTime,
             networkInfo, deviceInfo, deviceInfoRefreshing, networkInfoRefreshing,
             refreshDeviceInfo, refreshNetworkInfo,
             webifInfo, webifInfoRefreshing, webifUnavailable, webifHasFaults, refreshWebifInfo,

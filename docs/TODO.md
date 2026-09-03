@@ -789,6 +789,63 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
+##### 4.3.1-audit 設定鍵生效範圍稽核（2026-09-03）
+
+> 起因：使用者把 `retention_days` 改成 10，問「程式一啟動就會刪舊 log 嗎」。
+> 逐鍵追蹤呼叫點後發現**兩個鍵是死設定**，另有一個鍵只在特定啟動方式下生效。
+> 以下為實測結果（把 config 換成可辨識的測試值實跑一遍，非只讀碼）。
+
+**實測方式**：暫時寫入 `default_ip=10.99.99.99` / `port=8765` / `ws_push_interval=3.5`
+/ `ws_idle_shutdown=99` / `log_level=DEBUG` / `log_dir=logs_probe` / `retention_days=10`
+/ `nominal_current=3~7`，啟動後檢查各常數與端點回應，事後還原。
+
+| 鍵 | 實測結果 | 生效 |
+|---|---|---|
+| `device.default_ip` | 解析出 `10.99.99.99` | ✅ 重啟後 |
+| `web.port` | 伺服器實際綁在 8765 | ⚠️ **僅限 `python web/app.py`**（見下） |
+| `web.ws_push_interval` | 解析 3.5 | ✅ 重啟後 |
+| `web.ws_idle_shutdown` | 解析 99.0 | ✅ 重啟後 |
+| `nominal_current.min/max` | backend 常數 =(3,7)、`/api/config/limits` 回 `min:3,max:7` | ✅ 重啟後 |
+| `logging.log_level` | `caparoc` logger level = DEBUG | ✅ 重啟後 |
+| `logging.log_dir` | 真的建立 `logs_probe/` 並寫入當日檔 | ✅ 重啟後 |
+| `logging.retention_days` | 設 10，`logs/` 內 25 個檔（最舊 2026-05-25，遠超 10 天）**一個都沒刪** | ❌ **無效** |
+| `logging.remote.*` | `RemoteHandler.emit()` 內容是 `pass` | ❌ **無效** |
+
+**所有鍵都是啟動時讀入 module-level 常數，沒有熱重載**——改完必須重啟。
+
+###### 🔴 死設定 1：`logging.retention_days`
+
+`cleanup_old_logs()`（`logging_manager.py:247`）**全 repo 沒有任何呼叫者**——
+不在啟動流程、沒有排程器、CLI 與 web 都沒接。docstring 寫「手動呼叫或由排程觸發」，
+但兩者都不存在。功能寫好了但沒接上觸發點，與 `RemoteHandler` 同屬**預留骨架**。
+
+⚠️ 附帶缺陷：`cleanup_old_logs()` 用 `Path(self.config['log_dir'])` 直接建路徑，
+**沒有做相對轉絕對**（`_setup_logger():201-204` 有做）。若日後接上，從不同工作目錄
+啟動時會清錯資料夾——接線時必須一併修。
+
+- [ ] **決策點**：三選一
+  - (a) **接上去**（約 15 分鐘）：`web/app.py` lifespan 啟動段呼叫，並修上述 `log_dir` 缺陷
+  - (b) **標記為未實作**：在 `config.example.json` 的 `_comment` 註明「尚未接上，設定無效」，
+        避免下次又被誤設。成本 2 分鐘，但功能仍缺
+  - (c) 維持現狀（不建議——使用者已經踩過一次）
+
+###### 🔴 死設定 2：`logging.remote.*`
+
+`RemoteHandler.emit()` 是 `pass` + 一段註解範例。`enabled: true` 也不會推送任何東西。
+五個子鍵（`url` / `token` / `batch_size` / `flush_interval_sec` / `type`）全部無作用。
+
+- [ ] 同樣需要在 `config.example.json` 註明「未實作」，或索性從範本移除直到真的要做
+
+###### 🟡 `web.port` 只在直接執行時生效
+
+`_resolve_port()` 定義在 `if __name__ == "__main__":` 之前但**只在該區塊內被呼叫**。
+用 `uvicorn web.app:app --port N` 啟動時整個函式不會執行，`config.json` 的 `web.port`
+被完全忽略。⚠️ README 兩種啟動方式都有寫，容易誤會。
+
+- [ ] 至少在 `config.example.json` 與 README 註明「僅 `python web/app.py` 適用」
+
+---
+
 ##### 4.3.2 通道設定頁按模組分區顯示 ✅ **已完成（2026-07-23）**
 
 > **目的**：與儀表板「通道控制」區塊一致，將目前單一大表格改為依模組分區，方便混合模組（2/4 通道）的額定電流設定
@@ -1193,14 +1250,34 @@ LED 顏色與面板實況相符、CIP 斷線狀態下此頁仍讀得到（驗證
 **問題**：目前各模組用 `Path(__file__).parent` 定位目錄，打包後 `__file__` 指向暫存解壓路徑（`sys._MEIPASS`），  
 config 和 logs 必須在 exe 旁邊（使用者可編輯），不能被打包進去。
 
+### 現況盤點（2026-09-03 確認）
+
+**打包相容性目前是零**——全專案搜尋 `sys._MEIPASS` / `sys.frozen` **無任何結果**，
+`src/paths.py` 也不存在。以下是打包後會實際壞掉的位置（已逐一確認）：
+
+| 檔案 | 目前寫法 | 打包後的後果 | 嚴重度 |
+|---|---|---|---|
+| `src/app_config.py:36` | `_ROOT_DIR = Path(__file__).resolve().parent.parent` | config 指向 PyInstaller 暫存解壓目錄。**使用者在 exe 旁邊編輯 `config.json` 完全不會被讀到**，且每次啟動都是全新解壓目錄 → 設定形同無法修改 | 🔴 最高 |
+| `src/logging_manager.py:204` | `log_dir = Path(__file__).parent.parent / log_dir` | log 寫進暫存解壓目錄，**程式一關就隨目錄消失**。現場出問題時沒有任何記錄可查 | 🔴 高 |
+| `src/caparoc_backend.py:832` | `_PROBE_CACHE_PATH = Path(__file__).resolve().parent.parent / "config" / ...` | 額定電流探測快取每次啟動都落在新的暫存目錄 → **快取永遠不命中**。而探測會短暫改寫設備的額定電流再還原，等於每次連線都對真實設備做一輪寫入 | 🟡 中（有副作用） |
+| `web/app.py:39` | `_WEB_DIR = Path(__file__).parent` | templates / static 需改讀 `sys._MEIPASS`（這兩者**應該**打包進去，與 config/logs 相反） | 🟡 中 |
+
+**關鍵區分**（設計 `paths.py` 時必須分清楚，兩者方向相反）：
+- **內嵌資源**（跟著 exe 走，唯讀）：`web/templates`、`web/static`（含 `vendor/`）→ `sys._MEIPASS`
+- **外部資料**（放在 exe 旁邊，使用者可讀寫）：`config/`、`logs/` → `Path(sys.executable).parent`
+
 **工作項目**：
-- [ ] 建立 `src/paths.py`：統一定義 `ROOT_DIR` / `CONFIG_DIR` / `LOG_DIR` / `WEB_DIR`
+- [ ] 建立 `src/paths.py`：統一定義 `ROOT_DIR` / `CONFIG_DIR` / `LOG_DIR` / `WEB_DIR` / `RESOURCE_DIR`
   - 開發模式：`Path(__file__).resolve().parent.parent`
-  - Frozen 模式：`Path(sys.executable).parent`（exe 同層）
-  - 內嵌資源：`Path(sys._MEIPASS)` / `"web"`（templates + static）
-- [ ] `web/app.py`：`_WEB_DIR`、`_ROOT_DIR` 改為引用 `paths.py`
-- [ ] `src/logging_manager.py`：log 目錄改為引用 `paths.py`
-- [ ] `src/caparoc_backend.py` / `caparoc_controller.py`：config 路徑改為引用 `paths.py`
+  - Frozen 外部資料：`Path(sys.executable).parent`（exe 同層）
+  - Frozen 內嵌資源：`Path(sys._MEIPASS)`
+- [ ] `src/app_config.py`：`_ROOT_DIR` / `CONFIG_DIR` 改為引用（**優先做，影響最大**）
+- [ ] `src/logging_manager.py`：log 目錄改為引用（含 `_setup_logger` 與 `cleanup_old_logs` **兩處**
+      ——後者目前沒做相對轉絕對，見 4.3.1-audit）
+- [ ] `src/caparoc_backend.py`：`_PROBE_CACHE_PATH` 改為引用
+- [ ] `web/app.py`：`_WEB_DIR`（內嵌）與 `_ROOT_DIR`（外部）**分開處理**，不可共用同一個 base
+- [ ] `src/caparoc_controller.py`：config 路徑改為引用
+- [ ] 驗證：開發模式行為不變（跑一次現有測試 + demo 模式）
 
 ---
 
@@ -1333,21 +1410,30 @@ docker compose up -d
 
 **Phase 4 進行中** 🚀
 
+> 表格於 2026-09-03 重整：移除已完成項目、修正 4.3.6 重複列一次的錯誤，
+> 並加入 4.3.1-audit 發現的決策點。
+
+**已完成（2026-09-01）**：4.3.1 設定值外部化 ✅、4.3.5 nominal_readonly 探測 ✅、
+4.4.2 / 4.4.3 CLI 設備/網路資訊指令 ✅
+
 | 優先級 | 任務 | 預估工時 |
 |--------|------|---------|
-| 高 | 4.3.1 設定值外部化（config 合併） | 1h |
-| 高 | **4.3.5 nominal_readonly 主動探測（2 通道模組反灰）** | **2-3h** |
-| 高 | **4.3.6 通道自訂標籤（設備名稱）** | **2-3h** |
-| 高 | **4.3.6 通道自訂標籤（設備名稱）** | **2-3h** |
+| 高 | **4.3.1-audit (a)** 接上 `cleanup_old_logs()` + 修 `log_dir` 相對路徑缺陷 | 15m |
+| 高 | **4.3.1-audit (b)** `config.example.json` / README 註明死設定與 `web.port` 限制 | 10m |
+| 高 | 4.3.6 通道自訂標籤（設備名稱） | 2-3h |
 | 高 | 4.4.1 CLI 通道詳細狀態顯示 | 2-3h |
 | 中 | 4.3.3 UI 視覺一致性與元件統一 | 2-3h |
-| 中 | 4.4.2/4.4.3 CLI 設備/網路資訊指令 | 1h |
+| 中 | 4.3.4 行動裝置基本支援 | 1-2h |
 | 中 | 4.5 數據記錄與分析 | 6-8h |
 | 中 | 4.6 告警與通知系統 | 4-5h |
 | 低 | 4.7 多設備管理 | 5-6h |
 | 低 | 4.8 自動化測試與 CI/CD | 8-10h |
 
-**Phase 4 預估剩餘工時**：29-41 小時
+**Phase 4 預估剩餘工時**：25-35 小時
+
+> 💡 **4.5 數據記錄與分析** 與 4.3.1-audit (a) 有重疊：若 4.5 要導入 SQLite 與
+> 「自動清理舊數據」，log 的保留策略應一併納入同一套機制，而不是各做各的。
+> 做 4.5 前先回頭看 audit (a) 的決定。
 
 ---
 
@@ -1355,8 +1441,8 @@ docker compose up -d
 
 | 優先級 | 任務 | 預估工時 |
 |--------|------|---------|
-| 高 | 5.1 路徑抽象化（打包前置） | 1-1.5h |
-| 高 | 5.2 CDN 資源離線化 | 0.5h |
+| 高 | 5.1 路徑抽象化（打包前置）— **打包相容性目前為零，見該節現況盤點** | 1-1.5h |
+| ✅ | ~~5.2 CDN 資源離線化~~ — 已於 `c917847` 完成（`web/static/vendor/` 四個檔，`index.html` 已無外部 CDN 連結）；該節內文待補 | ~~0.5h~~ |
 | 高 | 5.3 PyInstaller 打包（Windows .exe） | 2-3h |
 | 中 | 5.4 首次執行初始化 | 0.5h |
 | 中 | 5.5 Linux 部署方案（Docker） | 1-2h |

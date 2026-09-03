@@ -40,6 +40,13 @@ _WEB_DIR = Path(__file__).parent
 _ROOT_DIR = _WEB_DIR.parent
 sys.path.insert(0, str(_ROOT_DIR / "src"))
 
+# stdout 被導向檔案／pipe 時（排程啟動、`> run.log`）編碼會退回 cp950，
+# 任何一個 emoji 都會拋 UnicodeEncodeError 並被外層 except 當成操作失敗。
+# 必須早於任何輸出，故緊接在 sys.path 設定之後。
+from console_io import force_safe_stdio  # noqa: E402
+
+force_safe_stdio()
+
 from caparoc_backend import CaparocBackend  # noqa: E402
 # 設備探索／IP 格式判斷的共用實作（與 src/caparoc_ip_config.py CLI 同一份）
 from caparoc_ip_core import (  # noqa: E402

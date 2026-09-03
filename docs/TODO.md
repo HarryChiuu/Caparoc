@@ -20,6 +20,70 @@
 
 ---
 
+## 🔤 主控台編碼防護 ✅ 已完成（2026-09-03）
+
+> **起因**：上一節的真機驗證途中撞到——設備 ping 通、`CaparocBackend` 直連也成功，
+> 但 `python web/app.py > run.log` 啟動時 `connect()` 回報失敗，log 只留一行
+> `connect() 例外: 'cp950' codec can't encode character '❌'`。
+> 使用者看到的是「連不上設備」，設備其實好好的。
+
+### 根因
+
+本專案有 **400+ 處帶 emoji 的 `print()`**：
+
+| 檔案 | 數量 |
+|---|---|
+| `src/caparoc_controller.py` | 211 |
+| `src/caparoc_backend.py` | 101 |
+| `src/caparoc_ip_config.py` | 81 |
+| 其餘（`web/app.py`、`app_config.py`、`logging_manager.py`、`caparoc_ip_core.py`） | 14 |
+
+- Windows **真實主控台**在 Python 3.6+ 走 Unicode API（PEP 528），emoji 印得出來
+  ——**所以平常手動執行永遠不會發現**。
+- stdout 一旦**被導向檔案或 pipe**（打包 exe 由排程／服務啟動、`> run.log`、
+  被其他程式包起來執行），編碼退回地區編碼，繁中 Windows = **cp950**，
+  裝不下任何 emoji。
+
+⚠️ **致命的不是印不出來，而是這些 print 多半在 `try` 內**：`UnicodeEncodeError`
+被外層 `except Exception` 當成「操作失敗」吞掉。`connect()` 印到
+`✅ CIP 連線已建立` 那一行就炸，於是設備完全正常卻回報連不上。
+
+### 完成項目
+
+- [x] `src/console_io.py`：`force_safe_stdio()`，把 stdout/stderr 的 `errors`
+      改成 `replace`，裝不下的字元退化成 `?`
+- [x] 三個進入點在**任何輸出之前**呼叫：`web/app.py`、`src/caparoc_controller.py`、
+      `src/caparoc_ip_config.py`
+- [x] `tests/test_console_encoding.py`（5 項，不需設備與網路）
+
+### ⚠️ 刻意只改 `errors`、不改 `encoding`
+
+改成 UTF-8 會讓 cp950 主控台的**中文**變亂碼。為了救裝飾用的 emoji 去弄壞
+真正重要的訊息，是賠本生意。`test_cjk_still_readable_after_protection` 釘住這件事。
+
+### 真機驗證（同一台設備、同一時間，只差有沒有掛防護）
+
+| | `connect()` | stdout |
+|---|---|---|
+| 修復前 | `False` | 印到 `[CIP 連線] 正在建立…` 就中斷 |
+| 修復後 | `True`（讀得到 `CAPAROC PM EIP`） | `? CIP 連線已建立 (WEB UI 應顯示 'connected')` — emoji 退化成 `?`，**中文完好** |
+
+`PYTHONIOENCODING=cp950` 下以 uvicorn 啟動 Web 服務同樣正常連線。
+
+### 📌 與 Phase 5 打包的關係
+
+打包成 exe 後由排程／服務啟動時**沒有真實主控台**，正是本 bug 必然觸發的情境。
+Phase 5.1 動路徑抽象化時**不要移除**進入點的 `force_safe_stdio()` 呼叫，
+`test_entry_points_call_force_safe_stdio` 會擋。
+
+### 未來項目（低優先）
+
+- [ ] 考慮把 400+ 處 emoji `print()` 收斂到 logging——目前 CLI 的使用者回饋與
+      log 記錄混在同一組 `print`，兩者需求不同（前者要好看，後者要可 grep）。
+      成本高、收益中，防護已經擋掉致命面，不急。
+
+---
+
 ## 🔌 Web 連線設定頁：最近連線 IP 下拉 + 頁內掃描 ✅ 已完成（2026-09-03）
 
 > **起因**：現場每次要連設備都得手動 key 一次 IP。而且 Web 連線成功後**不會**

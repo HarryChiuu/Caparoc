@@ -2,6 +2,61 @@
 
 ---
 
+## [2026-09-03] 修正 stdout 導向時 cp950 編碼錯誤被誤判為「設備連線失敗」
+
+> 上一則的真機驗證途中撞到：設備 ping 通、`CaparocBackend` 直連也成功，
+> 但 `python web/app.py > run.log` 啟動時 `connect()` 回報失敗，log 只留
+
+```
+[ERROR] [CONN] connect() 例外: 'cp950' codec can't encode character '❌'
+```
+
+### 🐛 根因
+
+本專案有 **400+ 處帶 emoji 的 `print()`**（`src/caparoc_controller.py` 211、
+`src/caparoc_backend.py` 101、`src/caparoc_ip_config.py` 81…）。
+
+- Windows **真實主控台**在 Python 3.6+ 走 Unicode API（PEP 528），emoji 印得出來
+  ——所以平常手動執行不會發現。
+- stdout 一旦**被導向檔案或 pipe**（打包 exe 由排程／服務啟動、`> run.log`、
+  被其他程式包起來執行），編碼退回地區編碼，繁中 Windows = **cp950**，
+  裝不下任何 emoji。
+
+致命的不是印不出來，而是**這些 print 多半在 `try` 內**：
+`UnicodeEncodeError` 被外層 `except Exception` 當成「操作失敗」吞掉。
+`connect()` 印到 `✅ CIP 連線已建立` 那一行就炸，於是**設備完全正常卻回報連不上**。
+
+### 🔧 修法：`src/console_io.py` 的 `force_safe_stdio()`
+
+在進入點把 stdout/stderr 的 `errors` 改成 `replace`，裝不下的字元退化成 `?`。
+三個進入點（`web/app.py`、`src/caparoc_controller.py`、`src/caparoc_ip_config.py`）
+都在**任何輸出之前**呼叫。
+
+⚠️ **刻意只改 `errors`、不改 `encoding`**：改成 UTF-8 會讓 cp950 主控台的
+**中文**變亂碼——為了救裝飾用的 emoji 去弄壞真正重要的訊息，是賠本生意。
+
+### ✅ 真機驗證（同一台設備、同一時間，只差有沒有掛防護）
+
+| | `connect()` | stdout |
+|---|---|---|
+| 修復前 | `False` | 印到 `[CIP 連線] 正在建立…` 就中斷 |
+| 修復後 | `True`（讀得到 `CAPAROC PM EIP`） | `? CIP 連線已建立 (WEB UI 應顯示 'connected')` — emoji 退化成 `?`，**中文完好** |
+
+`PYTHONIOENCODING=cp950` 下以 uvicorn 啟動 Web 服務同樣正常連線，
+最近連線清單也照常寫入。
+
+### 🧪 `tests/test_console_encoding.py`（5 項，不需設備與網路）
+
+| 測試 | 擋下的問題 |
+|---|---|
+| `test_cp950_stream_raises_without_protection` | **前提驗證**——若哪天環境不再重現，其餘測試就該視為失效而非「修好了」 |
+| `test_reconfigure_replaces_instead_of_raising` | 防護後不得再拋例外 |
+| `test_cjk_still_readable_after_protection` | 釘住「只改 errors 不改 encoding」——中文不得被犧牲 |
+| `test_force_safe_stdio_is_idempotent_and_never_raises` | 重複呼叫、`sys.stdout is None`（pythonw）都不得炸 |
+| `test_entry_points_call_force_safe_stdio` | 新進入點漏掛防護，且必須**早於** `caparoc_backend` 匯入 |
+
+---
+
 ## [2026-09-03] 連線設定頁：最近連線過的 IP 下拉 + 頁內網段掃描
 
 > 現場每次要連設備都得手動 key 一次 IP。Web 連線成功後**不會**把 IP 寫回設定檔

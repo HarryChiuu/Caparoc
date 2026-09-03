@@ -26,12 +26,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from pycomm3 import CIPDriver
-from caparoc_backend import CaparocBackend
+# 必須早於任何 print（詳見 src/console_io.py）
+from console_io import force_safe_stdio  # noqa: E402
+
+force_safe_stdio()
+
+from pycomm3 import CIPDriver  # noqa: E402
+from caparoc_backend import CaparocBackend  # noqa: E402
 
 # 探索與 IP 格式判斷等不含互動 I/O 的邏輯統一放在 caparoc_ip_core，
 # 與 web/app.py 共用同一份實作——修改探索行為只需改那一個檔案。
-from caparoc_ip_core import (
+from caparoc_ip_core import (  # noqa: E402
     CLASS_TCPIP, INST, SVC_GET, ATTR_CTRL, ATTR_IFACE, CTRL_NAMES,
     DEVICE_ONLINE_MAX_WAIT, _le2ip,
     is_valid_ip, same_subnet, discover, wait_for_device,

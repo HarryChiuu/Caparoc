@@ -2,6 +2,203 @@
 
 ---
 
+## [2026-09-03] 接上 `retention_days`：log 自動清除從「死設定」變成真的會動
+
+> 起因：使用者把 `retention_days` 改成 10，問「程式一啟動就會刪舊 log 嗎」。
+> 逐鍵追蹤呼叫點後發現 **答案是不會** —— 而且不只這一個鍵有問題。
+
+### 🐛 根因：功能寫好了，但沒有任何呼叫者
+
+`cleanup_old_logs()`（`logging_manager.py`）**全 repo 沒有任何呼叫者** ——
+不在啟動流程、沒有排程器、CLI 與 web 都沒接。docstring 寫「手動呼叫或由排程觸發」，
+但兩者都不存在。
+
+實測：`retention_days` 設 10，`logs/` 內 25 個檔（最舊 2026-05-25，遠超 10 天）
+**一個都沒刪**。與 `RemoteHandler` 同屬「寫好卻沒接上」的預留骨架。
+
+### 🐛 連帶挖出的兩個路徑／時間缺陷
+
+**1. `log_dir` 相對路徑沒轉絕對**（潛伏缺陷，接線當下才會爆）
+
+`_setup_logger()` 有做相對轉絕對，`cleanup_old_logs()` **沒有**（直接
+`Path(self.config['log_dir'])`）。兩者不一致的後果是從不同工作目錄啟動時
+**「寫入 A 目錄、清除 B 目錄」**。
+
+**2. 截止日帶著當下時刻**（原稽核未察覺，修復過程中才發現）
+
+`cutoff = datetime.now() - timedelta(days=N)` 帶著**當下時刻**，但檔名只有
+日期（零時）。於是「剛好第 N 天」的檔案會因**啟動時刻**不同而時留時刪 ——
+**早上開服存活、晚上開服被刪**。
+
+### 🔧 修法
+
+- `_resolve_log_dir()` 抽出，`_setup_logger()` 與 `cleanup_old_logs()`
+  **共用同一份路徑解析**（測試釘住，不得再各自 `Path()` 一次）
+- 截止日正規化到**當日零時** → 語意變成穩定的「保留最近 N 天」
+- `web/app.py` lifespan 啟動段呼叫，**刻意放在 `_DEMO_MODE` early return 之前**
+  ——log 保留策略與有沒有接設備無關；包 try/except，清不掉舊 log 不該擋住服務啟動
+- 新增模組層 `logging_manager.cleanup_old_logs()` 入口（呼叫端不需持有實例）
+
+> ⚠️ **給維護者**：這是目前**唯一**的清除觸發點，且只在 **Web 服務啟動**時執行 ——
+> CLI 不會清，長時間不重啟 web 也不會清。
+
+### 📝 另外兩個死設定：改為明確標註（不實作）
+
+| 設定 | 現況 | 處置 |
+|---|---|---|
+| `logging.remote.*` | `RemoteHandler.emit()` 是 `pass`，六個子鍵全部無作用 | `config.example.json` 標「🚧 尚未實作，設定無效」＋ README 新增小節 |
+| `web.port` | `_resolve_port()` 只在 `if __name__ == "__main__":` 內被呼叫，`uvicorn web.app:app` 啟動時完全忽略 | 兩處註明「僅 `python web/app.py` 適用」＋ README 給 ✅/❌ 對照 |
+
+`web.port` **刻意不改行為**：把 `_resolve_port()` 搬到 module level 會讓 uvicorn
+啟動時也去探測／佔用埠，與 uvicorn 自己的 `--port` 打架。註明限制比讓兩套埠邏輯互搶安全。
+
+### ✅ 驗證
+
+- `tests/test_log_retention.py` **6/6 通過**
+- demo 模式實跑 lifespan：`log_dir=logs_probe` / `retention_days=10`，播種
+  0/3/20/90 天四個檔 → 確實只剩 0 天與 3 天兩個（真實 `logs/` 全程未觸碰）
+- 正式套用 `retention_days=30`：`logs/` **25 → 16 個檔**，刪除的 9 個正是
+  42–101 天的舊檔，與事前 dry-run 預測**完全一致**。
+  邊界檔 `caparoc_2026-08-04.log`（剛好 30 天）**保留** —— 零時為界在作用；
+  若用原本的 `datetime.now()` 寫法，它會因為當下是 17:21 而被誤刪
+- 二次啟動 16 → 16，no-op
+
+### 🧪 `tests/test_log_retention.py`（6 項，不需設備與網路）
+
+| 測試 | 擋下的問題 |
+|---|---|
+| `test_removes_only_files_older_than_retention` | 清除門檻與**邊界日**（剛好第 N 天不得刪） |
+| `test_retention_zero_removes_nothing` | `0 = 永不清除`（範本預設值）必須是 no-op |
+| `test_relative_log_dir_is_cwd_independent` | 相對 `log_dir` 不得受 CWD 影響 |
+| `test_setup_and_cleanup_share_one_resolution` | 兩條路徑不得再各自建路徑 |
+| `test_cleanup_is_actually_wired_to_web_startup` | **回歸「功能寫好但沒接上」**，且須早於 `_DEMO_MODE` early return |
+| `test_module_level_helper_safe_before_setup` | 尚未 `setup()` 時呼叫不得拋例外 |
+
+### 📋 `docs/TODO.md` 重整
+
+頂端新增 **🎯 目前的工作佇列** —— 唯一需要先讀的一節，底下 1600 行退為歷史記錄。
+內含建議順序與一張**零散技術債表格**（`?v=` 兩處手改、BOOTP `op` 誤判、
+`arp -a` 語系依賴等 7 項），這些原本散落在各章節註腳，很容易被遺忘。
+
+---
+
+## [2026-09-03] 修正 stdout 導向時 cp950 編碼錯誤被誤判為「設備連線失敗」
+
+> 上一則的真機驗證途中撞到：設備 ping 通、`CaparocBackend` 直連也成功，
+> 但 `python web/app.py > run.log` 啟動時 `connect()` 回報失敗，log 只留
+
+```
+[ERROR] [CONN] connect() 例外: 'cp950' codec can't encode character '❌'
+```
+
+### 🐛 根因
+
+本專案有 **400+ 處帶 emoji 的 `print()`**（`src/caparoc_controller.py` 211、
+`src/caparoc_backend.py` 101、`src/caparoc_ip_config.py` 81…）。
+
+- Windows **真實主控台**在 Python 3.6+ 走 Unicode API（PEP 528），emoji 印得出來
+  ——所以平常手動執行不會發現。
+- stdout 一旦**被導向檔案或 pipe**（打包 exe 由排程／服務啟動、`> run.log`、
+  被其他程式包起來執行），編碼退回地區編碼，繁中 Windows = **cp950**，
+  裝不下任何 emoji。
+
+致命的不是印不出來，而是**這些 print 多半在 `try` 內**：
+`UnicodeEncodeError` 被外層 `except Exception` 當成「操作失敗」吞掉。
+`connect()` 印到 `✅ CIP 連線已建立` 那一行就炸，於是**設備完全正常卻回報連不上**。
+
+### 🔧 修法：`src/console_io.py` 的 `force_safe_stdio()`
+
+在進入點把 stdout/stderr 的 `errors` 改成 `replace`，裝不下的字元退化成 `?`。
+三個進入點（`web/app.py`、`src/caparoc_controller.py`、`src/caparoc_ip_config.py`）
+都在**任何輸出之前**呼叫。
+
+⚠️ **刻意只改 `errors`、不改 `encoding`**：改成 UTF-8 會讓 cp950 主控台的
+**中文**變亂碼——為了救裝飾用的 emoji 去弄壞真正重要的訊息，是賠本生意。
+
+### ✅ 真機驗證（同一台設備、同一時間，只差有沒有掛防護）
+
+| | `connect()` | stdout |
+|---|---|---|
+| 修復前 | `False` | 印到 `[CIP 連線] 正在建立…` 就中斷 |
+| 修復後 | `True`（讀得到 `CAPAROC PM EIP`） | `? CIP 連線已建立 (WEB UI 應顯示 'connected')` — emoji 退化成 `?`，**中文完好** |
+
+`PYTHONIOENCODING=cp950` 下以 uvicorn 啟動 Web 服務同樣正常連線，
+最近連線清單也照常寫入。
+
+### 🧪 `tests/test_console_encoding.py`（5 項，不需設備與網路）
+
+| 測試 | 擋下的問題 |
+|---|---|
+| `test_cp950_stream_raises_without_protection` | **前提驗證**——若哪天環境不再重現，其餘測試就該視為失效而非「修好了」 |
+| `test_reconfigure_replaces_instead_of_raising` | 防護後不得再拋例外 |
+| `test_cjk_still_readable_after_protection` | 釘住「只改 errors 不改 encoding」——中文不得被犧牲 |
+| `test_force_safe_stdio_is_idempotent_and_never_raises` | 重複呼叫、`sys.stdout is None`（pythonw）都不得炸 |
+| `test_entry_points_call_force_safe_stdio` | 新進入點漏掛防護，且必須**早於** `caparoc_backend` 匯入 |
+
+---
+
+## [2026-09-03] 連線設定頁：最近連線過的 IP 下拉 + 頁內網段掃描
+
+> 現場每次要連設備都得手動 key 一次 IP。Web 連線成功後**不會**把 IP 寫回設定檔
+>（只有 CLI 的 `setting [3]` 會），所以連過的位址下次一樣要重打。
+
+### ✨ 減少手動輸入的兩條路（兩者互補，缺一不可）
+
+| 情境 | 解法 |
+|---|---|
+| 連過的設備要再連一次 | 連線設定頁 IP 欄改為**可輸入的下拉**，列出最近成功連線過的設備 |
+| 第一次接觸的設備，手邊沒有 IP | 把既有的**網段掃描**搬一份到連線設定頁，掃到直接一鍵連線 |
+
+歷史清單只解決前者；真正的「零輸入」是後者。掃描 API（`POST /api/ipconfig/discover`）
+早就寫好了，只是入口埋在「IP 設定」頁——這次讓它出現在最需要它的地方，
+兩頁共用同一份掃描狀態，掃過一次兩邊都看得到。
+
+### 🗄️ 清單存後端 `config.json`，**不是** localStorage
+
+`config/config.json` 的 `device.recent`（`src/app_config.py`）。理由：
+
+- 現場換一台筆電、換瀏覽器、清快取都不該讓清單消失——這是**設備資產**，不是瀏覽器偏好。
+- `default_ip` 本來就住在這裡，兩者放同一區塊才不會各記各的。
+- 打包成 exe 後跟著 `config/` 一起走。
+
+行為：
+
+- **只在連線成功後寫入**（`web/app.py` 的 `_remember_connection()`）。
+  打錯的位址不該污染下拉清單——那正是這個功能要省掉的麻煩。
+- 寫入時**一併更新 `default_ip`**，順帶補上「Web 連線後不記得 IP」這個既有缺口。
+- 設備名／序號取自 Identity Object，**整段包在 try 內**：讀不到就留 `null`，
+  絕不能因為一個顯示用的標籤讓連線流程失敗。
+- 同 IP 只留一筆（重連即移到最前，未帶 name 時沿用舊值）；上限 `device.recent_max`（預設 5）。
+- 單筆刪除（`DELETE /api/connect/recent/{ip}`）**刻意不動 `default_ip`**：
+  「這台不想再出現在下拉」與「換開機預設值」是兩件事。
+
+`_sanitize_recent()` 會把使用者手改壞的設定檔（塞字串、缺 `ip`、重複、非法 IP）
+全部吸收掉，API 與前端永遠拿到乾淨清單。
+
+### 🎨 下拉是自繪的，不是原生 `<select>`
+
+要同時容納「可自由輸入」「一列顯示 IP + 設備名 + 相對時間」「單筆刪除」三件事，
+原生 `<select>` 與 `<datalist>` 都做不到。
+
+- ⚠️ **踩到的坑**：全域 `button:hover { background: var(--btn-bg-hover) }` 特異性
+  (0,1,1) 蓋過 `.ip-picker-item` 的 (0,1,0)，hover 時整列會變成藍色按鈕底。
+  補 `.ip-picker-item:hover { background: none }` 才讓 `li:hover` 的淡色 highlight 透出來。
+  深淺色主題都已實測。
+- 刪除鈕常駐但淡化（`opacity: 0.45`），不是藏到 hover 才出現——觸控裝置點不到。
+
+### 📁 異動
+
+| 檔案 | 內容 |
+|---|---|
+| `src/app_config.py` | `device.recent` / `recent_max` 預設值；`record_connection()`、`recent_devices()`、`forget_device_ip()`、`recent_max()`；抽出 `_write_config()`；`_deep_merge()` 補上 list 複製（否則 DEFAULTS 的可變物件會被共用進快取） |
+| `web/app.py` | `_remember_connection()`；`GET/DELETE /api/connect/recent`；`POST /api/connect` 成功時回傳更新後清單；啟動自動連線成功時也記一筆 |
+| `web/templates/index.html` | IP 欄改為 `.ip-picker` 下拉；連線設定頁新增掃描區塊；靜態資源版號 `4.11.0` → `4.12.0` |
+| `web/static/js/app.js` | `recentIps` / `fetchRecent` / `pickRecent` / `forgetRecent` / `relTime`；點選單外收起 |
+| `web/static/css/style.css` | `.ip-picker*`、`.conn-scan`、`.iface-sel` |
+| `config/config.example.json` | 補上 `recent` / `recent_max` 與說明 |
+
+---
+
 ## [2026-09-01] 新增 demo/真實 payload 結構一致性測試
 
 > `web/app.py` 有兩條產生前端 payload 的路徑必須保持結構一致：

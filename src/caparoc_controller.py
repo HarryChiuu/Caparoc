@@ -52,14 +52,20 @@ CAPAROC 控制器 (Production Version)
 5. 即時監控背景執行緒定期更新(Phase 3-2 新增)
 """
 
-from pycomm3 import CIPDriver
-import time
-import threading
-from caparoc_backend import CaparocBackend
+# 必須早於任何 print：stdout 被導向時 cp950 裝不下 emoji，會炸成
+# UnicodeEncodeError 並被誤判為操作失敗（詳見 src/console_io.py）
+from console_io import force_safe_stdio
+
+force_safe_stdio()
+
+from pycomm3 import CIPDriver  # noqa: E402
+import time  # noqa: E402
+import threading  # noqa: E402
+from caparoc_backend import CaparocBackend  # noqa: E402
 
 # 設定統一由 app_config 提供（config/config.json）；下面兩支保留為薄包裝，
 # 讓既有呼叫點（_ask_save_default_ip / _handle_setting_connip 等）不需改動。
-import app_config
+import app_config  # noqa: E402
 
 _CONFIG_PATH = app_config.CONFIG_PATH
 

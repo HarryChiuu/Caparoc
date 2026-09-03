@@ -58,6 +58,12 @@ LED_VALUES = {
 # 從模組型號字串解析額定電流範圍，例如 "CAPAROC E4 12-24DC/1-4A" -> (1, 4)
 _NAME_RANGE_RE = re.compile(r"/\s*(\d+)\s*-\s*(\d+)\s*A", re.I)
 
+# 固定額定電流型號：斜線後只有單一安培數，例如 "CAPAROC E1 12-24DC/16A"。
+# 手冊 6.1.1：「It is only possible to program adjustable circuit breakers
+# (designation in the name, e.g., 1-10A)」——名稱沒有範圍就是不可調，
+# 與「可調但目前鎖住」（旋鈕未轉 RC）是不同狀況，UI 需分開說明。
+_NAME_FIXED_RE = re.compile(r"/\s*(\d+)\s*A\s*$", re.I)
+
 
 # ── 低階抓取 ──────────────────────────────────────────────
 
@@ -135,6 +141,18 @@ def nominal_range_from_name(name):
     return (lo, hi) if lo <= hi else None
 
 
+def fixed_nominal_from_name(name):
+    """
+    型號標示的固定額定電流（安培）。可調型或解析不出回 None。
+
+    例：'CAPAROC E1 12-24DC/16A' -> 16；'CAPAROC E4 12-24DC/1-4A' -> None。
+    """
+    if nominal_range_from_name(name):      # 有範圍就是可調型
+        return None
+    m = _NAME_FIXED_RE.search((name or "").strip())
+    return int(m.group(1)) if m else None
+
+
 def _range_label(rng):
     """(1, 4) -> '1–4 A'（en-dash）。None -> None。"""
     return f"{rng[0]}–{rng[1]} A" if rng else None
@@ -198,7 +216,8 @@ def merge_http_info(systeminfo, processdata):
     for i, m in enumerate(si_mods):
         name = _clean(m.get("name"))
         rng = nominal_range_from_name(name)
-        if rng is None:
+        # 固定額定型號（如 /16A）本來就沒有範圍，不是解析失敗，不該告警
+        if rng is None and fixed_nominal_from_name(name) is None:
             logger.warning("caparoc_http: 無法從模組型號解析額定範圍: %r", name)
         pdm = pd_mods[i] if i < len(pd_mods) else []
         modules.append({
@@ -211,6 +230,9 @@ def merge_http_info(systeminfo, processdata):
             "nominal_min":  rng[0] if rng else None,
             "nominal_max":  rng[1] if rng else None,
             "nominal_range_label": _range_label(rng),
+            # 固定額定型號的安培數（可調型為 None）。用於區分「不可調」與
+            # 「可調但旋鈕未轉 RC」——兩者都反灰，但解法完全不同。
+            "nominal_fixed": fixed_nominal_from_name(name),
             "fault_events": decode_errorevents(m.get("errorevents")),
             "channels_data": [
                 {

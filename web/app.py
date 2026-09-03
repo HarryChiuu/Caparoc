@@ -40,6 +40,13 @@ _WEB_DIR = Path(__file__).parent
 _ROOT_DIR = _WEB_DIR.parent
 sys.path.insert(0, str(_ROOT_DIR / "src"))
 
+# stdout 被導向檔案／pipe 時（排程啟動、`> run.log`）編碼會退回 cp950，
+# 任何一個 emoji 都會拋 UnicodeEncodeError 並被外層 except 當成操作失敗。
+# 必須早於任何輸出，故緊接在 sys.path 設定之後。
+from console_io import force_safe_stdio  # noqa: E402
+
+force_safe_stdio()
+
 from caparoc_backend import CaparocBackend  # noqa: E402
 # 設備探索／IP 格式判斷的共用實作（與 src/caparoc_ip_config.py CLI 同一份）
 from caparoc_ip_core import (  # noqa: E402
@@ -50,6 +57,7 @@ from caparoc_ip_core import (  # noqa: E402
 # LED 狀態 / 每模組故障事件記憶。純函式，任何失敗回 None，不 raise。
 import caparoc_http  # noqa: E402
 import app_config  # noqa: E402
+from logging_manager import cleanup_old_logs as _cleanup_old_logs  # noqa: E402
 
 # 同時只允許一次網段掃描：掃描會開 32 條探測執行緒，兩個分頁同時按會互相干擾
 _discover_lock = threading.Lock()
@@ -153,7 +161,19 @@ backend = CaparocBackend(_default_ip)
 # ==================== Lifespan ====================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """服務啟動時嘗試連線；停止時安全斷線。"""
+    """服務啟動時清除舊 log 並嘗試連線；停止時安全斷線。"""
+    # 舊 log 清除：唯一的觸發點。config 的 logging.retention_days 為 0 時不做事。
+    # 放在 demo 判斷之前——log 保留策略與有沒有接設備無關。
+    try:
+        removed = await asyncio.to_thread(_cleanup_old_logs)
+        if removed:
+            _WEB_LOGGER.log(_SYSTEM_LEVEL,
+                            f"啟動清除 {len(removed)} 個舊 log 檔",
+                            extra={'log_module': 'WEB'})
+    except Exception as e:
+        # 清不掉舊 log 不該擋住服務啟動
+        _WEB_LOGGER.warning(f"舊 log 清除失敗: {e}", extra={'log_module': 'WEB'})
+
     if _DEMO_MODE:
         _WEB_LOGGER.warning("*** DEMO 模式：使用模擬資料，不連線實際設備 ***",
                              extra={'log_module': 'WEB'})
@@ -167,6 +187,8 @@ async def lifespan(app: FastAPI):
         if ok:
             _WEB_LOGGER.log(_SYSTEM_LEVEL, f"設備連線成功 ({backend.device_ip})",
                              extra={'log_module': 'WEB'})
+            # 開機自動連上的也算一次成功連線，更新時間戳讓下拉清單排序正確
+            await asyncio.to_thread(_remember_connection)
         else:
             _WEB_LOGGER.warning(f"設備連線失敗 ({backend.device_ip})，可透過連線設定頁手動重試",
                                 extra={'log_module': 'WEB'})
@@ -219,6 +241,11 @@ def _format_status(raw: dict | None) -> dict:
             "current_amps": round(ch["flowing_current"], 2),
             "nominal_amps": round(ch["nominal_current"], 1),
             "nominal_readonly": backend.is_module_nominal_readonly(ch["module"]),
+            # 型號標示的可調範圍；HTTP 讀不到型號時為 None，前端退回全域 limits
+            "nominal_min": (backend.get_module_nominal_range(ch["module"]) or (None, None))[0],
+            "nominal_max": (backend.get_module_nominal_range(ch["module"]) or (None, None))[1],
+            # 固定額定型號的安培數；可調型為 None。反灰原因由此區分
+            "nominal_fixed": backend.get_module_fixed_nominal(ch["module"]),
             "warn_80":      ch["warning_80"],
             "overload":     ch["overload"],
             "short_circuit": ch["short_circuit"],
@@ -293,7 +320,8 @@ async def api_connect(ip: str = Query(default=None)):
     if success:
         _WEB_LOGGER.log(_SYSTEM_LEVEL, f"手動連線成功 ({backend.device_ip})",
                          extra={'log_module': 'WEB'})
-        return {"success": True, "ip": backend.device_ip}
+        recent = await asyncio.to_thread(_remember_connection)
+        return {"success": True, "ip": backend.device_ip, "recent": recent}
     _WEB_LOGGER.warning(f"手動連線失敗 ({backend.device_ip})", extra={'log_module': 'WEB'})
     raise HTTPException(status_code=503, detail=f"無法連線至 {backend.device_ip}")
 
@@ -304,6 +332,58 @@ async def api_disconnect():
     await asyncio.to_thread(backend.disconnect)
     _WEB_LOGGER.log(_SYSTEM_LEVEL, f"手動斷線 ({backend.device_ip})", extra={'log_module': 'WEB'})
     return {"success": True}
+
+
+# ==================== 最近連線設備 ====================
+# 清單存在 config.json 的 device.recent（見 src/app_config.py），不是 localStorage：
+# 現場換一台筆電、換瀏覽器或清快取都不該遺失，且打包成 exe 後跟著 config/ 一起走。
+def _remember_connection() -> list[dict]:
+    """
+    把剛連上的設備寫進最近連線清單，並同步 device.default_ip。
+
+    只在**連線成功**後呼叫——連不上的位址進了清單只會變成下次的干擾項。
+    設備識別資訊純粹用來讓使用者認得出哪台是哪台，讀不到就留 None，
+    絕不能因此讓連線流程失敗，故整段包在 try 內。
+
+    同步函式（get_device_info 會做多次 CIP 讀取），呼叫端請包 asyncio.to_thread。
+    """
+    name = serial = None
+    try:
+        identity = (backend.get_device_info() or {}).get("identity") or {}
+        name = identity.get("product_name")
+        sn = identity.get("serial_number")
+        serial = str(sn) if sn is not None else None
+    except Exception as e:
+        _WEB_LOGGER.debug(f"讀取設備識別資訊失敗，最近連線清單僅記錄 IP: {e}",
+                          extra={'log_module': 'WEB'})
+    return app_config.record_connection(backend.device_ip, name, serial)
+
+
+@app.get("/api/connect/recent")
+def api_recent_list():
+    """
+    最近成功連線過的設備，最新在前。連線設定頁的 IP 下拉清單來源。
+
+    **不檢查 is_connected**：這支的用途正是在還沒連線時讓使用者挑一個位址。
+    """
+    if _DEMO_MODE:
+        return {"recent": [
+            {"ip": "192.168.2.111", "name": "CAPAROC-PM-EIP [DEMO]",
+             "serial": "DEMO0001", "last_connected": "2026-01-01T09:30:00"},
+            {"ip": "192.168.2.112", "name": "CAPAROC-PM-EIP [DEMO2]",
+             "serial": "DEMO0002", "last_connected": "2025-12-30T16:05:00"},
+        ]}
+    return {"recent": app_config.recent_devices()}
+
+
+@app.delete("/api/connect/recent/{ip}")
+def api_recent_delete(ip: str):
+    """從最近連線清單移除一筆（設備退場、或位址已改，留著只會誤點）。"""
+    if _DEMO_MODE:
+        return {"success": True, "recent": []}
+    if not is_valid_ip(ip):
+        raise HTTPException(status_code=422, detail=f"「{ip}」不是合法的 IP 格式")
+    return {"success": True, "recent": app_config.forget_device_ip(ip)}
 
 
 @app.get("/api/device/network")
@@ -906,39 +986,59 @@ def _generate_demo_payload() -> dict:
     def _ro(module: int) -> bool:
         return module in _DEMO_READONLY_MODULES
 
+    # 型號可調範圍：對應實機的 E4 12-24DC/1-4A 與 E2 12-24DC/2-10A。
+    # 需與線上 payload 的 nominal_min/max 同步，否則 --demo 下的
+    # 逐模組範圍驗證（輸入框 min/max、超範圍提示）無法檢視。
+    _DEMO_RANGES = {1: (1, 4), 2: (2, 10)}
+
+    # 模組 2 另外模擬固定額定型號（如 E1 12-24DC/16A）：--demo 下才看得到
+    # 「不可調」與「旋鈕未轉 RC」兩種反灰文案的差異。
+    _DEMO_FIXED: dict[int, int] = {}
+
+    def _rng(module: int, idx: int):
+        return _DEMO_RANGES.get(module, (None, None))[idx]
+
     channels = [
         # 模組 1 — 涵蓋所有常見狀態
         {"id": 1, "module": 1, "channel": 1, "on": True,  "current_amps": wave(1.5, 0.30, 20,  0), "nominal_amps": 4.0,
          "nominal_readonly": _ro(1),
+         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1), "nominal_fixed": _DEMO_FIXED.get(1),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # warn_80: 電流超過額定 80%
         {"id": 2, "module": 1, "channel": 2, "on": True,  "current_amps": wave(3.4, 0.20, 25,  5), "nominal_amps": 4.0,
          "nominal_readonly": _ro(1),
+         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1), "nominal_fixed": _DEMO_FIXED.get(1),
          "warn_80": True,  "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # overload: 過載
         {"id": 3, "module": 1, "channel": 3, "on": True,  "current_amps": wave(4.6, 0.10, 18, 10), "nominal_amps": 4.0,
          "nominal_readonly": _ro(1),
+         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1), "nominal_fixed": _DEMO_FIXED.get(1),
          "warn_80": True,  "overload": True,  "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # short_circuit: 短路
         {"id": 4, "module": 1, "channel": 4, "on": True,  "current_amps": 25.5,                    "nominal_amps": 4.0,
          "nominal_readonly": _ro(1),
+         "nominal_min": _rng(1, 0), "nominal_max": _rng(1, 1), "nominal_fixed": _DEMO_FIXED.get(1),
          "warn_80": True,  "overload": True,  "short_circuit": True,  "hardware_fault": False, "total_shutdown": False},
         # 模組 2 — 更多狀態範例（額定電流為 read-only）
         # hardware_fault: 硬體故障
         {"id": 5, "module": 2, "channel": 1, "on": False, "current_amps": 0.0,                     "nominal_amps": 4.0,
          "nominal_readonly": _ro(2),
+         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1), "nominal_fixed": _DEMO_FIXED.get(2),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": True,  "total_shutdown": False},
         # total_shutdown: 總電流關斷
         {"id": 6, "module": 2, "channel": 2, "on": False, "current_amps": 0.0,                     "nominal_amps": 4.0,
          "nominal_readonly": _ro(2),
+         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1), "nominal_fixed": _DEMO_FIXED.get(2),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": True},
         # 關閉 (正常)
         {"id": 7, "module": 2, "channel": 3, "on": False, "current_amps": 0.0,                     "nominal_amps": 2.0,
          "nominal_readonly": _ro(2),
+         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1), "nominal_fixed": _DEMO_FIXED.get(2),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
         # 開啟 (正常運行)
         {"id": 8, "module": 2, "channel": 4, "on": True,  "current_amps": wave(1.2, 0.15, 22, 15), "nominal_amps": 4.0,
          "nominal_readonly": _ro(2),
+         "nominal_min": _rng(2, 0), "nominal_max": _rng(2, 1), "nominal_fixed": _DEMO_FIXED.get(2),
          "warn_80": False, "overload": False, "short_circuit": False, "hardware_fault": False, "total_shutdown": False},
     ]
     total_current = round(sum(ch["current_amps"] for ch in channels), 2)

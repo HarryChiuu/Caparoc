@@ -61,6 +61,35 @@ q                    # 退出程式
 
 ---
 
+## ⚙️ 設定檔
+
+所有設定集中在 `config/config.json`（首次使用請複製 `config/config.example.json`）。
+**所有鍵都在啟動時讀入，沒有熱重載——改完必須重啟。**
+
+| 區塊 | 常用鍵 | 說明 |
+|------|--------|------|
+| `device` | `default_ip` | 啟動時嘗試連線的設備 IP |
+| `web` | `port` | ⚠️ **僅 `python web/app.py` 生效**（見下） |
+| `web` | `ws_push_interval` / `ws_idle_shutdown` | WebSocket 推送間隔／閒置自動關閉秒數 |
+| `logging` | `log_level` / `log_dir` | 日誌等級與輸出目錄（相對路徑以專案根目錄為基準） |
+| `logging` | `retention_days` | 保留最近 N 天，**於 Web 服務啟動時**清除更舊的檔；`0` = 永不清除。CLI 不會觸發清除 |
+| `nominal_current` | `min` / `max` | 額定電流可設定範圍（安培） |
+
+### ⚠️ `web.port` 只在直接執行時生效
+
+```bash
+python web/app.py                  # ✅ 讀 config.json 的 web.port
+uvicorn web.app:app --port 8001    # ❌ 完全忽略 web.port，須自行帶 --port
+```
+
+覆寫優先序（僅前者）：`--port N` > 環境變數 `CAPAROC_PORT` > `config.json` 的 `web.port`。
+
+### 🚧 尚未實作的設定
+
+- **`logging.remote.*`** — `RemoteHandler.emit()` 是空實作。`enabled` 改成 `true` 也不會推送任何東西，該區塊六個鍵全部無作用，僅為未來擴充保留的骨架。
+
+---
+
 ## 📚 文件導覽
 
 ### 用戶文件

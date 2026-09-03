@@ -46,6 +46,12 @@ def _load_web_app():
 
 app_mod = _load_web_app()
 
+# nominal_min/max 來自 backend（型號經 HTTP 解析），不在 _read_current_status 的
+# 輸出裡，因此 _fake_raw() 蓋不到。測試不連線設備時該字典是空的，真實 payload
+# 會拿到 None、demo 拿到數字，型別比對就會誤報。這裡填入與 demo 相同的範圍，
+# 讓兩邊可比對——正式執行時仍由 _load_module_ranges() 從設備讀取。
+app_mod.backend._module_nominal_range = {1: (1, 4), 2: (2, 10)}
+
 
 # ── 模擬 _read_current_status() 的輸出 ────────────────────────────────
 # 欄位與型別對齊 src/caparoc_backend.py 的 result / channels 建構區塊。

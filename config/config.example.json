@@ -2,24 +2,26 @@
     "_comment": "CAPAROC 統一設定檔範本。複製為 config.json 後編輯。所有鍵皆可省略，省略者取 src/app_config.py 的 DEFAULTS。",
 
     "device": {
-        "_comment": "啟動時嘗試連線的設備 IP。CLI 的 setting [3] 與 Web 連線設定頁會寫回這裡。",
-        "default_ip": "192.168.2.111"
+        "_comment": "default_ip 為啟動時嘗試連線的設備 IP，CLI 的 setting [3] 與 Web 連線設定頁會寫回這裡。recent 由程式自動維護（每次連線成功後更新），是 Web 連線設定頁 IP 下拉清單的來源，最新在前，最多留 recent_max 筆；平常不需手動編輯。",
+        "default_ip": "192.168.2.111",
+        "recent": [],
+        "recent_max": 5
     },
 
     "web": {
-        "_comment": "port 覆寫優先序：--port N > 環境變數 CAPAROC_PORT > 本設定。8001 是為了避開 NVIDIA Overlay 間歇佔用的 8000。",
+        "_comment": "⚠️ port 僅在以 `python web/app.py` 啟動時生效；用 `uvicorn web.app:app` 啟動時本設定會被完全忽略（請改用 uvicorn 的 --port）。覆寫優先序：--port N > 環境變數 CAPAROC_PORT > 本設定。8001 是為了避開 NVIDIA Overlay 間歇佔用的 8000。ws_push_interval / ws_idle_shutdown 兩種啟動方式皆生效。",
         "port": 8001,
         "ws_push_interval": 1.0,
         "ws_idle_shutdown": 10.0
     },
 
     "logging": {
-        "_comment": "log_dir 為相對路徑時以專案根目錄為基準，不受 CWD 影響。retention_days 為 0 代表永不自動清除。",
+        "_comment": "log_dir 為相對路徑時以專案根目錄為基準，不受 CWD 影響。retention_days 為 0 代表永不自動清除；N > 0 則保留最近 N 天，於 Web 服務啟動時清除更舊的檔（以當日零時為界）。CLI 不會觸發清除。",
         "log_level": "INFO",
         "retention_days": 0,
         "log_dir": "logs",
         "remote": {
-            "_comment": "未來擴充：推送 log 到 Linux 主機。將 enabled 改為 true 並填入 url 即可生效。",
+            "_comment": "🚧 尚未實作，設定無效。RemoteHandler.emit() 目前是空實作，enabled 改成 true 也不會推送任何東西，本區塊六個鍵全部無作用。保留為未來擴充（推送 log 到 Linux 主機）的骨架。",
             "enabled": false,
             "type": "http",
             "url": "",

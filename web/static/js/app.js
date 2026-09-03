@@ -196,8 +196,11 @@ createApp({
             const qs = ip ? `?ip=${encodeURIComponent(ip)}` : '';
             try {
                 const r = await fetch(`/api/connect${qs}`, { method: 'POST' });
-                if (!r.ok) {
-                    const body = await r.json();
+                const body = await r.json().catch(() => ({}));
+                if (r.ok) {
+                    // 後端連線成功時順手回傳更新後的清單，省一次 round trip
+                    if (body.recent) recentIps.value = body.recent;
+                } else {
                     state.error = body.detail ?? '連線失敗';
                 }
             } catch (e) {
@@ -209,6 +212,64 @@ createApp({
 
         async function doDisconnect() {
             await fetch('/api/disconnect', { method: 'POST' });
+        }
+
+        // -- 最近連線過的設備（來源是後端 config.json，不是 localStorage）--
+        // 放伺服器端的理由：現場換一台筆電、換瀏覽器或清快取都不該讓清單消失。
+        const recentIps = ref([]);
+        const ipPickerOpen = ref(false);
+
+        async function fetchRecent() {
+            try {
+                const r = await fetch('/api/connect/recent');
+                if (!r.ok) return;
+                const body = await r.json();
+                recentIps.value = body.recent ?? [];
+                // 未連線時預填最近一次的位址，開頁即可直接按「連線」
+                if (!ipInput.value && recentIps.value.length)
+                    ipInput.value = recentIps.value[0].ip;
+            } catch (_) { }
+        }
+
+        function pickRecent(ip) {
+            ipInput.value = ip;
+            ipPickerOpen.value = false;
+            // 刻意不自動連線：已連線時換 IP 需先斷線，靜靜幫使用者做會很意外
+        }
+
+        async function forgetRecent(ip) {
+            try {
+                const r = await fetch('/api/connect/recent/' + encodeURIComponent(ip),
+                                      { method: 'DELETE' });
+                const body = await r.json().catch(() => ({}));
+                if (r.ok) recentIps.value = body.recent ?? [];
+            } catch (_) { }
+        }
+
+        // ISO 時間 → 「剛剛 / 12 分鐘前 / 今天 14:22 / 昨天 14:22 / 8/28」
+        // 後端寫的是不帶時區的本地時間，瀏覽器會以本地時區解讀，兩邊同一台機器故一致。
+        function relTime(iso) {
+            if (!iso) return '';
+            const t = new Date(iso);
+            if (isNaN(t.getTime())) return '';
+            const now = new Date();
+            const mins = Math.floor((now - t) / 60000);
+            if (mins < 1) return '剛剛';
+            if (mins < 60) return mins + ' 分鐘前';
+            const hhmm = String(t.getHours()).padStart(2, '0') + ':'
+                       + String(t.getMinutes()).padStart(2, '0');
+            const days = Math.round(
+                (new Date(now.getFullYear(), now.getMonth(), now.getDate())
+                 - new Date(t.getFullYear(), t.getMonth(), t.getDate())) / 86400000);
+            if (days <= 0) return '今天 ' + hhmm;
+            if (days === 1) return '昨天 ' + hhmm;
+            return (t.getMonth() + 1) + '/' + t.getDate();
+        }
+
+        // 點選單以外的任何地方就收起（下拉是自繪的，沒有原生 select 的行為）
+        function _closeIpPicker(e) {
+            if (!e.target.closest || !e.target.closest('.ip-picker'))
+                ipPickerOpen.value = false;
         }
 
         const networkInfoRefreshing = ref(false);
@@ -630,11 +691,23 @@ createApp({
             } catch (e) { /* 設定值非關鍵路徑，失敗沿用預設即可 */ }
         }
 
-        // 額定電流輸入驗證：合法回 null，否則回錯誤訊息字串
-        function validateNominal(raw) {
+        // 模組型號標示的可調範圍；型號讀不到時回全域 limits（軟性降級）
+        function modRange(mod) {
+            const ch = channelsByModule.value[mod]?.[0];
+            return (ch?.nominal_min != null && ch?.nominal_max != null)
+                ? { min: ch.nominal_min, max: ch.nominal_max }
+                : { min: limits.nominalMin, max: limits.nominalMax };
+        }
+
+        // 額定電流輸入驗證：合法回 null，否則回錯誤訊息字串。
+        // 傳入 mod 時用該模組型號範圍（較嚴），否則用全域範圍。
+        function validateNominal(raw, mod) {
+            const { min, max } = mod != null
+                ? modRange(mod)
+                : { min: limits.nominalMin, max: limits.nominalMax };
             const val = Math.round(parseFloat(raw));
-            if (isNaN(val) || val < limits.nominalMin || val > limits.nominalMax) {
-                return `請輸入 ${limits.nominalMin}–${limits.nominalMax} A`;
+            if (isNaN(val) || val < min || val > max) {
+                return `請輸入 ${min}–${max} A`;
             }
             return null;
         }
@@ -650,7 +723,8 @@ createApp({
         async function setNominal(chId) {
             if (nominalBusy[chId]) return;
             const val = Math.round(parseFloat(nominalInputs[chId]));
-            const err = validateNominal(nominalInputs[chId]);
+            const err = validateNominal(nominalInputs[chId],
+                                        state.channels.find(c => c.id === chId)?.module);
             if (err) {
                 nominalFeedback[chId] = { ok: false, msg: err };
                 return;
@@ -707,12 +781,36 @@ createApp({
                 batchStatus.msg = errAll;
                 return;
             }
+            // 各模組型號範圍可能不同（例如 E4 1-4A 與 E2 2-10A），
+            // 全域套用時要逐模組檢查，否則會對超出範圍的模組白跑一趟 CIP 寫入。
+            const outOfRange = [...new Set(
+                state.channels
+                    .filter(ch => !isModNominalReadOnly(ch.module))
+                    .filter(ch => {
+                        const { min, max } = modRange(ch.module);
+                        return val < min || val > max;
+                    })
+                    .map(ch => ch.module)
+            )].sort((a, b) => a - b);
+            if (outOfRange.length) {
+                const detail = outOfRange
+                    .map(m => { const r = modRange(m); return `M${m} ${r.min}-${r.max}A`; })
+                    .join('、');
+                batchStatus.ok = false;
+                batchStatus.msg = `${val}A 超出這些模組的型號範圍：${detail}`;
+                return;
+            }
+            // 前端先濾掉鎖定模組（後端也會擋），但要讓使用者知道少做了哪些，
+            // 否則「套用至全部通道」看起來全部成功、實際漏掉旋鈕未轉 RC 的模組。
+            const lockedMods = [...new Set(
+                state.channels.filter(ch => isModNominalReadOnly(ch.module)).map(ch => ch.module)
+            )].sort((a, b) => a - b);
             const ids = state.channels
                 .filter(ch => !isModNominalReadOnly(ch.module))
                 .map(ch => ch.id);
             if (!ids.length) {
                 batchStatus.ok = false;
-                batchStatus.msg = '沒有可遠端設定的通道';
+                batchStatus.msg = '沒有可遠端設定的通道——請先將旋鈕轉到 RC（見模組說明）';
                 return;
             }
             batchBusy.value = true;
@@ -721,7 +819,10 @@ createApp({
             try {
                 const body = await postNominalBatch(ids, val);
                 batchStatus.ok = body.fail === 0;
-                batchStatus.msg = batchResultMsg(body);
+                batchStatus.msg = batchResultMsg(body)
+                    + (lockedMods.length
+                        ? `；模組 ${lockedMods.join('、')} 旋鈕未轉 RC，未套用`
+                        : '');
                 batchNominal.value = '';
             } catch (e) {
                 batchStatus.ok = false;
@@ -742,13 +843,62 @@ createApp({
             return channelsByModule.value[mod]?.[0]?.nominal_readonly ?? false;
         }
 
-        // 手動設定說明視窗開關
+        // 旋鈕型模組（2 通道）判定。
+        // 協定沒有「模組是否為旋鈕型」的欄位，也讀不到旋鈕位置（含 RC），
+        // 因此以通道數推定：2 通道 = E2 旋鈕型。用途僅為顯示 RC 說明入口。
+        // 固定額定型號沒有旋鈕，先排除。
+        function isModRotary(mod) {
+            return modFixedNominal(mod) == null
+                && (channelsByModule.value[mod]?.length ?? 0) === 2;
+        }
+
+        // 固定額定型號的安培數（如 E1 12-24DC/16A 回 16）；可調型回 null。
+        // 反灰的兩種原因由此區分：不可調 vs 旋鈕未轉 RC。
+        function modFixedNominal(mod) {
+            return channelsByModule.value[mod]?.[0]?.nominal_fixed ?? null;
+        }
+
+        // 手動設定說明視窗開關；helpMod 記錄由哪個模組開啟，
+        // 讓 Modal 依模組型別顯示對應說明（固定型 vs 旋鈕型）
         const showNominalHelp = ref(false);
+        const helpMod = ref(null);
+
+        function openNominalHelp(mod) {
+            helpMod.value = mod;
+            showNominalHelp.value = true;
+        }
+
+        // 重新探測額定電流可寫性（使用者轉動 RC 旋鈕後需手動觸發）
+        const reprobeBusy = ref(false);
+        const reprobeStatus = reactive({ ok: true, msg: '' });
+
+        async function reprobeNominal() {
+            if (reprobeBusy.value) return;
+            reprobeBusy.value = true;
+            reprobeStatus.ok = true;
+            reprobeStatus.msg = '偵測中…';
+            try {
+                const r = await fetch('/api/device/reprobe-nominal', { method: 'POST' });
+                const body = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(body.detail ?? `偵測失敗 (HTTP ${r.status})`);
+                const ro = body.readonly_modules ?? [];
+                reprobeStatus.ok = true;
+                reprobeStatus.msg = ro.length
+                    ? `完成：模組 ${ro.join('、')} 仍無法遠端設定`
+                    : '完成：所有模組都可遠端設定';
+            } catch (e) {
+                reprobeStatus.ok = false;
+                reprobeStatus.msg = e.message || '偵測失敗';
+            } finally {
+                reprobeBusy.value = false;
+                setTimeout(() => { reprobeStatus.msg = ''; }, 6000);
+            }
+        }
 
         async function setModuleNominal(mod) {
             if (batchBusyByMod[mod]) return;
             const val = Math.round(parseFloat(batchNominalByMod[mod]));
-            const errMod = validateNominal(batchNominalByMod[mod]);
+            const errMod = validateNominal(batchNominalByMod[mod], mod);
             if (errMod) {
                 batchStatusByMod[mod] = { ok: false, msg: errMod };
                 return;
@@ -1080,8 +1230,11 @@ createApp({
                 if (state.connected) refreshDeviceInfo();
                 refreshWebifInfo();
             }
-            // 進入連線設定頁且已連線 → 自動重新讀取網路資訊
-            if (page === 'connection' && state.connected) refreshNetworkInfo();
+            // 進入連線設定頁：網卡列舉供頁內掃描用（不需連線）；已連線則刷新網路資訊
+            if (page === 'connection') {
+                if (!ipIfaces.value.length) fetchIfaces();
+                if (state.connected) refreshNetworkInfo();
+            }
             // 進入 IP 設定頁且已連線 → 自動讀取目前網路設定
             if (page === 'ip-config') {
                 if (!ipIfaces.value.length) fetchIfaces();   // 網卡列舉不需連線
@@ -1115,12 +1268,15 @@ createApp({
 
         onMounted(() => {
             fetchLimits();      // 設定值與連線無關，不等 WebSocket
+            fetchRecent();      // 同上：未連線時更需要這份清單
             connectWs();
+            document.addEventListener('click', _closeIpPicker);
         });
         onUnmounted(() => {
             clearTimeout(wsRetryTimer);
             if (ws) ws.close();
             clearInterval(_logTimer);
+            document.removeEventListener('click', _closeIpPicker);
             _destroyCharts();
         });
 
@@ -1132,6 +1288,7 @@ createApp({
             fmt, barPct, cardClass, barClass,
             connecting,
             doConnect, doDisconnect, toggleCh, channelToggling, channelToggleError,
+            recentIps, ipPickerOpen, pickRecent, forgetRecent, relTime,
             networkInfo, deviceInfo, deviceInfoRefreshing, networkInfoRefreshing,
             refreshDeviceInfo, refreshNetworkInfo,
             webifInfo, webifInfoRefreshing, webifUnavailable, webifHasFaults, refreshWebifInfo,
@@ -1140,8 +1297,9 @@ createApp({
             nominalInputs, nominalFeedback, nominalBusy, batchNominal, batchStatus, batchBusy,
             setNominal, setAllNominal,
             batchNominalByMod, batchStatusByMod, batchBusyByMod,
-            setModuleNominal, isModNominalReadOnly,
-            showNominalHelp,
+            setModuleNominal, isModNominalReadOnly, isModRotary, modRange, modFixedNominal,
+            showNominalHelp, helpMod, openNominalHelp,
+            reprobeNominal, reprobeBusy, reprobeStatus,
             logEntries, logTotal, logPage, logPageSize, logFilter,
             logAutoScroll, logTotalPages,
             fetchLogs, clearLogs, setPageSize,

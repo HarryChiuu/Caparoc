@@ -1,6 +1,53 @@
 # CAPAROC 控制器 - 待實作功能清單
 
-更新日期: 2026-08-31
+更新日期: 2026-09-03
+
+---
+
+## 🎯 目前的工作佇列
+
+> 本節是**唯一需要先讀的地方**——底下 1600 行是歷史記錄與設計決策，
+> 要動手時才往下翻。每次收掉項目請同步更新這裡。
+
+### 下一步（建議順序）
+
+| # | 任務 | 工時 | 章節 |
+|---|------|------|------|
+| 1 | **5.1 路徑抽象化**（`src/paths.py`）— 打包相容性目前**為零**（全 repo 無 `sys._MEIPASS`／`sys.frozen`），是 Phase 5 全部項目的前置 | 1-1.5h | Phase 5.1 |
+| 2 | 4.3.6 通道自訂標籤（Serial Number 綁定，5 個 Step 全未動） | 2-3h | 4.3.6 |
+| 3 | 4.4.1 CLI 通道詳細狀態顯示（`s <ch>`、使用率、bit 0-5 解析） | 2-3h | 4.4.1 |
+| 4 | 5.3 PyInstaller 打包（前置＝#1） | 2-3h | Phase 5.3 |
+
+**為什麼把 5.1 排第一**：它是 Phase 5 全部項目的前置，且愈晚做、愈多新程式碼會沿用
+錯誤的路徑寫法（目前四個位置都是 `Path(__file__)`）。開發模式下這些寫法全部正常，
+**問題只在打包後浮現**——其中 `_PROBE_CACHE_PATH` 那個還帶副作用：快取永不命中，
+等於每次連線都對真實設備做一輪額定電流寫入／還原。
+
+### 中優先（無相依，可插隊）
+
+- 4.3.3 UI 視覺一致性（2-3h）／ 4.3.4 行動裝置支援（1-2h）
+- 4.5 數據記錄與分析（6-8h）— ⚠️ 要與已接上的 log 保留機制**共用**清理策略，別長第二套
+- 4.6 告警與通知系統（4-5h）
+- 5.4 首次執行初始化（0.5h）／ 5.5 Docker（1-2h）／ 5.6 版本號管理（0.5h）
+
+### 低優先
+
+4.7 多設備管理（5-6h）／ 4.8 CI/CD（8-10h）／ Phase 6 企業級功能
+
+### 🧾 零散技術債（無專屬章節，容易被遺忘）
+
+| 債務 | 症狀 | 出處 |
+|------|------|------|
+| `?v=` 版號需**手動改兩處**（`index.html:8` 與 `:553`） | 漏改 → 使用者拿到舊 JS，回報「新功能沒出現」，最難查。**無任何機制提醒** | 債 #11 |
+| BOOTP `op` 被當成 DHCP message type（`caparoc_ip_config.py:418`、`:467`） | 會匹配任何 client→server BOOTP 訊息，可能回報「續約中」而非「首次探索」的設備 MAC | 問題 #4 —— **配置精靈上 web 的前置條件** |
+| `app.js` 單一 `setup()` 約 870 行 | 全案最大長期債 | 債 #8（**刻意不償還**，需引入 build step） |
+| `arp -a` 依賴語系文字（`動態`/`dynamic`） | 非 zh-TW／英文語系找不到項目 | 問題 #6（已知限制） |
+| `get_broadcast_addresses()` 硬編 `.255`（假設 /24） | 非 /24 網段廣播位址算錯；多網卡可能漏掉 | 問題 #7（已知限制） |
+| `set_device_dhcp()` 任何例外都回 `success=True` | 真失敗與預期斷線無法區分 | 問題 #5（**刻意不改**，真相來源是事後驗證步驟） |
+| 每個新端點都要手寫 `_DEMO_MODE` 分支 | 漏寫 → `--demo` 靜默壞掉 | 債 #10（status payload 已有測試把關，其他端點仍人工） |
+| 選配：`tests/test_ip_core.py` | 純函式安全網，約 30 行，成本極低 | 建議項 |
+
+---
 
 ## ✅ 已完成功能
 
@@ -17,6 +64,124 @@
 - [x] **EtherNet/IP List Identity 設備探索**（UDP 廣播，無需管理員）
 - [x] **ARP table fallback 探索**（port 44818 連線測試）
 - [x] **mini DHCP server**（port 67，綁定指定 IP，廣播走子網路廣播）
+
+---
+
+## 🔤 主控台編碼防護 ✅ 已完成（2026-09-03）
+
+> **起因**：上一節的真機驗證途中撞到——設備 ping 通、`CaparocBackend` 直連也成功，
+> 但 `python web/app.py > run.log` 啟動時 `connect()` 回報失敗，log 只留一行
+> `connect() 例外: 'cp950' codec can't encode character '❌'`。
+> 使用者看到的是「連不上設備」，設備其實好好的。
+
+### 根因
+
+本專案有 **400+ 處帶 emoji 的 `print()`**：
+
+| 檔案 | 數量 |
+|---|---|
+| `src/caparoc_controller.py` | 211 |
+| `src/caparoc_backend.py` | 101 |
+| `src/caparoc_ip_config.py` | 81 |
+| 其餘（`web/app.py`、`app_config.py`、`logging_manager.py`、`caparoc_ip_core.py`） | 14 |
+
+- Windows **真實主控台**在 Python 3.6+ 走 Unicode API（PEP 528），emoji 印得出來
+  ——**所以平常手動執行永遠不會發現**。
+- stdout 一旦**被導向檔案或 pipe**（打包 exe 由排程／服務啟動、`> run.log`、
+  被其他程式包起來執行），編碼退回地區編碼，繁中 Windows = **cp950**，
+  裝不下任何 emoji。
+
+⚠️ **致命的不是印不出來，而是這些 print 多半在 `try` 內**：`UnicodeEncodeError`
+被外層 `except Exception` 當成「操作失敗」吞掉。`connect()` 印到
+`✅ CIP 連線已建立` 那一行就炸，於是設備完全正常卻回報連不上。
+
+### 完成項目
+
+- [x] `src/console_io.py`：`force_safe_stdio()`，把 stdout/stderr 的 `errors`
+      改成 `replace`，裝不下的字元退化成 `?`
+- [x] 三個進入點在**任何輸出之前**呼叫：`web/app.py`、`src/caparoc_controller.py`、
+      `src/caparoc_ip_config.py`
+- [x] `tests/test_console_encoding.py`（5 項，不需設備與網路）
+
+### ⚠️ 刻意只改 `errors`、不改 `encoding`
+
+改成 UTF-8 會讓 cp950 主控台的**中文**變亂碼。為了救裝飾用的 emoji 去弄壞
+真正重要的訊息，是賠本生意。`test_cjk_still_readable_after_protection` 釘住這件事。
+
+### 真機驗證（同一台設備、同一時間，只差有沒有掛防護）
+
+| | `connect()` | stdout |
+|---|---|---|
+| 修復前 | `False` | 印到 `[CIP 連線] 正在建立…` 就中斷 |
+| 修復後 | `True`（讀得到 `CAPAROC PM EIP`） | `? CIP 連線已建立 (WEB UI 應顯示 'connected')` — emoji 退化成 `?`，**中文完好** |
+
+`PYTHONIOENCODING=cp950` 下以 uvicorn 啟動 Web 服務同樣正常連線。
+
+### 📌 與 Phase 5 打包的關係
+
+打包成 exe 後由排程／服務啟動時**沒有真實主控台**，正是本 bug 必然觸發的情境。
+Phase 5.1 動路徑抽象化時**不要移除**進入點的 `force_safe_stdio()` 呼叫，
+`test_entry_points_call_force_safe_stdio` 會擋。
+
+### 未來項目（低優先）
+
+- [ ] 考慮把 400+ 處 emoji `print()` 收斂到 logging——目前 CLI 的使用者回饋與
+      log 記錄混在同一組 `print`，兩者需求不同（前者要好看，後者要可 grep）。
+      成本高、收益中，防護已經擋掉致命面，不急。
+
+---
+
+## 🔌 Web 連線設定頁：最近連線 IP 下拉 + 頁內掃描 ✅ 已完成（2026-09-03）
+
+> **起因**：現場每次要連設備都得手動 key 一次 IP。而且 Web 連線成功後**不會**
+> 把 IP 寫回設定檔（只有 CLI 的 `setting [3]` 會），連過的位址下次一樣要重打。
+
+### 兩條路互補，缺一不可
+
+| 情境 | 解法 |
+|---|---|
+| 連過的設備要再連一次 | 連線設定頁 IP 欄改為**可輸入的下拉**，列出最近成功連線過的設備 |
+| 第一次接觸的設備，手邊沒有 IP | 把既有的**網段掃描**搬一份到連線設定頁，掃到直接一鍵連線 |
+
+歷史清單只解決前者。真正的「零輸入」是後者——掃描 API（`POST /api/ipconfig/discover`）
+早就寫好了，只是入口埋在「IP 設定」頁。兩頁共用同一份掃描狀態，掃過一次兩邊都看得到。
+
+### 完成項目
+
+- [x] `src/app_config.py`：`device.recent` / `device.recent_max`（預設 5）
+  - [x] `record_connection(ip, name, serial)`：移到最前 + 更新時間 + 同步 `default_ip`
+  - [x] `recent_devices()` / `forget_device_ip(ip)` / `recent_max()`
+  - [x] `_sanitize_recent()`：吸收手改壞的設定檔（塞字串、缺 `ip`、重複、非法 IP）
+  - [x] 抽出 `_write_config()`，三條寫入路徑共用 read-modify-write
+- [x] `web/app.py`：`_remember_connection()`、`GET/DELETE /api/connect/recent`
+- [x] 前端：`.ip-picker` 自繪下拉（IP + 設備名/序號 + 相對時間 + 單筆刪除）、頁內掃描區塊
+- [x] `config/config.example.json`、`WEB_UI_FEATURE_REFERENCE.md`、`CHANGELOG.md`
+
+### 📌 設計決策：清單存後端 `config.json`，**不是** localStorage
+
+- 現場換一台筆電、換瀏覽器、清快取都不該讓清單消失——這是**設備資產**，不是瀏覽器偏好
+- `default_ip` 本來就住在 `device` 區塊，兩者放一起才不會各記各的
+- 打包成 exe 後跟著 `config/` 一起走
+
+### ⚠️ 刻意的行為（改動前先讀）
+
+| 行為 | 為什麼 |
+|---|---|
+| **只在連線成功後**寫入清單 | 打錯的位址進了清單只會變成下次的干擾項——那正是這功能要省掉的麻煩 |
+| 寫入時**一併更新 `default_ip`** | 順帶補掉「Web 連線後不記得 IP」這個既有缺口 |
+| 設備名／序號讀取**整段包在 try 內** | 那只是顯示用標籤，不能因為它讓連線流程失敗。讀不到就留 `null` |
+| `DELETE` **不動 `default_ip`** | 「這台不想再出現在下拉」與「換開機預設值」是兩件事 |
+| 選取只填入、**不自動連線** | 已連線時換 IP 需先斷線，靜靜幫使用者做會很意外 |
+| 刪除鈕常駐但淡化（`opacity: 0.45`） | 藏到 hover 才出現的話，觸控裝置永遠點不到 |
+
+### ⚠️ 踩到的坑：全域 `button:hover` 蓋掉下拉項目
+
+`style.css` 的 `button:hover { background: var(--btn-bg-hover) }` 特異性 (0,1,1)
+蓋過 `.ip-picker-item` 的 (0,1,0)，hover 時整列會變成藍色按鈕底、字幾乎看不見。
+補 `.ip-picker-item:hover { background: none }` 才讓 `li:hover` 的淡色 highlight 透出來。
+
+> **通則**：這份 CSS 有 `button`／`.btn` 的**裸元素**規則，任何「長得不像按鈕的
+> `<button>`」（下拉項目、圖示鈕、卡片）都要記得覆蓋 `:hover`，光蓋 base 狀態不夠。
 
 ---
 
@@ -251,7 +416,7 @@
 | 8 | `app.js` 的單一巨型 `setup()` 會從 751 行漲到約 870 行，`return {}` 再多約 17 個鍵 | 全案最大長期債，本次讓它更肥 | **不在本次償還**（引入 build step / SFC 是另一層級改動）。折衷：IP 設定的 state 與函式集中在**單一 banner 註解區塊**、`return {}` 也集中成一個群組，讓日後抽 composable 時是「一刀切」而非大海撈針 |
 | 9 | `/api/device/network`（`get_network_info`，MAC/hostname）與 `/api/ipconfig/current`（`read_device_network_config`，0xF5 Attr1/3/5 含 Static/DHCP 模式）**語意重疊** | 日後易搞混、或在錯的端點加欄位 | 不合併（新頁面**必須**有 `config_control`，舊端點沒有）。改為兩者 docstring 互相指路 + `WEB_UI_FEATURE_REFERENCE.md` 表格明列差異 |
 | 10 | 每個新端點都要手寫 `_DEMO_MODE` 分支 | 漏寫 → `--demo` 在該頁靜默壞掉，且無測試會抓到 | ~~既有慣例的固定稅，無法迴避。列入驗證清單逐項點過~~ **已部分償還（2026-09-01）**：新增 `tests/test_demo_payload.py`，自動比對 demo 與真實 payload 的欄位集合與型別，漏寫 status 欄位會被擋下（已用注入迴歸驗證）。⚠️ 僅涵蓋 **status payload**；其他端點的 `_DEMO_MODE` 分支仍是人工把關 |
-| 11 | `?v=` 版號在 `index.html:8` 與 `:553` **兩處手動更新** | 漏改 → 使用者拿到舊 JS，回報「新功能沒出現」，除錯成本高 | 本次照舊手動改。未來可改由 `/` 路由注入單一版號常數——但那要把 `FileResponse` 換成模板渲染，超出本次範圍 |
+| 11 | `?v=` 版號在 `index.html:8` 與 `:553` **兩處手動更新** | 漏改 → 使用者拿到舊 JS，回報「新功能沒出現」，除錯成本高 | 本次照舊手動改。未來可改由 `/` 路由注入單一版號常數——但那要把 `FileResponse` 換成模板渲染，超出本次範圍。**2026-09-03 又手動付了一次**（`4.11.0` → `4.12.0`）：這筆債每次動前端都要繳，且**沒有任何機制會提醒**——漏繳的症狀是「使用者說新功能沒出現」，最難查 |
 
 ---
 
@@ -789,7 +954,7 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-##### 4.3.1-audit 設定鍵生效範圍稽核（2026-09-03）
+##### 4.3.1-audit 設定鍵生效範圍稽核 ✅ **已完成（2026-09-03）**
 
 > 起因：使用者把 `retention_days` 改成 10，問「程式一啟動就會刪舊 log 嗎」。
 > 逐鍵追蹤呼叫點後發現**兩個鍵是死設定**，另有一個鍵只在特定啟動方式下生效。
@@ -808,41 +973,59 @@ def _show_monitor_status(self, status, changes):
 | `nominal_current.min/max` | backend 常數 =(3,7)、`/api/config/limits` 回 `min:3,max:7` | ✅ 重啟後 |
 | `logging.log_level` | `caparoc` logger level = DEBUG | ✅ 重啟後 |
 | `logging.log_dir` | 真的建立 `logs_probe/` 並寫入當日檔 | ✅ 重啟後 |
-| `logging.retention_days` | 設 10，`logs/` 內 25 個檔（最舊 2026-05-25，遠超 10 天）**一個都沒刪** | ❌ **無效** |
-| `logging.remote.*` | `RemoteHandler.emit()` 內容是 `pass` | ❌ **無效** |
+| `logging.retention_days` | 稽核時：設 10，`logs/` 內 25 個檔（最舊 2026-05-25）**一個都沒刪** | ✅ **已修復**（見下） |
+| `logging.remote.*` | `RemoteHandler.emit()` 內容是 `pass` | ❌ **無效**（已標註為未實作） |
 
 **所有鍵都是啟動時讀入 module-level 常數，沒有熱重載**——改完必須重啟。
 
-###### 🔴 死設定 1：`logging.retention_days`
+###### ✅ 死設定 1：`logging.retention_days` — 已接上（選項 a）
 
-`cleanup_old_logs()`（`logging_manager.py:247`）**全 repo 沒有任何呼叫者**——
+`cleanup_old_logs()`（`logging_manager.py`）原本**全 repo 沒有任何呼叫者**——
 不在啟動流程、沒有排程器、CLI 與 web 都沒接。docstring 寫「手動呼叫或由排程觸發」，
-但兩者都不存在。功能寫好了但沒接上觸發點，與 `RemoteHandler` 同屬**預留骨架**。
+但兩者都不存在。功能寫好了卻沒接上觸發點。
 
-⚠️ 附帶缺陷：`cleanup_old_logs()` 用 `Path(self.config['log_dir'])` 直接建路徑，
-**沒有做相對轉絕對**（`_setup_logger():201-204` 有做）。若日後接上，從不同工作目錄
-啟動時會清錯資料夾——接線時必須一併修。
+**完成內容**：
+- [x] `web/app.py` lifespan 啟動段呼叫，**放在 `_DEMO_MODE` early return 之前**
+      （log 保留策略與有沒有接設備無關），包 try/except——清不掉舊 log 不該擋住服務啟動
+- [x] `logging_manager.cleanup_old_logs()` 模組層入口（呼叫端不需持有實例；尚未 `setup()` 時回空列表）
+- [x] 修復 `log_dir` 相對轉絕對缺陷：抽出 `_resolve_log_dir()`，`_setup_logger()` 與
+      `cleanup_old_logs()` **共用同一份解析**（原本前者有轉、後者沒有 → 從不同工作目錄
+      啟動會「寫入 A 目錄、清除 B 目錄」）
+- [x] `tests/test_log_retention.py`（6 項，不需設備與網路）
 
-- [ ] **決策點**：三選一
-  - (a) **接上去**（約 15 分鐘）：`web/app.py` lifespan 啟動段呼叫，並修上述 `log_dir` 缺陷
-  - (b) **標記為未實作**：在 `config.example.json` 的 `_comment` 註明「尚未接上，設定無效」，
-        避免下次又被誤設。成本 2 分鐘，但功能仍缺
-  - (c) 維持現狀（不建議——使用者已經踩過一次）
+**🐛 修復過程中發現的第三個缺陷（原稽核未察覺）**：
+`cutoff = datetime.now() - timedelta(days=N)` 帶著**當下時刻**，但檔名只有日期（零時）。
+於是「剛好第 N 天」的檔案會因為**啟動時刻不同而時留時刪**——早上開服存活、晚上開服被刪。
+已改為以當日零時為界，語意變成穩定的「保留最近 N 天」。測試的邊界案例釘住這件事。
 
-###### 🔴 死設定 2：`logging.remote.*`
+**驗證**：`tests/test_log_retention.py` 6/6 通過；demo 模式實跑 lifespan，
+`log_dir=logs_probe` / `retention_days=10` 下播種的 4 個檔（0/3/20/90 天）
+確實只剩 0 天與 3 天兩個。真實 `logs/` 全程未被觸碰（用另開目錄測試）。
 
-`RemoteHandler.emit()` 是 `pass` + 一段註解範例。`enabled: true` 也不會推送任何東西。
-五個子鍵（`url` / `token` / `batch_size` / `flush_interval_sec` / `type`）全部無作用。
+> ⚠️ **給維護者**：這是目前**唯一**的清除觸發點，而且只在 **Web 服務啟動**時執行——
+> CLI 不會清。長時間不重啟 web 就不會清。
 
-- [ ] 同樣需要在 `config.example.json` 註明「未實作」，或索性從範本移除直到真的要做
+###### ✅ 死設定 2：`logging.remote.*` — 已標註為未實作（選項 b）
 
-###### 🟡 `web.port` 只在直接執行時生效
+`RemoteHandler.emit()` 是 `pass` + 一段註解範例。`enabled: true` 也不會推送任何東西，
+六個子鍵（`url` / `token` / `batch_size` / `flush_interval_sec` / `type` / `enabled`）全部無作用。
+
+- [x] `config.example.json` 的 `_comment` 加上「🚧 尚未實作，設定無效」
+- [x] README 新增「🚧 尚未實作的設定」小節
+
+**未來若要真的實作**：骨架保留在 `logging_manager.RemoteHandler`，emit() 內有註解版範例。
+
+###### ✅ `web.port` 只在直接執行時生效 — 已註明
 
 `_resolve_port()` 定義在 `if __name__ == "__main__":` 之前但**只在該區塊內被呼叫**。
 用 `uvicorn web.app:app --port N` 啟動時整個函式不會執行，`config.json` 的 `web.port`
-被完全忽略。⚠️ README 兩種啟動方式都有寫，容易誤會。
+被完全忽略。
 
-- [ ] 至少在 `config.example.json` 與 README 註明「僅 `python web/app.py` 適用」
+- [x] `config.example.json` 的 `web._comment` 註明「僅 `python web/app.py` 適用」
+- [x] README 新增「⚙️ 設定檔」小節，含兩種啟動方式的 ✅/❌ 對照與覆寫優先序表
+
+**刻意不改行為**：把 `_resolve_port()` 搬到 module level 會讓 `uvicorn` 啟動時也去
+探測／佔用埠，與 uvicorn 自己的 `--port` 打架。註明限制比讓兩套埠邏輯互搶安全。
 
 ---
 
@@ -1410,16 +1593,15 @@ docker compose up -d
 
 **Phase 4 進行中** 🚀
 
-> 表格於 2026-09-03 重整：移除已完成項目、修正 4.3.6 重複列一次的錯誤，
-> 並加入 4.3.1-audit 發現的決策點。
+> 表格於 2026-09-03 重整（第二次）：4.3.1-audit 的兩個決策點已執行完畢，移出待辦。
 
 **已完成（2026-09-01）**：4.3.1 設定值外部化 ✅、4.3.5 nominal_readonly 探測 ✅、
 4.4.2 / 4.4.3 CLI 設備/網路資訊指令 ✅
+**已完成（2026-09-03）**：4.3.1-audit (a) 接上 `cleanup_old_logs()` ✅、
+(b) 死設定與 `web.port` 限制註明 ✅
 
 | 優先級 | 任務 | 預估工時 |
 |--------|------|---------|
-| 高 | **4.3.1-audit (a)** 接上 `cleanup_old_logs()` + 修 `log_dir` 相對路徑缺陷 | 15m |
-| 高 | **4.3.1-audit (b)** `config.example.json` / README 註明死設定與 `web.port` 限制 | 10m |
 | 高 | 4.3.6 通道自訂標籤（設備名稱） | 2-3h |
 | 高 | 4.4.1 CLI 通道詳細狀態顯示 | 2-3h |
 | 中 | 4.3.3 UI 視覺一致性與元件統一 | 2-3h |
@@ -1431,9 +1613,9 @@ docker compose up -d
 
 **Phase 4 預估剩餘工時**：25-35 小時
 
-> 💡 **4.5 數據記錄與分析** 與 4.3.1-audit (a) 有重疊：若 4.5 要導入 SQLite 與
-> 「自動清理舊數據」，log 的保留策略應一併納入同一套機制，而不是各做各的。
-> 做 4.5 前先回頭看 audit (a) 的決定。
+> 💡 **4.5 數據記錄與分析**：log 保留已在 2026-09-03 接上
+> （web 啟動時依 `retention_days` 清除）。若 4.5 要導入 SQLite 的「自動清理舊數據」，
+> **應併入同一套機制**，不要再長出第二套保留策略。
 
 ---
 

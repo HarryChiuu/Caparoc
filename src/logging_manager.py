@@ -58,6 +58,17 @@ def get_instance() -> Optional['LogManager']:
     return _instance
 
 
+def cleanup_old_logs(retention_days: int = None) -> list[str]:
+    """
+    清除舊 log 檔的模組層入口（呼叫端不需持有 LogManager 實例）。
+
+    尚未 setup() 時回傳空列表——沒有 log 系統就沒有 log 要清。
+    """
+    if _instance is None:
+        return []
+    return _instance.cleanup_old_logs(retention_days)
+
+
 # ─── Custom JSONL Handler ────────────────────────────────────────────────────
 class _JsonlHandler(logging.FileHandler):
     """每行寫入一條 JSON，供未來 API 串接或 Filebeat 採集。"""
@@ -190,6 +201,20 @@ class LogManager:
 
         return cfg
 
+    # ── 路徑解析 ──────────────────────────────────────────────────────────────
+    def _resolve_log_dir(self) -> Path:
+        """
+        回傳 log 目錄的絕對路徑。
+
+        相對路徑以專案根目錄（src/ 的上一層）為基準，不受 CWD 影響——
+        `_setup_logger()` 與 `cleanup_old_logs()` 必須共用同一份解析，
+        否則從不同工作目錄啟動時會「寫入 A 目錄、清除 B 目錄」。
+        """
+        log_dir = Path(self.config['log_dir'])
+        if not log_dir.is_absolute():
+            log_dir = Path(__file__).parent.parent / log_dir
+        return log_dir
+
     # ── 初始化 handlers ───────────────────────────────────────────────────────
     def _setup_logger(self, enable_gui_queue: bool):
         logger = self._logger
@@ -198,10 +223,7 @@ class LogManager:
         logger.propagate = False
 
         # 建立 logs/ 目錄
-        log_dir = Path(self.config['log_dir'])
-        if not log_dir.is_absolute():
-            # 相對路徑以專案根目錄為基準（src/ 的上一層），不受 CWD 影響
-            log_dir = Path(__file__).parent.parent / log_dir
+        log_dir = self._resolve_log_dir()
         log_dir.mkdir(parents=True, exist_ok=True)
 
         today = datetime.now().strftime('%Y-%m-%d')
@@ -243,7 +265,7 @@ class LogManager:
             extra={'log_module': 'SYS'},
         )
 
-    # ── 清除舊檔（手動呼叫或由排程觸發）─────────────────────────────────────
+    # ── 清除舊檔（由 web/app.py lifespan 於啟動時呼叫）──────────────────────
     def cleanup_old_logs(self, retention_days: int = None) -> list[str]:
         """
         清除超過保留天數的 log 檔案。
@@ -252,7 +274,11 @@ class LogManager:
             retention_days: 保留天數。
                             None  → 使用 logging_config.json 的 retention_days。
                             0     → 不清除，直接返回。
-                            N > 0 → 刪除 N 天前的 .log 與 .jsonl 檔案。
+                            N > 0 → 保留最近 N 天，更舊的 .log 與 .jsonl 刪除
+                                    （以當日零時為界，不受啟動時刻影響）。
+
+        觸發點：`web/app.py` 的 lifespan 啟動段。這是目前唯一的呼叫者——
+        改動時請一併確認該處，否則設定會再次變成死設定。
 
         Returns:
             已刪除的檔名列表（空列表代表無刪除）。
@@ -262,8 +288,12 @@ class LogManager:
         if days <= 0:
             return []
 
-        log_dir = Path(self.config['log_dir'])
-        cutoff = datetime.now() - timedelta(days=days)
+        log_dir = self._resolve_log_dir()
+        # 截止日正規化到當日零時：檔名只有日期（無時間），若拿 datetime.now()
+        # 當基準，「剛好第 N 天」的檔案會因為啟動時刻不同而時留時刪
+        # （早上開服存活、晚上開服被刪）。以零時為界 → 保留最近 N 天，結果穩定。
+        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        cutoff = today_start - timedelta(days=days)
         removed = []
 
         for pattern in ('*.log', '*.jsonl'):

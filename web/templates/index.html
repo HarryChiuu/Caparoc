@@ -239,7 +239,7 @@
                                 <button class="btn" @click="setAllNominal" :disabled="!state.connected || batchBusy">
                                     {{ batchBusy ? '設定中…' : '套用至全部通道' }}
                                 </button>
-                                <span class="feedback-msg" :class="batchStatus.ok ? 'ok' : 'err'"
+                                <span class="feedback-msg" :class="batchStatus.hint ? 'hint' : (batchStatus.ok ? 'ok' : 'err')"
                                     v-if="batchStatus.msg" :title="batchStatus.msg">{{ batchStatus.msg }}</span>
                             </div>
 
@@ -274,7 +274,7 @@
                                         :disabled="!state.connected || isModNominalReadOnly(mod) || batchBusyByMod[mod]">
                                         {{ batchBusyByMod[mod] ? '設定中…' : '套用' }}
                                     </button>
-                                    <span class="feedback-msg" :class="batchStatusByMod[mod]?.ok ? 'ok' : 'err'"
+                                    <span class="feedback-msg" :class="batchStatusByMod[mod]?.hint ? 'hint' : (batchStatusByMod[mod]?.ok ? 'ok' : 'err')"
                                         v-if="batchStatusByMod[mod]?.msg" :title="batchStatusByMod[mod].msg">{{
                                         batchStatusByMod[mod].msg }}</span>
                                 </div>
@@ -301,20 +301,26 @@
                                         <tr v-for="ch in channelsByModule[mod]" :key="ch.id">
                                             <td class="td-ch">CH{{ ch.channel }}</td>
                                             <td class="td-label">
-                                                <!-- 綁 labelDrafts 而非 channelLabels：WebSocket 每秒重繪，
-                                                     單向 :value 會把使用者打到一半的字拉回舊值 -->
-                                                <input type="text" class="label-input"
-                                                    :value="labelValue(ch.id)"
-                                                    @focus="onLabelFocus(ch.id)"
-                                                    @input="labelDrafts[ch.id] = $event.target.value"
-                                                    @blur="saveLabel(ch.id, $event.target.value)"
-                                                    @keyup.enter="$event.target.blur()"
-                                                    :maxlength="LABEL_MAX_LEN"
-                                                    :disabled="labelBusy[ch.id]"
-                                                    placeholder="未命名"
-                                                    title="為這個通道命名，例如「主機電源」。僅存在本機。" />
-                                                <span class="feedback-msg" :class="labelFeedback[ch.id]?.ok ? 'ok' : 'err'"
-                                                    v-if="labelFeedback[ch.id]?.msg">{{ labelFeedback[ch.id].msg }}</span>
+                                                <!-- flex 容器把輸入框與回饋關在格子裡，否則回饋會溢出蓋到
+                                                     隔壁的「目前額定電流」；min-height 與操作欄一致才對得齊 -->
+                                                <div class="td-label-wrap">
+                                                    <!-- 綁 labelDrafts 而非 channelLabels：WebSocket 每秒重繪，
+                                                         單向 :value 會把使用者打到一半的字拉回舊值 -->
+                                                    <input type="text" class="label-input"
+                                                        :value="labelValue(ch.id)"
+                                                        @focus="onLabelFocus(ch.id)"
+                                                        @input="labelDrafts[ch.id] = $event.target.value"
+                                                        @blur="saveLabel(ch.id, $event.target.value)"
+                                                        @keyup.enter="$event.target.blur()"
+                                                        :maxlength="LABEL_MAX_LEN"
+                                                        :disabled="labelBusy[ch.id]"
+                                                        placeholder="未命名"
+                                                        title="為這個通道命名，例如「主機電源」。僅存在本機。" />
+                                                    <span class="feedback-msg"
+                                                        :class="labelFeedback[ch.id]?.hint ? 'hint' : (labelFeedback[ch.id]?.ok ? 'ok' : 'err')"
+                                                        v-if="labelFeedback[ch.id]?.msg"
+                                                        :title="labelFeedback[ch.id].msg">{{ labelFeedback[ch.id].msg }}</span>
+                                                </div>
                                             </td>
                                             <td class="td-nominal">{{ ch.nominal_amps }} A</td>
                                             <td>
@@ -331,7 +337,7 @@
                                                         {{ nominalBusy[ch.id] ? '設定中…' : '設定' }}
                                                     </button>
                                                     <span class="feedback-msg"
-                                                        :class="nominalFeedback[ch.id]?.ok ? 'ok' : 'err'"
+                                                        :class="nominalFeedback[ch.id]?.hint ? 'hint' : (nominalFeedback[ch.id]?.ok ? 'ok' : 'err')"
                                                         v-if="nominalFeedback[ch.id]?.msg"
                                                         :title="nominalFeedback[ch.id].msg">
                                                         {{ nominalFeedback[ch.id].msg }}

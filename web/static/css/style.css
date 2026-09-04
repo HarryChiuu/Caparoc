@@ -872,6 +872,13 @@ code {
     border-color: var(--accent);
 }
 
+/* placeholder 顯示的是「目前額定電流」，不是已填入的值。原本吃瀏覽器預設灰，
+   在深色主題下與真實輸入相當接近，加上 text-align:center 更像已經填好了——
+   使用者因此按下「設定」卻得到「請輸入 N–M A」。明確調淡，讓它看起來就是提示。 */
+.nominal-input::placeholder {
+    color: var(--text-fainter);
+}
+
 /* ── 通道／設備自訂標籤輸入（4.3.6）──────────
    沿用 .nominal-input 的外框與配色，但預設低調（透明底、淡框），
    focus 時才浮出來——名稱欄多數時候是空的，不該和額定電流輸入搶視線。 */
@@ -912,7 +919,34 @@ code {
     max-width: 260px;
 }
 
-.td-label {
+/* 名稱欄：與「操作」欄同一套容器策略（見 .td-action）。
+   col-label 固定 190px 而 .label-input 是 width:100%，輸入框幾乎吃滿整格，
+   回饋訊息若當成 inline 兄弟節點就無處可去——在 table-layout:fixed 底下
+   會直接溢出蓋到隔壁的「目前額定電流」。改用 flex 容器把兩者關在格子裡：
+   輸入框可縮（min-width:0），訊息單行截斷並靠 title 保留全文。
+   min-height 與 .td-action 一致，否則名稱欄與額定電流／操作欄的文字不齊。 */
+.td-label-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 30px;
+}
+
+/* 只在名稱欄內覆寫，不動 .label-input 基底類別——
+   系統狀態頁的設備名稱欄共用它，直接改會讓那裡失去 max-width: 260px。 */
+.td-label-wrap .label-input {
+    flex: 1 1 auto;
+    min-width: 0;                 /* 不可省：flex 子項預設不肯縮到內在寬度以下，溢出會回來 */
+    max-width: none;
+}
+
+.td-label-wrap .feedback-msg {
+    margin-left: 0;
+    flex: 0 1 auto;               /* 只佔自然寬度，空間不足時先讓步給輸入框 */
+    min-width: 0;
+    max-width: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
@@ -1008,6 +1042,14 @@ code {
 
 .feedback-msg.err {
     color: var(--err);
+}
+
+/* 中性提示：例如「請先輸入新的額定電流」。
+   刻意不用 --err——紅色在本專案是失敗訊號（設定失敗／無法連線／後端 detail），
+   花在「你還沒填」會稀釋它的意義；工控介面裡真正的紅字代表對現場斷路器的
+   CIP 寫入失敗了。--text-dim 是既有的「資訊性、非警示」色，兩個主題都達對比標準。 */
+.feedback-msg.hint {
+    color: var(--text-dim);
 }
 
 /* ── 連線設定頁 ─────────────────────────── */

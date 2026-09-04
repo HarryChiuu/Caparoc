@@ -172,6 +172,18 @@ def test_status_payload_must_not_carry_labels():
 # 以下兩支是靜態檢查，確保不會有人把單向綁定改回去。
 _INDEX = _ROOT / "web" / "templates" / "index.html"
 _APPJS = _ROOT / "web" / "static" / "js" / "app.js"
+_CSS = _ROOT / "web" / "static" / "css" / "style.css"
+
+
+def _fn_body(js: str, signature: str) -> str:
+    """
+    粗略取出一個 JS 函式的內容：從簽名之後到第一個「縮排 8 空白的收尾大括號」為止。
+
+    這些函式都在 setup() 內（縮排 8 格），所以 `\\n        }` 就是它的結束。
+    只用於靜態檢查，不需要真正的 parser。
+    """
+    assert signature in js, f"找不到 {signature}"
+    return js.split(signature, 1)[1].split("\n        }", 1)[0]
 
 
 def test_label_inputs_must_not_bind_stored_value_directly():
@@ -206,6 +218,100 @@ def test_save_functions_clear_the_draft():
     js = _APPJS.read_text(encoding="utf-8")
     assert "delete labelDrafts[chId];" in js
     assert "delete labelDrafts['_device'];" in js
+
+
+# ── 版面與回饋狀態回歸防護（2026-09-04 第二輪回報）────────────────────────
+# 回報 1：存檔後「✓ 已儲存」蓋到隔壁「目前額定電流」的「10 A」上，且該列文字沒對齊。
+#   成因：.label-input 是 width:100%，已吃滿 190px 的 col-label，回饋 span 當成
+#   inline 兄弟節點就無處可去；.td-label 又有 white-space:nowrap，在
+#   table-layout:fixed 底下直接溢出。且 .td-label 沒有 .td-action 的 min-height:30px。
+# 回報 2：同一列有「名稱」（blur 自動存、無按鈕）與「額定電流」（要按「設定」）
+#   兩種設定，使用者設定完名稱去按「設定」，收到紅字「請輸入 N–M A」。
+
+
+def test_label_cell_uses_flex_wrapper():
+    """名稱欄必須有 .td-label-wrap 容器，否則回饋會溢出到隔壁欄。"""
+    html = _INDEX.read_text(encoding="utf-8")
+    assert 'class="td-label-wrap"' in html, "名稱欄缺少 flex 容器，回饋訊息會溢出蓋到隔壁欄"
+
+
+def test_label_wrap_css_contains_and_aligns():
+    """容器要能關住內容（min-width:0 可縮、訊息截斷）並與操作欄對齊（min-height）。"""
+    css = _CSS.read_text(encoding="utf-8")
+    assert ".td-label-wrap {" in css
+    block = css.split(".td-label-wrap {", 1)[1].split("}", 1)[0]
+    assert "min-height" in block, ".td-label-wrap 缺 min-height，名稱欄會與操作欄文字不齊"
+    assert ".td-label-wrap .label-input" in css, "缺少輸入框覆寫，flex 子項不會縮"
+    assert "min-width: 0" in css.split(".td-label-wrap .label-input", 1)[1].split("}", 1)[0], (
+        "缺 min-width:0，flex 子項不肯縮到內在寬度以下，溢出會回來"
+    )
+
+
+def test_label_input_base_class_keeps_device_max_width():
+    """
+    覆寫必須限定在 .td-label-wrap 之下。
+
+    .label-input 與系統狀態頁的設備名稱欄共用，若直接把 max-width 改在基底類別，
+    那裡會失去 .label-input-device 的 260px 意圖。
+    """
+    css = _CSS.read_text(encoding="utf-8")
+    base = css.split(".label-input {", 1)[1].split("}", 1)[0]
+    assert "max-width: 180px" in base, ".label-input 基底的 max-width 被改動，會影響設備名稱欄"
+    assert ".label-input-device" in css
+
+
+def test_validate_nominal_is_untouched():
+    """
+    validateNominal 有三個呼叫端，其契約不得改動。
+
+    空白輸入改由各呼叫端的 isBlankNominal 前置檢查處理，正是為了讓這支
+    保持原樣——動它就有三處迴歸風險。
+    """
+    js = _APPJS.read_text(encoding="utf-8")
+    assert "function validateNominal(raw, mod)" in js
+    body = _fn_body(js, "function validateNominal(raw, mod) {")
+    assert "isBlank" not in body, "空白判斷不該混進 validateNominal，會影響三個呼叫端"
+    assert "請輸入 ${min}–${max} A" in body, "超出範圍的錯誤訊息不應改動"
+
+
+def test_all_three_callers_guard_blank_input():
+    """單通道、全域批次、模組批次三處都要先擋空白，否則按鈕仍會跳紅字。"""
+    js = _APPJS.read_text(encoding="utf-8")
+    assert "function isBlankNominal(" in js
+    for caller in ("async function setNominal(", "async function setAllNominal(",
+                   "async function setModuleNominal("):
+        assert caller in js, f"找不到 {caller}"
+        body = js.split(caller, 1)[1][:900]
+        assert "isBlankNominal" in body, f"{caller} 缺少空白前置檢查，空欄位仍會跳紅字"
+
+
+def test_blank_hint_is_not_rendered_as_error():
+    """空白提示必須走 hint（中性色），不得用 err 紅字。"""
+    js = _APPJS.read_text(encoding="utf-8")
+    assert "hint: true" in js or "hint = true" in js, "找不到 hint 狀態"
+    css = _CSS.read_text(encoding="utf-8")
+    assert ".feedback-msg.hint" in css, "缺少 .feedback-msg.hint 樣式"
+    html = _INDEX.read_text(encoding="utf-8")
+    assert html.count("? 'hint' :") >= 3, "三個回饋點都要能渲染 hint 狀態"
+
+
+def test_batch_status_writes_go_through_setter():
+    """
+    batchStatus 是持續存在的 reactive 物件（不可整個取代，否則斷反應性）。
+
+    正因為不取代，未指定的欄位會沿用上次的值——某個錯誤路徑忘了清 hint，
+    紅字就會被染成灰色。統一走 setBatchStatus() 讓這件事不可能發生。
+    """
+    js = _APPJS.read_text(encoding="utf-8")
+    assert "function setBatchStatus(" in js
+    setter = _fn_body(js, "function setBatchStatus(")
+    direct = [ln.strip() for ln in js.splitlines()
+              if ("batchStatus.ok =" in ln or "batchStatus.msg =" in ln or "batchStatus.hint =" in ln)
+              and ln.strip() not in setter]
+    assert not direct, (
+        "以下 batchStatus 欄位是直接指派而非走 setBatchStatus()，"
+        "會有殘留 hint 把紅字染灰的風險： " + " / ".join(direct)
+    )
 
 
 if __name__ == "__main__":

@@ -793,6 +793,20 @@ createApp({
 
         // 額定電流輸入驗證：合法回 null，否則回錯誤訊息字串。
         // 傳入 mod 時用該模組型號範圍（較嚴），否則用全域範圍。
+        // 空白不是「輸入錯誤」——使用者只是還沒填。
+        //
+        // 這一項刻意**不併進 validateNominal()**：那支有三個呼叫端（單通道、全域批次、
+        // 模組批次），改動它的契約就有三處迴歸風險。改為在各呼叫端前置檢查，
+        // validateNominal 一字不動，超出範圍的行為逐位元相同。
+        //
+        // 為什麼要分開：紅色在本專案是失敗訊號（設定失敗／無法連線／後端 detail），
+        // 花在「你還沒填」會稀釋它——工控介面裡真正的紅字代表對現場斷路器的 CIP
+        // 寫入失敗了。而且「新值」欄的 placeholder 顯示的正是目前額定電流，
+        // 看起來就像已經填好了，使用者按下「設定」收到紅字只會困惑。
+        function isBlankNominal(raw) {
+            return raw == null || String(raw).trim() === '';
+        }
+
         function validateNominal(raw, mod) {
             const { min, max } = mod != null
                 ? modRange(mod)
@@ -809,11 +823,29 @@ createApp({
         const nominalFeedback = reactive({});
         const nominalBusy = reactive({});      // {chId: true} 單通道設定進行中
         const batchNominal = ref('');
-        const batchStatus = reactive({ ok: false, msg: '' });
+        const batchStatus = reactive({ ok: false, hint: false, msg: '' });
+
+        // batchStatus 是**持續存在**的 reactive 物件（模板直接綁欄位，不能整個取代，
+        // 否則斷掉反應性）。正因為不取代，未指定的欄位會沿用上一次的值——
+        // 若某個錯誤路徑忘了清 hint，紅字就會被上一次的提示態染成灰色。
+        // 統一走這支 setter，未傳的欄位一律回預設，六個寫入點都不必各自記得。
+        function setBatchStatus({ ok = false, hint = false, msg = '' }) {
+            batchStatus.ok = ok;
+            batchStatus.hint = hint;
+            batchStatus.msg = msg;
+        }
         const batchBusy = ref(false);          // 全域批次進行中
 
         async function setNominal(chId) {
             if (nominalBusy[chId]) return;
+            // 沒填新值就按「設定」：給中性提示，不給紅字。
+            // 同一列還有「名稱」欄（blur 自動存檔、沒有按鈕），使用者設定完名稱後
+            // 很自然會來按這顆按鈕，不該因此收到一則關於額定電流的錯誤。
+            if (isBlankNominal(nominalInputs[chId])) {
+                nominalFeedback[chId] = { ok: false, hint: true, msg: '請先輸入新的額定電流' };
+                setTimeout(() => { nominalFeedback[chId] = { ok: false, msg: '' }; }, 3000);
+                return;
+            }
             const val = Math.round(parseFloat(nominalInputs[chId]));
             const err = validateNominal(nominalInputs[chId],
                                         state.channels.find(c => c.id === chId)?.module);
@@ -866,11 +898,15 @@ createApp({
 
         async function setAllNominal() {
             if (batchBusy.value) return;
+            if (isBlankNominal(batchNominal.value)) {
+                setBatchStatus({ hint: true, msg: '請先輸入要套用到全部通道的額定電流' });
+                setTimeout(() => setBatchStatus({ msg: '' }), 4000);
+                return;
+            }
             const val = Math.round(parseFloat(batchNominal.value));
             const errAll = validateNominal(batchNominal.value);
             if (errAll) {
-                batchStatus.ok = false;
-                batchStatus.msg = errAll;
+                setBatchStatus({ msg: errAll });
                 return;
             }
             // 各模組型號範圍可能不同（例如 E4 1-4A 與 E2 2-10A），
@@ -888,8 +924,7 @@ createApp({
                 const detail = outOfRange
                     .map(m => { const r = modRange(m); return `M${m} ${r.min}-${r.max}A`; })
                     .join('、');
-                batchStatus.ok = false;
-                batchStatus.msg = `${val}A 超出這些模組的型號範圍：${detail}`;
+                setBatchStatus({ msg: `${val}A 超出這些模組的型號範圍：${detail}` });
                 return;
             }
             // 前端先濾掉鎖定模組（後端也會擋），但要讓使用者知道少做了哪些，
@@ -901,27 +936,26 @@ createApp({
                 .filter(ch => !isModNominalReadOnly(ch.module))
                 .map(ch => ch.id);
             if (!ids.length) {
-                batchStatus.ok = false;
-                batchStatus.msg = '沒有可遠端設定的通道——請先將旋鈕轉到 RC（見模組說明）';
+                setBatchStatus({ msg: '沒有可遠端設定的通道——請先將旋鈕轉到 RC（見模組說明）' });
                 return;
             }
             batchBusy.value = true;
-            batchStatus.ok = true;
-            batchStatus.msg = `設定中… (${ids.length} 個通道)`;
+            setBatchStatus({ ok: true, msg: `設定中… (${ids.length} 個通道)` });
             try {
                 const body = await postNominalBatch(ids, val);
-                batchStatus.ok = body.fail === 0;
-                batchStatus.msg = batchResultMsg(body)
-                    + (lockedMods.length
-                        ? `；模組 ${lockedMods.join('、')} 旋鈕未轉 RC，未套用`
-                        : '');
+                setBatchStatus({
+                    ok: body.fail === 0,
+                    msg: batchResultMsg(body)
+                        + (lockedMods.length
+                            ? `；模組 ${lockedMods.join('、')} 旋鈕未轉 RC，未套用`
+                            : ''),
+                });
                 batchNominal.value = '';
             } catch (e) {
-                batchStatus.ok = false;
-                batchStatus.msg = e.message || '設定失敗';
+                setBatchStatus({ msg: e.message || '設定失敗' });
             } finally {
                 batchBusy.value = false;
-                setTimeout(() => { batchStatus.msg = ''; }, 4000);
+                setTimeout(() => setBatchStatus({ msg: '' }), 4000);
             }
         }
 
@@ -989,6 +1023,11 @@ createApp({
 
         async function setModuleNominal(mod) {
             if (batchBusyByMod[mod]) return;
+            if (isBlankNominal(batchNominalByMod[mod])) {
+                batchStatusByMod[mod] = { ok: false, hint: true, msg: '請先輸入本模組要套用的額定電流' };
+                setTimeout(() => { batchStatusByMod[mod] = { ok: false, msg: '' }; }, 4000);
+                return;
+            }
             const val = Math.round(parseFloat(batchNominalByMod[mod]));
             const errMod = validateNominal(batchNominalByMod[mod], mod);
             if (errMod) {

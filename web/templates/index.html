@@ -48,7 +48,8 @@
                 </button>
                 <div class="topbar-sep"></div>
                 <button class="btn-close-tab" @click="doCloseTab" :disabled="isShuttingDown"
-                    :title="isShuttingDown ? '關閉中...' : '關閉伺服器'">{{ isShuttingDown ? '⏹' : '✕' }}</button>
+                    :title="isShuttingDown ? '關閉中...' : '停止服務並關閉此分頁'">{{ isShuttingDown ? '關閉中…' :
+                    '關閉控制系統' }}</button>
             </div>
         </header>
 
@@ -151,11 +152,11 @@
 
                 </template>
 
-                <!-- 圖表監控 -->
+                <!-- 設備監控 -->
                 <template v-if="currentPage === 'charts'">
                     <section class="panel">
                         <div class="chart-header">
-                            <h2>圖表監控</h2>
+                            <h2>設備監控</h2>
                             <div class="chart-toolbar">
                                 <div class="chart-win-btns">
                                     <button :class="['btn','btn-sm', chartWindow===30?'':'btn-ghost']"

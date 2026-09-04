@@ -262,20 +262,29 @@ code {
     background: var(--dot-off);
 }
 
+/* 原本是 28x28 的 ✕ 圖示鈕。改成文字「關閉控制系統」後不能再寫死寬度——
+   這顆按鈕會停掉整個服務（不只關分頁），講清楚比省版面重要。 */
 .btn-close-tab {
-    width: 28px;
     height: 28px;
+    padding: 0 12px;
     display: flex;
     align-items: center;
     justify-content: center;
+    white-space: nowrap;          /* 「關閉控制系統」不可斷行 */
     background: transparent;
     border: 1px solid var(--border-strong);
     border-radius: 4px;
     color: var(--text-dim);
-    font-size: 0.85rem;
+    font-size: 0.82rem;
+    font-weight: 600;
     cursor: pointer;
     line-height: 1;
     transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.btn-close-tab:disabled {
+    opacity: 0.6;
+    cursor: default;
 }
 
 .btn-close-tab:hover {
@@ -360,7 +369,7 @@ code {
     cursor: pointer;
     color: var(--text-muted);
     font-size: 0.88rem;
-    font-weight: 600;
+    font-weight: 700;             /* 與表格內的 .td-ch（CH1）同一個字重 */
     border-left: 2px solid transparent;
     transition: background 0.15s, color 0.15s;
     white-space: nowrap;
@@ -376,7 +385,7 @@ code {
     background: var(--accent-active-bg);
     color: var(--accent);
     border-left-color: var(--accent);
-    font-weight: 700;
+    /* 字重不再於此加粗——.nav-item 本身已是 700，選中狀態靠底色與左側色條區分 */
 }
 
 .nav-icon {

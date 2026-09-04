@@ -7,14 +7,16 @@ createApp({
         const currentPage = ref('dashboard');
         const sidebarCollapsed = ref(false);
 
+        // 順序＝現場的操作流程：先看狀態（1-2）、再調參數（3）、
+        // 出問題才查（4-5）、最後才是連線與初次架設（6-7）。
         const navItems = [
             { page: 'dashboard', icon: '📊', label: '儀表板' },
-            { page: 'charts', icon: '📈', label: '圖表監控' },
-            { page: 'channel-settings', icon: '⚙️', label: '通道設定' },
-            { page: 'logs', icon: '📋', label: '系統日誌' },
+            { page: 'charts', icon: '📈', label: '設備監控' },
+            { page: 'channel-settings', icon: '⚡', label: '通道設定' },
             { page: 'system-status', icon: '🖧', label: '系統狀態' },
-            { page: 'connection', icon: '🔧', label: '連線設定' },
-            { page: 'ip-config', icon: '🌐', label: 'IP 設定' },
+            { page: 'logs', icon: '📋', label: '系統日誌' },
+            { page: 'connection', icon: '🔌', label: '連線設定' },
+            { page: 'ip-config', icon: '⚙️', label: '初始設定' },
         ];
 
         function navigate(page) {

@@ -301,8 +301,12 @@
                                         <tr v-for="ch in channelsByModule[mod]" :key="ch.id">
                                             <td class="td-ch">CH{{ ch.channel }}</td>
                                             <td class="td-label">
+                                                <!-- 綁 labelDrafts 而非 channelLabels：WebSocket 每秒重繪，
+                                                     單向 :value 會把使用者打到一半的字拉回舊值 -->
                                                 <input type="text" class="label-input"
-                                                    :value="channelLabels[ch.id] ?? ''"
+                                                    :value="labelValue(ch.id)"
+                                                    @focus="onLabelFocus(ch.id)"
+                                                    @input="labelDrafts[ch.id] = $event.target.value"
                                                     @blur="saveLabel(ch.id, $event.target.value)"
                                                     @keyup.enter="$event.target.blur()"
                                                     :maxlength="LABEL_MAX_LEN"
@@ -514,7 +518,9 @@
                                 <td>自訂名稱</td>
                                 <td>
                                     <input type="text" class="label-input label-input-device"
-                                        :value="deviceLabel"
+                                        :value="labelValue('_device')"
+                                        @focus="onLabelFocus('_device')"
+                                        @input="labelDrafts['_device'] = $event.target.value"
                                         @blur="saveDeviceLabel($event.target.value)"
                                         @keyup.enter="$event.target.blur()"
                                         :maxlength="LABEL_MAX_LEN"

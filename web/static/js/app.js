@@ -697,11 +697,29 @@ createApp({
         // 標籤刻意**不放進每秒的 WebSocket payload**：那是靜態文字，每天推 8.6 萬次
         // 沒有意義，而且後端為了填 label 得每秒多讀一次 CIP 取序號去搶 _cip_lock。
         // 改由獨立端點取一次，前端在渲染時與 state.channels 合併。
-        const channelLabels = reactive({});     // {chId: '主機電源'}
+        const channelLabels = reactive({});     // {chId: '主機電源'} — 已存檔的值
         const deviceLabel = ref('');
         const labelBusy = reactive({});         // {chId | '_device': true}
         const labelFeedback = reactive({});     // {chId | '_device': {ok, msg}}
         const LABEL_MAX_LEN = 32;               // 與 app_config.LABEL_MAX_LEN 一致
+
+        // 編輯中的暫存值（{chId | '_device': '打到一半的字'}）。
+        //
+        // ⚠️ 這一層不能省。輸入框若直接綁 `:value="channelLabels[id]"`，那是**單向綁定**：
+        // WebSocket 每秒推一次狀態 → state.channels 重新賦值 → v-for 重新算 →
+        // :value 被拉回尚未存檔的舊值，使用者打的字**一秒內就被清掉**。
+        // 改用 v-model 綁這份草稿，輸入框在編輯期間由前端自己作主，
+        // 只有 focus（載入現值）與 blur（存檔後清除）兩個時點跟 channelLabels 同步。
+        const labelDrafts = reactive({});
+
+        function labelValue(slot) {
+            return labelDrafts[slot] ?? (slot === '_device' ? deviceLabel.value
+                                                            : (channelLabels[slot] ?? ''));
+        }
+
+        function onLabelFocus(slot) {
+            labelDrafts[slot] = labelValue(slot);
+        }
 
         function _applyLabels(d) {
             Object.keys(channelLabels).forEach(k => delete channelLabels[k]);
@@ -744,16 +762,25 @@ createApp({
         }
 
         // @blur 觸發。值沒變就不打 API——點進點出不該產生寫檔。
-        function saveLabel(chId, text) {
+        //
+        // 無論存不存檔都要清掉草稿：草稿留著的話，輸入框會一直顯示前端的暫存值，
+        // 之後 fetchLabels() 從後端拿到的新值就蓋不上去了（labelValue 草稿優先）。
+        async function saveLabel(chId, text) {
             const val = (text ?? '').trim().slice(0, LABEL_MAX_LEN);
-            if (val === (channelLabels[chId] ?? '')) return;
-            return _postLabel(chId, `/api/labels/channel/${chId}`, val);
+            const unchanged = val === (channelLabels[chId] ?? '');
+            if (!unchanged) {
+                await _postLabel(chId, `/api/labels/channel/${chId}`, val);
+            }
+            delete labelDrafts[chId];
         }
 
-        function saveDeviceLabel(text) {
+        async function saveDeviceLabel(text) {
             const val = (text ?? '').trim().slice(0, LABEL_MAX_LEN);
-            if (val === deviceLabel.value) return;
-            return _postLabel('_device', '/api/labels/device', val);
+            const unchanged = val === deviceLabel.value;
+            if (!unchanged) {
+                await _postLabel('_device', '/api/labels/device', val);
+            }
+            delete labelDrafts['_device'];
         }
 
         // 模組型號標示的可調範圍；型號讀不到時回全域 limits（軟性降級）
@@ -1362,7 +1389,7 @@ createApp({
             nominalInputs, nominalFeedback, nominalBusy, batchNominal, batchStatus, batchBusy,
             setNominal, setAllNominal,
             channelLabels, deviceLabel, labelBusy, labelFeedback, LABEL_MAX_LEN,
-            saveLabel, saveDeviceLabel,
+            labelDrafts, labelValue, onLabelFocus, saveLabel, saveDeviceLabel,
             batchNominalByMod, batchStatusByMod, batchBusyByMod,
             setModuleNominal, isModNominalReadOnly, isModRotary, modRange, modFixedNominal,
             showNominalHelp, helpMod, openNominalHelp,

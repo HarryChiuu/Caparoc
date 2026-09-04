@@ -163,5 +163,50 @@ def test_status_payload_must_not_carry_labels():
         assert "label" not in ch, "label 不該進入每秒推送的 payload"
 
 
+# ── 前端綁定回歸防護 ────────────────────────────────────────────────────────
+# 2026-09-04 回報：標籤輸入框「一 key 進去就自己刪掉」。
+# 根因是輸入框直接綁 `:value="channelLabels[id]"`——那是**單向綁定**，而
+# WebSocket 每秒推一次狀態會讓 state.channels 重新賦值、v-for 重算，
+# :value 隨即把使用者打到一半的字覆寫回尚未存檔的舊值。
+# 修法是加一層 labelDrafts 草稿，編輯期間由前端自己作主。
+# 以下兩支是靜態檢查，確保不會有人把單向綁定改回去。
+_INDEX = _ROOT / "web" / "templates" / "index.html"
+_APPJS = _ROOT / "web" / "static" / "js" / "app.js"
+
+
+def test_label_inputs_must_not_bind_stored_value_directly():
+    """
+    輸入框不得直接綁 channelLabels / deviceLabel。
+
+    每秒重繪會把使用者輸入清掉——這正是 2026-09-04 回報的症狀。
+    """
+    html = _INDEX.read_text(encoding="utf-8")
+    for bad in (':value="channelLabels[ch.id]', ':value="deviceLabel"'):
+        assert bad not in html, (
+            f"標籤輸入框綁了 {bad}（單向綁定）。WebSocket 每秒重繪會覆寫使用者輸入，"
+            "請改綁 labelValue()/labelDrafts。"
+        )
+
+
+def test_label_inputs_use_draft_layer():
+    """輸入框必須走草稿層：labelValue 顯示、@focus 載入、@input 寫草稿。"""
+    html = _INDEX.read_text(encoding="utf-8")
+    for needed in ('labelValue(ch.id)', 'onLabelFocus(ch.id)', 'labelDrafts[ch.id]',
+                   "labelValue('_device')", "labelDrafts['_device']"):
+        assert needed in html, f"index.html 缺少草稿層綁定：{needed}"
+
+
+def test_save_functions_clear_the_draft():
+    """
+    存檔後必須清掉草稿（無論值有沒有變）。
+
+    草稿留著的話，之後 fetchLabels() 從後端拿到的新值會被草稿擋住蓋不上去
+    （labelValue 是草稿優先）。
+    """
+    js = _APPJS.read_text(encoding="utf-8")
+    assert "delete labelDrafts[chId];" in js
+    assert "delete labelDrafts['_device'];" in js
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

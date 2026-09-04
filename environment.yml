@@ -1,17 +1,17 @@
 # Conda 環境定義 — CAPAROC 控制器
 #
-# ⚠️ 環境名稱：本檔建立的環境叫 `caparoc_breaker`，但**開發機上實際在用的環境是 `sv`**
-# （Python 3.12.11，套件版本與下方 pin 相符）。文件中的指令一律以 `sv` 為準；
-# 若你是從這份 yml 全新建立環境，請把指令中的 `sv` 換成 `caparoc_breaker`。
+# 環境名稱為 `sv`，與開發機實際使用的環境、以及全部文件中的指令一致。
+# （先前本檔叫 `caparoc_breaker`，與實際環境不符而長期並存兩個名字，
+#   已於 2026-09-05 統一為 `sv`。）
 #
 # 建立環境：
 #   conda env create -f environment.yml
-#   conda activate caparoc_breaker
+#   conda activate sv
 #
-# 驗證環境可用（應輸出 28 passed）：
+# 驗證環境可用（應輸出 169 passed）：
 #   python -m pytest
 
-name: caparoc_breaker
+name: sv
 channels:
   - defaults
   - conda-forge
@@ -28,9 +28,14 @@ dependencies:
       - jinja2>=3.1.6
       - python-multipart>=0.0.28
       - websockets>=14.0
+      - requests>=2.32.0
 
       # 測試（`python -m pytest` 需要；sv 環境已裝 9.1.1）
       - pytest>=7.4.0
+
+      # 選配：讓 get_broadcast_addresses() 取得作業系統回報的真實遮罩，
+      # 正確涵蓋非 /24 網段。缺少時自動退回 /24 推測，不影響其他功能。
+      - psutil>=5.9.0
 
       # 其餘開發工具（可選，按需安裝）
       # - pytest-cov>=4.1.0

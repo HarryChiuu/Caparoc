@@ -13,7 +13,7 @@ CAPAROC 電子斷路器遠端控制程式，基於 EtherNet/IP 協議，支援�
 ### 1. 環境準備
 
 ```bash
-# 啟動 Conda 環境（本機開發環境名為 sv；用 environment.yml 全新建立的話是 caparoc_breaker）
+# 啟動 Conda 環境（environment.yml 建立的環境即為 sv）
 conda activate sv
 
 # 安裝依賴

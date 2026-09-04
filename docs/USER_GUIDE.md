@@ -38,7 +38,7 @@ CAPAROC 控制器是基於 EtherNet/IP 協議的斷路器模組管理程式，�
 ### 1. 環境準備
 
 ```bash
-# 啟動 Conda 環境（本機開發環境名為 sv；用 environment.yml 全新建立的話是 caparoc_breaker）
+# 啟動 Conda 環境（environment.yml 建立的環境即為 sv）
 conda activate sv
 
 # 確認已安裝依賴

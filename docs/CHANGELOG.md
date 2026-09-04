@@ -2,6 +2,48 @@
 
 ---
 
+## [2026-09-04] 新增主機名稱來源診斷工具（唯讀）
+
+> 起因：使用者問系統狀態頁的「主機名稱 caparoc1」可不可以設定。
+
+### 結論：協定支援，但動手前要先確認來源
+
+原廠 EDS（`docs/vendor/CAPAROC_PM_EIP.eds`）的 `[TCP/IP Interface Class]` 宣告：
+
+```
+Instance_Attributes = ... 0x5, 0x6, ...      ← attr 6 = Host Name 有支援
+Instance_Services   = 0x01, 0xE, 0x10;       ← 0x10 = Set_Attribute_Single
+```
+
+**可以寫**。但 `get_network_info()`（`caparoc_backend.py:498-517`）的讀取邏輯是
+「先讀 attr 5 的 Domain Name，空的才退回 attr 6 的 Host Name」——兩者是不同欄位，
+不先確認畫面上的值來自哪一個就動手，很可能寫了沒效果。
+
+而且 **attr 5 是整包結構**（IP / 遮罩 / 閘道 / DNS 都在裡面），要改它得
+read-modify-write 整包回寫——與 `set_device_ip()` 是同一個 attribute，
+寫錯會連 IP 一起改掉、設備失聯。attr 6 則是單一 CIP STRING，風險低得多。
+
+### 新增 `tests/manual/check_hostname.py`
+
+只送 `Get_Attribute_Single`（0x0E），**不寫入任何東西**，可安心在產線上跑。
+輸出兩個 attribute 的原始位元組、解析結果，並直接給出結論：
+畫面上的名稱來自哪一個、要改的話寫入目標是誰、風險等級為何。
+
+也一併回答第三個問題——EDS 說支援不代表韌體真的實作了 attr 6，
+讀不到時工具會明講「只能走 attr 5」。
+
+`parse_cip_string()` 已用四種輸入驗證（正常 / 空字串 / 長度不足 / 前綴誇大），
+無法解析時回 `None` 加說明，不會拋例外。連不上設備時也是友善訊息而非 traceback。
+
+### 順帶新增 `tests/manual/README.md`
+
+該目錄已有五支工具卻沒有任何索引。補上一張表說明每支的用途，
+並標明**會不會改到設備**——`check_*` 唯讀、`*_tool` 會改。
+
+回歸：68 passed（本次未新增自動化測試，工具需實機）、`ruff check .` 全綠。
+
+---
+
 ## [2026-09-04] 側邊欄「儀表板」改為「通道控制」
 
 只改側邊欄名稱，頁面內容維持原樣（使用者指定）。

@@ -553,7 +553,30 @@ code {
 .ch-name {
     font-weight: 700;
     font-size: 1rem;
+}
+
+/* ── 通道自訂標籤（4.3.6）──────────────────
+   儀表板卡片上唯讀顯示；編輯在「通道設定」頁。
+   .ch-name 原本吃 flex:1 把開關按鈕推到右邊，改由標籤接手撐開，
+   沒有標籤時 :empty 不渲染、由 v-if 決定，版面與加標籤前一致。 */
+.ch-label {
     flex: 1;
+    min-width: 0;                 /* 讓 ellipsis 在 flex 子項生效 */
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 沒有標籤時由 .ch-top 自己把按鈕推到右邊——比用 :has() 判斷有無標籤穩妥，
+   也不依賴較新的選擇器支援。 */
+.ch-top {
+    justify-content: flex-start;
+}
+
+.ch-top > .toggle-btn {
+    margin-left: auto;
 }
 
 .ch-mod {
@@ -849,6 +872,56 @@ code {
     border-color: var(--accent);
 }
 
+/* ── 通道／設備自訂標籤輸入（4.3.6）──────────
+   沿用 .nominal-input 的外框與配色，但預設低調（透明底、淡框），
+   focus 時才浮出來——名稱欄多數時候是空的，不該和額定電流輸入搶視線。 */
+.label-input {
+    width: 100%;
+    max-width: 180px;
+    padding: 5px 8px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    font-size: 0.86rem;
+    font-family: inherit;         /* 不要吃到瀏覽器預設的 input 字體 */
+}
+
+.label-input::placeholder {
+    color: var(--text-fainter);
+}
+
+.label-input:hover:not(:disabled) {
+    border-color: var(--border-soft);
+    background: var(--bg-inset);
+}
+
+.label-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--bg-inset);
+}
+
+.label-input:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+/* 設備識別表格內的欄位比通道欄寬一些，容得下「一號配電箱」這類較長的名稱 */
+.label-input-device {
+    max-width: 260px;
+}
+
+.td-label {
+    white-space: nowrap;
+}
+
+/* 通道設定頁「名稱只存本機」的但書。比一般 hint 再淡一階，
+   與 .webif-src-note 同樣的處理——是提醒，不是警告，不該搶內容的視線。 */
+.label-scope-note {
+    color: var(--text-faint);
+}
+
 .ch-table {
     width: 100%;
     border-collapse: collapse;
@@ -858,6 +931,7 @@ code {
 }
 
 .ch-table col.col-ch      { width: 92px; }
+.ch-table col.col-label   { width: 190px; }
 .ch-table col.col-nominal { width: 132px; }
 .ch-table col.col-input   { width: 108px; }
 

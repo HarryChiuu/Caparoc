@@ -1,6 +1,6 @@
 # 4.3.6 通道自訂標籤 — 實作規劃
 
-> **狀態**：規劃中（2026-09-04），尚未動工
+> **狀態**：✅ **已實作完成（2026-09-04）**。本文件保留為設計依據與決策記錄。
 > **目的**：讓使用者為每個通道命名（「主機電源」「照明迴路」），標籤綁定到**物理設備**，
 > 換 IP、換筆電都不會跑掉
 > **預估工時**：3-4h（原估 2-3h，見下方「與原規劃的差異」）
@@ -95,54 +95,55 @@ ip:<ip>       # 讀不到 → 退回 IP，同一台換 IP 會失聯（可接受�
 
 ### Step 1 — `src/app_config.py`（約 40 行）
 
-- [ ] `DEFAULTS` 新增 `"labels": {}` 區塊
-- [ ] `device_labels(key: str) -> dict`：讀單一設備的標籤，無資料回 `{"device_label": "", "channels": {}}`
-- [ ] `save_channel_label(key: str, channel_id: int, text: str) -> bool`
-- [ ] `save_device_label(key: str, text: str) -> bool`
-- [ ] 輸入清理：`strip()`、長度上限 **32 字**、空字串等同刪除該鍵（不要在 config 裡留一堆空字串）
-- [ ] 沿用既有 `_write_config()`
+- [x] `DEFAULTS` 新增 `"labels": {}` 區塊
+- [x] `device_labels(key: str) -> dict`：讀單一設備的標籤，無資料回 `{"device_label": "", "channels": {}}`
+- [x] `save_channel_label(key: str, channel_id: int, text: str) -> bool`
+- [x] `save_device_label(key: str, text: str) -> bool`
+- [x] 輸入清理：`strip()`、長度上限 **32 字**、空字串等同刪除該鍵（不要在 config 裡留一堆空字串）
+- [x] 沿用既有 `_write_config()`
 
 ### Step 2 — `web/app.py`（約 60 行）
 
-- [ ] `_device_label_key()`：回傳 `sn:...` / `ip:...`，**連線後快取**，斷線清除
-- [ ] `GET /api/labels` → `{"key": ..., "device_label": ..., "channels": {...}}`
-- [ ] `POST /api/labels/channel/{channel_id}`（body: `{"text": ...}`）
-- [ ] `POST /api/labels/device`
-- [ ] **三個端點都要寫 `_DEMO_MODE` 分支**（債 #10）：demo 下用 `ip:demo` 當 key，
+- [x] `_device_label_key()`：回傳 `sn:...` / `ip:...`，**連線後快取**，斷線清除
+- [x] `GET /api/labels` → `{"key": ..., "device_label": ..., "channels": {...}}`
+- [x] `POST /api/labels/channel/{channel_id}`（body: `{"text": ...}`）
+- [x] `POST /api/labels/device`
+- [x] **三個端點都要寫 `_DEMO_MODE` 分支**（債 #10）：demo 下用 `ip:demo` 當 key，
       可正常讀寫，讓 `--demo` 能完整檢視這個 UI
-- [ ] `_format_status()` **不動**
+- [x] `_format_status()` **不動**
 
 ### Step 3 — `web/static/js/app.js`（約 50 行）
 
-- [ ] `const channelLabels = reactive({})`、`const deviceLabel = ref('')`
-- [ ] `fetchLabels()`：掛在**既有的斷→通轉換點**（`app.js:154` 的
+- [x] `const channelLabels = reactive({})`、`const deviceLabel = ref('')`
+- [x] `fetchLabels()`：掛在**既有的斷→通轉換點**（`app.js:154` 的
       `if (!_wasConnected && state.connected)`，`fetchNetworkInfo()` / `fetchDeviceInfo()` 旁邊）。
       **不要**放進 `onMounted()`——那裡的 `fetchLimits()` 是刻意不等連線的（純設定值），
       但標籤要先有 S/N 才知道查哪一台，未連線時查不到
-- [ ] `saveLabel(chId, text)`：沿用 `setNominal()` 的 `busy` + `feedback` 慣例
-- [ ] `labelBusy` / `labelFeedback` 兩個 reactive
-- [ ] `return {}` 補上新符號（Vue 3 CDN 無 build step，漏加就是靜默失效）
+- [x] `saveLabel(chId, text)`：沿用 `setNominal()` 的 `busy` + `feedback` 慣例
+- [x] `labelBusy` / `labelFeedback` 兩個 reactive
+- [x] `return {}` 補上新符號（Vue 3 CDN 無 build step，漏加就是靜默失效）
 
 ### Step 4 — `web/templates/index.html`
 
-- [ ] 儀表板卡片：`CH{{ ch.channel }}` 下方加標籤，點擊變輸入框，`@blur` 存檔
-- [ ] 通道設定頁：新增「名稱」欄（放在 `td-ch` 之後）
-- [ ] 系統狀態頁：設備標籤（`device_label`）
-- [ ] **`?v=` 版號不必手動改**——已由 `src/version.py` 統一（債 #11 已收）
+- [x] 儀表板卡片：`CH{{ ch.channel }}` 下方加標籤，點擊變輸入框，`@blur` 存檔
+- [x] 通道設定頁：新增「名稱」欄（放在 `td-ch` 之後）
+- [x] 通道設定頁：區塊上方加一行 `hint-text` 說明標籤只存本機（見「風險與已知限制」3）
+- [x] 系統狀態頁：設備標籤（`device_label`）
+- [x] **`?v=` 版號不必手動改**——已由 `src/version.py` 統一（債 #11 已收）
 
 ### Step 5 — `web/static/css/style.css`
 
-- [ ] `.ch-label`：卡片內小字，未命名時顯示淡色提示文字
-- [ ] `.ch-label-input`：編輯態
-- [ ] 深色/淺色主題都要試（既有 CSS 有 `data-theme` 切換）
+- [x] `.ch-label`：卡片內小字，未命名時顯示淡色提示文字
+- [x] `.ch-label-input`：編輯態
+- [x] 深色/淺色主題都要試（既有 CSS 有 `data-theme` 切換）
 
 ### Step 6 — 測試（`tests/test_channel_labels.py`，約 80 行）
 
-- [ ] `app_config` 層：存讀往返、長度上限、空字串刪除、S/N key 隔離（兩台設備標籤不互相污染）
-- [ ] key fallback：有 S/N 用 `sn:`、無 S/N 用 `ip:`
-- [ ] **payload 不受污染**：確認 `_format_status()` 沒有多出 `label` 欄位
+- [x] `app_config` 層：存讀往返、長度上限、空字串刪除、S/N key 隔離（兩台設備標籤不互相污染）
+- [x] key fallback：有 S/N 用 `sn:`、無 S/N 用 `ip:`
+- [x] **payload 不受污染**：確認 `_format_status()` 沒有多出 `label` 欄位
       （防止日後有人「順手」加回去，把每秒推送撐大）
-- [ ] demo 模式：三個端點都不回 500
+- [x] demo 模式：三個端點都不回 500
 
 ---
 
@@ -166,8 +167,19 @@ ip:<ip>       # 讀不到 → 退回 IP，同一台換 IP 會失聯（可接受�
 2. **無多使用者衝突處理**：兩個瀏覽器同時改同一個標籤，後存的贏。
    單機工具，不值得為此加鎖。
 3. **標籤不同步到設備**：純本機資料。CAPAROC 的 CIP 物件沒有可寫的通道名稱欄位，
-   換一台電腦要重新輸入（或複製 `config.json`）。**這點要寫進使用者文件**，
-   否則使用者會期待標籤跟著設備走。
+   換一台電腦要重新輸入（或複製 `config.json`）。
+
+   **決策（2026-09-04）**：不只寫進文件，直接在 Web UI 上提醒——文件使用者不會讀，
+   但輸入標籤時看得到的字一定會讀。採**通道設定頁的一行 `hint-text`**，
+   沿用 `webif-src-note` 的既有慣例（該處也是一行說明資料來源的但書）。
+
+   放在「名稱」欄所屬區塊的上方，使用者第一次要輸入標籤時就會看到。
+   刻意**不用 Modal**：這個限制一句話講得完，為它多一層點擊不划算；
+   Modal 留給真正需要分步驟說明的情境（如額定電流的 RC 操作）。
+
+   文案：
+   > 名稱僅儲存在這台電腦（`config.json`），以設備序號綁定——換 IP 會跟著走，
+   > 換電腦需重新輸入或複製設定檔。
 
 ---
 

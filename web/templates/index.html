@@ -112,6 +112,10 @@
                                     :class="[cardClass(ch), !state.connected ? 'stale' : '', channelToggleError[ch.id] ? 'toggle-err' : '']">
                                     <div class="ch-top">
                                         <span class="ch-name">CH{{ ch.channel }}</span>
+                                        <!-- 標籤在儀表板上唯讀顯示：卡片已有電流／長條／額定／旗標四層資訊，
+                                             再塞一個常駐輸入框會過擠。編輯集中在「通道設定」頁。 -->
+                                        <span class="ch-label" v-if="channelLabels[ch.id]"
+                                            :title="channelLabels[ch.id]">{{ channelLabels[ch.id] }}</span>
                                         <button class="toggle-btn" :class="ch.on ? 'is-on' : 'is-off'"
                                             @click="toggleCh(ch)" :disabled="!state.connected || channelToggling[ch.id]"
                                             :title="channelToggleError[ch.id] ? '操作失敗，請確認設備連線' : ''">
@@ -212,6 +216,10 @@
                 <template v-if="currentPage === 'channel-settings'">
                     <section class="panel">
                         <h2>通道設定</h2>
+                        <p class="hint-text label-scope-note">
+                            通道名稱僅儲存在<strong>這台電腦</strong>（<code>config.json</code>），以設備序號綁定——
+                            設備換 IP 名稱會跟著走，但換一台電腦操作時需重新輸入，或把設定檔一起複製過去。
+                        </p>
 
                         <!-- 未連線且從未連線過：顯示佔位符 -->
                         <div v-if="!state.connected && !wasEverConnected" class="placeholder">
@@ -275,6 +283,7 @@
                                 <table class="ch-table">
                                     <colgroup>
                                         <col class="col-ch" />
+                                        <col class="col-label" />
                                         <col class="col-nominal" />
                                         <col class="col-input" />
                                         <col />
@@ -282,6 +291,7 @@
                                     <thead>
                                         <tr>
                                             <th>通道</th>
+                                            <th>名稱</th>
                                             <th>目前額定電流</th>
                                             <th>新值 (A)</th>
                                             <th>操作</th>
@@ -290,6 +300,18 @@
                                     <tbody>
                                         <tr v-for="ch in channelsByModule[mod]" :key="ch.id">
                                             <td class="td-ch">CH{{ ch.channel }}</td>
+                                            <td class="td-label">
+                                                <input type="text" class="label-input"
+                                                    :value="channelLabels[ch.id] ?? ''"
+                                                    @blur="saveLabel(ch.id, $event.target.value)"
+                                                    @keyup.enter="$event.target.blur()"
+                                                    :maxlength="LABEL_MAX_LEN"
+                                                    :disabled="labelBusy[ch.id]"
+                                                    placeholder="未命名"
+                                                    title="為這個通道命名，例如「主機電源」。僅存在本機。" />
+                                                <span class="feedback-msg" :class="labelFeedback[ch.id]?.ok ? 'ok' : 'err'"
+                                                    v-if="labelFeedback[ch.id]?.msg">{{ labelFeedback[ch.id].msg }}</span>
+                                            </td>
                                             <td class="td-nominal">{{ ch.nominal_amps }} A</td>
                                             <td>
                                                 <input type="number" v-model="nominalInputs[ch.id]" :min="modRange(ch.module).min" :max="modRange(ch.module).max"
@@ -488,6 +510,21 @@
                         </h2>
                         <div v-if="!deviceInfo && state.connected" class="hint-text">讀取中...</div>
                         <table v-else-if="deviceInfo" class="net-info-table">
+                            <tr>
+                                <td>自訂名稱</td>
+                                <td>
+                                    <input type="text" class="label-input label-input-device"
+                                        :value="deviceLabel"
+                                        @blur="saveDeviceLabel($event.target.value)"
+                                        @keyup.enter="$event.target.blur()"
+                                        :maxlength="LABEL_MAX_LEN"
+                                        :disabled="labelBusy['_device']"
+                                        placeholder="未命名（例如「一號配電箱」）"
+                                        title="為這台設備命名。僅存在本機，以序號綁定。" />
+                                    <span class="feedback-msg" :class="labelFeedback['_device']?.ok ? 'ok' : 'err'"
+                                        v-if="labelFeedback['_device']?.msg">{{ labelFeedback['_device'].msg }}</span>
+                                </td>
+                            </tr>
                             <tr>
                                 <td>產品名稱</td>
                                 <td>{{ deviceInfo.identity?.product_name || '—' }}</td>

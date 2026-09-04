@@ -350,6 +350,27 @@ set_nominal_current(1, 2, 4, verify=True)   # 模組1 通道2 設為 4A
 | `/api/history` | GET | 讀取最近 N 分鐘歷史資料，最多 30 分鐘 | `_history_buffer` |
 | `/api/connect/recent` | GET | 最近**成功**連線過的設備（最新在前），連線設定頁 IP 下拉來源 | `app_config.recent_devices()` |
 | `/api/connect/recent/{ip}` | DELETE | 從最近連線清單移除一筆（不影響 `default_ip`） | `app_config.forget_device_ip()` |
+| `/api/labels` | GET | 目前設備的通道／設備自訂標籤 | `app_config.device_labels()` |
+| `/api/labels/channel/{id}` | POST | 設定單一通道標籤（body `{"text": ...}`，空字串＝清除） | `app_config.save_channel_label()` |
+| `/api/labels/device` | POST | 設定設備層級標籤（同上） | `app_config.save_device_label()` |
+
+#### 通道自訂標籤（4.3.6）
+
+標籤存在 **`config/config.json` 的 `labels` 區塊**，以設備識別字串為 key，
+格式與 backend 的 `_probe_cache_key()` 一致：讀得到序號用 `sn:<serial>`，
+讀不到退回 `ip:<ip>`。
+
+- ⚠️ **純本機資料**：CAPAROC 的 CIP 物件沒有可寫的通道名稱欄位，標籤不會、也無法
+  同步到設備。換一台電腦要重新輸入，或把 `config.json` 一起帶走。
+  通道設定頁有一行說明告知使用者這件事。
+- **標籤不進 `/api/status` 與 WebSocket payload**：`_format_status()` 在 WS 迴圈中
+  每秒執行，塞入靜態文字等於每天推 8.6 萬次，且後端得每秒多讀一次 CIP 取序號去搶
+  `_cip_lock`。改由本組端點取一次，前端渲染時合併。
+- 序號取自連線時 `_remember_connection()` 已經讀到的值（快取於 `_label_key_cache`，
+  以 IP 為索引），標籤端點**不額外做 CIP 讀取**。
+- 單則上限 32 字（`app_config.LABEL_MAX_LEN`）；空字串＝刪除該鍵，全部清空時
+  連 `labels` 區塊一併移除，不在設定檔留空字串。
+- `--demo` 下 key 固定為 `ip:demo`，三個端點都可正常運作。
 
 #### 最近連線清單
 

@@ -90,6 +90,12 @@ DEFAULTS: dict = {
         "min": 1,
         "max": 20,
     },
+    # 通道自訂標籤（4.3.6）。key 為設備識別字串，格式與 backend 的
+    # _probe_cache_key() 一致：讀得到序號用 "sn:<serial>"，讀不到退回 "ip:<ip>"。
+    # 每台設備一筆 {"device_label": str, "channels": {"<ch_id>": str}}。
+    # 刻意不另開 channel_labels.json——config 已統一走本模組，再分裂一個檔
+    # 就是回頭走 device_config.json / logging_config.json 的老路。
+    "labels": {},
 }
 
 
@@ -341,3 +347,86 @@ def forget_device_ip(ip: str) -> list[dict]:
         device["recent"] = remaining
         _write_config(data)
     return recent_devices()
+
+
+# ─── 通道自訂標籤（4.3.6）────────────────────────────────────────────────────
+# 標籤存在 config.json 的 labels 區塊，以設備識別字串為 key。
+#
+# ⚠️ 這是**純本機資料**：CAPAROC 的 CIP 物件沒有可寫的通道名稱欄位，標籤不會、
+# 也無法同步到設備。換一台電腦就要重新輸入（或把 config.json 一起帶走）。
+# Web UI 的通道設定頁有一行說明告知使用者這件事。
+
+# 單則標籤長度上限。UI 的輸入框也要帶 maxlength，這裡是最後一道防線
+# （直接打 API 的呼叫端不會經過前端驗證）。
+LABEL_MAX_LEN = 32
+
+
+def _clean_label(text: str | None) -> str:
+    """標籤正規化：非字串或 None 一律回空字串，去頭尾空白後截斷至上限。"""
+    if not isinstance(text, str):
+        return ""
+    return text.strip()[:LABEL_MAX_LEN]
+
+
+def device_labels(key: str) -> dict:
+    """
+    取得單一設備的標籤。
+
+    回傳 {"device_label": str, "channels": {"<ch_id>": str}}——
+    查無資料時回同樣結構的空值，呼叫端不必再判 None。
+    """
+    entry = section("labels").get(key) or {}
+    channels = entry.get("channels")
+    return {
+        "device_label": _clean_label(entry.get("device_label")),
+        "channels": {str(k): _clean_label(v)
+                     for k, v in channels.items()} if isinstance(channels, dict) else {},
+    }
+
+
+def _save_label(key: str, field: str, text: str, channel_id: int | None = None) -> bool:
+    """
+    save_device_label / save_channel_label 的共用實作。
+
+    **空字串等於刪除該鍵**，不在 config 裡留一堆空字串——標籤是稀疏資料，
+    64 通道只命名 3 個是常態，留空鍵會讓設定檔充滿雜訊。
+    刪到整個設備都沒有標籤時，連該設備的條目一起移除。
+    """
+    if not key:
+        return False
+    value = _clean_label(text)
+
+    data = _read_json(CONFIG_PATH)
+    labels = data.setdefault("labels", {})
+    entry = labels.setdefault(key, {})
+
+    if field == "device_label":
+        if value:
+            entry["device_label"] = value
+        else:
+            entry.pop("device_label", None)
+    else:
+        channels = entry.setdefault("channels", {})
+        if value:
+            channels[str(channel_id)] = value
+        else:
+            channels.pop(str(channel_id), None)
+        if not channels:
+            entry.pop("channels", None)
+
+    if not entry:
+        labels.pop(key, None)
+    if not labels:
+        data.pop("labels", None)
+
+    return _write_config(data)
+
+
+def save_channel_label(key: str, channel_id: int, text: str) -> bool:
+    """設定單一通道的標籤。空字串＝清除。回傳是否寫檔成功。"""
+    return _save_label(key, "channel", text, channel_id)
+
+
+def save_device_label(key: str, text: str) -> bool:
+    """設定設備層級的標籤（例如「一號配電箱」）。空字串＝清除。"""
+    return _save_label(key, "device_label", text)

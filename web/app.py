@@ -388,7 +388,78 @@ def _remember_connection() -> list[dict]:
     except Exception as e:
         _WEB_LOGGER.debug(f"讀取設備識別資訊失敗，最近連線清單僅記錄 IP: {e}",
                           extra={'log_module': 'WEB'})
+    # 順手把標籤用的識別 key 記下來——序號在這裡已經讀到了，
+    # 標籤端點就不必為了取 S/N 再做一次 CIP 讀取（見 _device_label_key()）。
+    _remember_label_key(backend.device_ip, serial)
     return app_config.record_connection(backend.device_ip, name, serial)
+
+
+# ==================== 通道自訂標籤（4.3.6）====================
+# 標籤存在 config.json 的 labels 區塊，以「設備識別 key」索引，格式與 backend 的
+# _probe_cache_key() 一致：讀得到序號用 sn:<serial>，讀不到退回 ip:<ip>。
+#
+# ⚠️ 純本機資料——CAPAROC 的 CIP 物件沒有可寫的通道名稱欄位，標籤不會同步到設備。
+# 通道設定頁有一行說明告知使用者這件事。
+#
+# S/N 只在連線成功時讀一次（_remember_connection 已經讀了，這裡順手記下），
+# 之後標籤端點都用這份快取，不再為了取 S/N 多做 CIP 讀取——
+# _format_status() 每秒都在跑，多一次 CIP 讀取會去搶 _cip_lock。
+_label_key_cache: dict[str, str] = {}     # {device_ip: "sn:xxx"}
+
+
+def _remember_label_key(ip: str, serial: str | None) -> None:
+    """連線成功後記下該 IP 對應的序號 key。讀不到序號就不記，查詢時自然退回 ip:。"""
+    if ip and serial:
+        _label_key_cache[ip] = f"sn:{serial}"
+
+
+def _device_label_key() -> str:
+    """
+    目前設備的標籤索引 key。
+
+    以 device_ip 查快取——**不用單一「當前 key」變數**，因為斷線點散在七處
+    （手動斷線、IP 變更、WebSocket 失聯、關機…），漏掛任何一處都會讓標籤
+    張冠李戴。以 IP 查表則不必攔截斷線：換了 IP 自然查到另一筆或退回 ip:。
+    """
+    if _DEMO_MODE:
+        return "ip:demo"
+    ip = backend.device_ip or ""
+    return _label_key_cache.get(ip) or f"ip:{ip}"
+
+
+@app.get("/api/labels")
+def api_labels_get():
+    """
+    目前設備的標籤。**不檢查 is_connected**：未連線時前端仍要能顯示上次存的名稱
+    （與 /api/config/limits 同樣的理由——這是本機設定值，與設備連線無關）。
+    """
+    key = _device_label_key()
+    data = app_config.device_labels(key)
+    return {"key": key, **data}
+
+
+class LabelBody(BaseModel):
+    text: str = ""
+
+
+@app.post("/api/labels/channel/{channel_id}")
+def api_label_set_channel(channel_id: int, body: LabelBody):
+    """設定單一通道標籤。空字串＝清除。"""
+    if channel_id < 1:
+        raise HTTPException(status_code=422, detail="通道編號必須大於 0")
+    key = _device_label_key()
+    if not app_config.save_channel_label(key, channel_id, body.text):
+        raise HTTPException(status_code=500, detail="標籤寫入設定檔失敗")
+    return {"success": True, "key": key, **app_config.device_labels(key)}
+
+
+@app.post("/api/labels/device")
+def api_label_set_device(body: LabelBody):
+    """設定設備層級標籤（例如「一號配電箱」）。空字串＝清除。"""
+    key = _device_label_key()
+    if not app_config.save_device_label(key, body.text):
+        raise HTTPException(status_code=500, detail="標籤寫入設定檔失敗")
+    return {"success": True, "key": key, **app_config.device_labels(key)}
 
 
 @app.get("/api/connect/recent")

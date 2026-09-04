@@ -2,6 +2,94 @@
 
 ---
 
+## [2026-09-04] 4.3.6 通道自訂標籤：以設備序號綁定的通道命名
+
+> 現場一次接 8-64 個通道，只靠 CH1/CH2 分不出哪個是主機電源、哪個是照明迴路。
+
+### ✨ 功能
+
+- 通道設定頁新增「名稱」欄，點擊即可編輯，`@blur` 儲存
+- 儀表板卡片唯讀顯示名稱（卡片已有電流／長條／額定／旗標四層資訊，
+  再塞常駐輸入框會過擠，編輯集中在設定頁）
+- 系統狀態頁可為整台設備命名（例如「一號配電箱」）
+- 標籤以**設備序號**綁定：設備換 IP，名稱跟著走
+
+### 🔀 與 TODO 原規劃的兩項差異
+
+原規劃寫於 config 架構統一之前，動工前逐一查證現況後修正：
+
+**1. 儲存位置**：原規劃的獨立 `channel_labels.json` 改為併入 `config.json` 的
+`labels` 區塊。config 已統一走 `app_config`（`device_config.json` 與
+`logging_config.json` 都已合併，`config/` 底下兩個 `.migrated` 檔即為證據），
+再開一個檔是回頭走分裂的老路，也得重寫一套存檔邏輯。
+
+**2. 標籤不進每秒 payload**：原規劃 Step 2 的「`_format_status()` 每個 channel
+加 `label` 欄位」**不採用**。該函式在 WebSocket 迴圈中每秒執行
+（`ws_push_interval` 預設 1.0），塞入靜態文字等於每天推 8.6 萬次不會變的字串；
+更糟的是為了填 label 就得知道序號，而 backend 不快取序號，等於**每秒多一次
+CIP 讀取**去搶 `_cip_lock`——那正是 `postNominalBatch` 當初特意避開的問題。
+改走獨立端點 + 前端合併，payload 結構完全不動。
+
+### 🔑 設備識別 key：以 IP 查表，不用「當前 key」變數
+
+沿用 `_probe_cache_key()` 的既有慣例（`sn:<serial>` 優先，讀不到退回 `ip:<ip>`），
+序號取自連線時 `_remember_connection()` **已經讀到**的值，標籤端點不額外做 CIP 讀取。
+
+快取刻意以 **device_ip 為索引**而非單一「當前 key」變數：斷線點散在七處
+（手動斷線、IP 變更、WebSocket 失聯、關機…），漏掛任何一處都會讓標籤張冠李戴。
+以 IP 查表就不必攔截斷線——換了 IP 自然查到另一筆或退回 `ip:`。
+
+### 💬 UI 上的但書
+
+標籤是純本機資料（CIP 沒有可寫的通道名稱欄位），但使用者看到「以序號綁定」
+會合理期待它跟著設備走。因此**不只寫進文件**——文件使用者不會讀，但輸入標籤時
+看得到的字一定會讀：通道設定頁加一行 `hint-text`，沿用 `webif-src-note` 的既有慣例。
+
+> 通道名稱僅儲存在**這台電腦**（`config.json`），以設備序號綁定——設備換 IP
+> 名稱會跟著走，但換一台電腦操作時需重新輸入，或把設定檔一起複製過去。
+
+刻意不用 Modal：一句話講得完的限制，不值得多一層點擊；Modal 留給真正需要
+分步驟說明的情境（如額定電流的 RC 操作）。
+
+### 🔧 實作細節
+
+- `src/app_config.py`: `labels` 區塊 + `device_labels()` / `save_channel_label()` /
+  `save_device_label()`。32 字上限、`strip()`、**空字串＝刪除該鍵**（標籤是稀疏
+  資料，64 通道只命名 3 個是常態，留空鍵會讓設定檔充滿雜訊），全清時連
+  `labels` 區塊一併移除
+- `web/app.py`: 三個端點 + `_device_label_key()` + `_label_key_cache`。
+  `GET /api/labels` **不檢查 `is_connected`**——未連線時仍要能顯示上次存的名稱
+  （與 `/api/config/limits` 同樣的理由）
+- `web/static/js/app.js`: `channelLabels` / `deviceLabel` / `labelBusy` /
+  `labelFeedback`，存檔沿用 `setNominal()` 的 busy + feedback 慣例；
+  `fetchLabels()` 掛在既有的斷→通轉換點（標籤要先有序號才知道查哪台，
+  故不放 `onMounted()`）；值沒變不打 API，點進點出不該產生寫檔
+- `index.html` / `style.css`: 名稱欄、卡片標籤、設備名稱欄、但書一行。
+  `.label-input` 預設低調（透明底），focus 才浮出來——名稱欄多數時候是空的，
+  不該和額定電流輸入搶視線
+- `src/version.py`: 4.12.0 → 4.13.0（前端檔案有變動，快取需失效）
+
+**Demo 模式**（債 #10）：沒有寫三個 `_DEMO_MODE` 分支，而是讓
+`_device_label_key()` 在 demo 下回 `ip:demo`，三個端點走**同一條真實程式路徑**。
+少三個分支，也少三個未來會漏改的地方。
+
+### ✅ 驗證
+
+`tests/test_channel_labels.py` 14 項：儲存往返、空白清理、長度上限、空字串刪除、
+**兩台設備標籤互不污染**（「以序號綁定」的核心保證）、其他 config 區塊不受影響、
+key 的 `sn:`／`ip:` fallback、以 IP 查表的行為。
+
+其中 `test_status_payload_must_not_carry_labels` 守的是上述決策 2 這個**架構決策**，
+不是實作細節——日後若有人「順手」把 label 加回 payload，這支會擋下。
+
+實際啟動服務（`--demo`, port 8099）以 HTTP 走完整流程：三個端點正常，
+中文正確以 UTF-8 存入 `config.json`，前後空白被清、100 字被截為 32、
+`channel_id=0` 回 422、空字串正確刪除。測試資料已清除，`config.json` 還原。
+
+回歸：51 passed、`ruff check .` 全綠。
+
+---
+
 ## [2026-09-04] Phase 5.1 路徑抽象化：打包相容性從零到可用
 
 > Phase 5 全部項目的前置。改前全專案搜尋 `sys._MEIPASS` / `sys.frozen` 無任何

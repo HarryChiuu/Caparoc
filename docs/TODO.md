@@ -13,9 +13,10 @@
 
 | # | 任務 | 工時 | 章節 |
 |---|------|------|------|
-| 1 | 4.3.6 通道自訂標籤（Serial Number 綁定）— **規劃已完成**，見 [CHANNEL_LABELS_PLAN.md](CHANNEL_LABELS_PLAN.md) | 3-4h | 4.3.6 |
-| 2 | 4.4.1 CLI 通道詳細狀態顯示（`s <ch>`、使用率、bit 0-5 解析） | 2-3h | 4.4.1 |
-| 3 | 5.3 PyInstaller 打包（前置 5.1 **已完成**） | 2-3h | Phase 5.3 |
+| 1 | 4.4.1 CLI 通道詳細狀態顯示（`s <ch>`、使用率、bit 0-5 解析） | 2-3h | 4.4.1 |
+| 2 | 5.3 PyInstaller 打包（前置 5.1 **已完成**） | 2-3h | Phase 5.3 |
+
+~~4.3.6 通道自訂標籤~~ ✅ **已完成（2026-09-04）**——見 [CHANNEL_LABELS_PLAN.md](CHANNEL_LABELS_PLAN.md)。
 
 ~~5.1 路徑抽象化~~ ✅ **已完成（2026-09-04）**——`src/paths.py` 已建立並接上全部
 呼叫端，5.3 的前置解除。
@@ -57,6 +58,17 @@
 ---
 
 ## ✅ 已完成功能
+
+### 4.3.6 通道自訂標籤（2026-09-04）
+- [x] `app_config`：`labels` 區塊 + `device_labels()` / `save_channel_label()` / `save_device_label()`
+      （32 字上限、空字串＝刪除、全清時連區塊一起移除）
+- [x] `web/app.py`：`GET /api/labels`、`POST /api/labels/channel/{id}`、`POST /api/labels/device`
+- [x] 設備識別 key 以 IP 查表（`sn:` 優先、退回 `ip:`），序號沿用連線時已讀到的值，
+      **不為標籤多做 CIP 讀取**
+- [x] 前端：通道設定頁「名稱」欄可編輯、儀表板卡片唯讀顯示、系統狀態頁設備名稱
+- [x] **UI 提醒**：通道設定頁一行 `hint-text` 說明「名稱只存本機、以序號綁定」
+- [x] `tests/test_channel_labels.py`（14 項），含守住「payload 不得混入 label」的架構決策
+- 兩項與原規劃的差異見 [CHANNEL_LABELS_PLAN.md](CHANNEL_LABELS_PLAN.md)
 
 ### Phase 5.1 路徑抽象化（2026-09-04）
 - [x] **建立 `src/paths.py`**：`RESOURCE_DIR`／`DATA_DIR`／`CONFIG_DIR`／`LOG_DIR`／`WEB_DIR`

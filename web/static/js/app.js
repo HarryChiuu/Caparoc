@@ -154,6 +154,8 @@ createApp({
             if (!_wasConnected && state.connected) {
                 fetchNetworkInfo();
                 fetchDeviceInfo();
+                // 標籤以設備序號綁定，連上才知道要查哪一台（故不放 onMounted）
+                fetchLabels();
             }
             _wasConnected = state.connected;
 
@@ -689,6 +691,69 @@ createApp({
                     limits.nominalMax = d.nominal_current.max;
                 }
             } catch (e) { /* 設定值非關鍵路徑，失敗沿用預設即可 */ }
+        }
+
+        // ── 通道自訂標籤（4.3.6）─────────────────────────────
+        // 標籤刻意**不放進每秒的 WebSocket payload**：那是靜態文字，每天推 8.6 萬次
+        // 沒有意義，而且後端為了填 label 得每秒多讀一次 CIP 取序號去搶 _cip_lock。
+        // 改由獨立端點取一次，前端在渲染時與 state.channels 合併。
+        const channelLabels = reactive({});     // {chId: '主機電源'}
+        const deviceLabel = ref('');
+        const labelBusy = reactive({});         // {chId | '_device': true}
+        const labelFeedback = reactive({});     // {chId | '_device': {ok, msg}}
+        const LABEL_MAX_LEN = 32;               // 與 app_config.LABEL_MAX_LEN 一致
+
+        function _applyLabels(d) {
+            Object.keys(channelLabels).forEach(k => delete channelLabels[k]);
+            Object.entries(d?.channels ?? {}).forEach(([k, v]) => { channelLabels[k] = v; });
+            deviceLabel.value = d?.device_label ?? '';
+        }
+
+        async function fetchLabels() {
+            try {
+                const r = await fetch('/api/labels');
+                if (!r.ok) return;              // 取不到就維持空白，不擋其他功能
+                _applyLabels(await r.json());
+            } catch (e) { /* 標籤非關鍵路徑 */ }
+        }
+
+        // 存檔沿用 setNominal() 的 busy + feedback 慣例（3 秒後自動清訊息）
+        async function _postLabel(slot, url, text) {
+            if (labelBusy[slot]) return;
+            labelBusy[slot] = true;
+            labelFeedback[slot] = { ok: true, msg: '儲存中…' };
+            try {
+                const r = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text }),
+                });
+                const body = await r.json().catch(() => ({}));
+                if (r.ok) {
+                    _applyLabels(body);         // 以後端回傳為準（已 trim／截斷）
+                    labelFeedback[slot] = { ok: true, msg: '✓ 已儲存' };
+                    setTimeout(() => { labelFeedback[slot] = { ok: false, msg: '' }; }, 3000);
+                } else {
+                    labelFeedback[slot] = { ok: false, msg: body.detail ?? '儲存失敗' };
+                }
+            } catch (e) {
+                labelFeedback[slot] = { ok: false, msg: '無法連線' };
+            } finally {
+                labelBusy[slot] = false;
+            }
+        }
+
+        // @blur 觸發。值沒變就不打 API——點進點出不該產生寫檔。
+        function saveLabel(chId, text) {
+            const val = (text ?? '').trim().slice(0, LABEL_MAX_LEN);
+            if (val === (channelLabels[chId] ?? '')) return;
+            return _postLabel(chId, `/api/labels/channel/${chId}`, val);
+        }
+
+        function saveDeviceLabel(text) {
+            const val = (text ?? '').trim().slice(0, LABEL_MAX_LEN);
+            if (val === deviceLabel.value) return;
+            return _postLabel('_device', '/api/labels/device', val);
         }
 
         // 模組型號標示的可調範圍；型號讀不到時回全域 limits（軟性降級）
@@ -1296,6 +1361,8 @@ createApp({
             limits,
             nominalInputs, nominalFeedback, nominalBusy, batchNominal, batchStatus, batchBusy,
             setNominal, setAllNominal,
+            channelLabels, deviceLabel, labelBusy, labelFeedback, LABEL_MAX_LEN,
+            saveLabel, saveDeviceLabel,
             batchNominalByMod, batchStatusByMod, batchBusyByMod,
             setModuleNominal, isModNominalReadOnly, isModRotary, modRange, modFixedNominal,
             showNominalHelp, helpMod, openNominalHelp,

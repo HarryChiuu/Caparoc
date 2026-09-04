@@ -24,6 +24,7 @@ import struct
 import time
 import threading
 import traceback
+import unicodedata
 
 import app_config
 import caparoc_http
@@ -1990,10 +1991,12 @@ class CaparocBackend:
                         current = data[base_offset + 2] / 10.0
 
                         state = "🟢 開" if is_on else "⚫ 關"
+                        usage = self.calc_utilization(current, nominal_current)
+                        usage_txt = f"  ({usage:.0f}%)" if usage is not None else ""
                         if module_count > 1:
-                            msg = f"   M{module}.CH{ch} (#{global_ch}): {state}  {current:.2f}A / {nominal_current}A"
+                            msg = f"   M{module}.CH{ch} (#{global_ch}): {state}  {current:.2f}A / {nominal_current}A{usage_txt}"
                         else:
-                            msg = f"   CH{ch}: {state}  {current:.2f}A / {nominal_current}A"
+                            msg = f"   CH{ch}: {state}  {current:.2f}A / {nominal_current}A{usage_txt}"
 
                         warn_list = []
                         if is_on and current < 0.05: warn_list.append("無負載")
@@ -2016,6 +2019,110 @@ class CaparocBackend:
         except Exception as e:
             print(f"❌ 讀取狀態失敗: {e}")
             traceback.print_exc()
+
+    @staticmethod
+    def calc_utilization(flowing, nominal):
+        """
+        電流使用率（%）＝ Flowing / Nominal × 100。
+
+        額定為 0（空槽或讀取失敗）時回傳 None——不回 0，因為「0% 使用率」與
+        「無法計算」在畫面上意義完全不同，前者會讓空槽看起來像一個健康的閒置通道。
+        """
+        try:
+            nominal = float(nominal)
+            if nominal <= 0:
+                return None
+            return float(flowing) / nominal * 100.0
+        except (TypeError, ValueError):
+            return None
+
+    # 狀態位元定義：bit → (旗標名, 顯示文字)
+    # 與 _read_current_status() 的 dict 欄位、Web UI 用語保持一致，
+    # 避免同一個位元在三個地方各有一套講法。
+    CHANNEL_STATUS_BITS = (
+        (0, 'is_on',          '通道開啟'),
+        (1, 'warning_80',     '80% 電流警告'),
+        (2, 'overload',       '過載'),
+        (3, 'short_circuit',  '短路'),
+        (4, 'hardware_fault', '硬體故障'),
+        (5, 'total_shutdown', '總電流關斷'),
+    )
+
+    def show_channel_detail(self, global_ch):
+        """
+        顯示單一通道的詳細狀態（CLI `s <ch>`）。
+
+        資料來源刻意用 _read_current_status()，不自己重讀 Input Assembly：
+        該方法已處理 _cip_lock、空槽過濾（nominal=0）與 _ch_id_map 維護，
+        另寫一套解析等於把同一份位元組格式的知識複製到第二個地方。
+
+        Args:
+            global_ch: 全域通道編號（1-based，與 `on`/`off`/`init` 同一套編號）
+        """
+        if not self.driver:
+            print("❌ Driver 未初始化")
+            return
+
+        status = self._read_current_status()
+        if status is None:
+            print("❌ 無法讀取狀態資料")
+            return
+
+        channels = status.get('channels', {})
+        info = channels.get(global_ch)
+        if info is None:
+            avail = sorted(channels)
+            print(f"⚠️  通道 {global_ch} 不存在或為空槽")
+            if avail:
+                print(f"   目前可用通道: {', '.join('CH' + str(c) for c in avail)}")
+            return
+
+        module   = info['module']
+        channel  = info['channel']
+        flowing  = info['flowing_current']
+        nominal  = info['nominal_current']
+        is_on    = info['is_on']
+        usage    = self.calc_utilization(flowing, nominal)
+
+        if status.get('module_count', 1) > 1:
+            title = f"M{module}.CH{channel} (#{global_ch})"
+        else:
+            title = f"CH{global_ch}"
+
+        line = "   " + "─" * 40
+        print(f"\n📊 {title} 詳細狀態:")
+        print(line)
+        print(f"   狀態:         {'🟢 開啟' if is_on else '⚫ 關閉'}")
+        print(f"   實際電流:     {flowing:.2f} A")
+        print(f"   額定電流:     {nominal:.2f} A")
+        if usage is None:
+            print("   使用率:       —  (額定電流不明)")
+        else:
+            # 門檻與設備自身的 80% 警告位元對齊，避免畫面說「正常」但設備已在警告
+            icon = "✅" if usage < 80 else ("⚠️" if usage < 100 else "❌")
+            print(f"   使用率:       {usage:.1f}% {icon}")
+        print(line)
+
+        alerts = [text for _bit, flag, text in self.CHANNEL_STATUS_BITS[1:] if info.get(flag)]
+        if is_on and flowing < 0.05:
+            alerts.append("無負載（已開啟但幾乎無電流）")
+        if alerts:
+            print("   警告/錯誤:    " + "\n                 ".join("⚠️  " + a for a in alerts))
+        else:
+            print("   警告/錯誤:    ✅ 無")
+        print(line)
+
+        # 原始位元逐項展開，供現場對照設備手冊除錯用
+        bits = "".join('1' if info.get(flag) else '0'
+                       for _b, flag, _t in reversed(self.CHANNEL_STATUS_BITS))
+        print(f"   狀態位元:     0b{bits}  (bit5..bit0)")
+        for bit, flag, text in self.CHANNEL_STATUS_BITS:
+            # 中日韓字元在終端機佔兩格，用 len() 補空白會讓勾選欄歪掉，
+            # 因此依顯示寬度（East Asian Width）補齊而非字元數。
+            pad = " " * max(0, 18 - sum(
+                2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in text))
+            print(f"     bit {bit}  {text}{pad}{'✔' if info.get(flag) else '·'}")
+        print(line)
 
     # ==================== 連線驗證 ====================
 

@@ -151,6 +151,8 @@ class CaparocController(CaparocBackend):
         print("  off <ch>                     - 關閉通道")
         print("\n【狀態查詢】")
         print("  s                            - 顯示完整狀態")
+        print("  s <ch>                       - 單一通道詳細狀態 (例: s 1)")
+        print("                                 （使用率/狀態位元 bit 0-5 逐項解析）")
         print("  device info                  - 設備識別資訊與全域設定")
         print("                                 （產品名稱/韌體版本/序號/運作模式/鎖定狀態）")
         print("  network info                 - 設備網路資訊")
@@ -798,6 +800,19 @@ class CaparocController(CaparocBackend):
                         elif cmd == 's' or cmd == 'status':
                             self._update_activity()
                             self.show_status()
+
+                        elif cmd.startswith('s ') or cmd.startswith('status '):
+                            # `s <ch>` 單一通道詳細狀態。範圍檢查交給
+                            # show_channel_detail()——它讀到的 channels 才是
+                            # 實際存在的通道（已濾掉空槽），比 get_total_channels()
+                            # 的等差上限準確。
+                            self._update_activity()
+                            try:
+                                target_ch = int(cmd.split()[1])
+                            except (ValueError, IndexError):
+                                print("⚠️  用法: s <通道編號>   範例: s 1")
+                            else:
+                                self.show_channel_detail(target_ch)
                         
                         elif cmd.startswith('init '):
                             # 額定電流設定功能 (使用 Config Assembly Read-Modify-Write)

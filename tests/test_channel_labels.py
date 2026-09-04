@@ -404,5 +404,20 @@ def test_concurrent_label_writes_do_not_lose_data(cfg):
     assert not missing, f"並行寫入遺失了通道 {missing}（共 {len(got)}/16 筆）"
 
 
+def test_label_input_text_aligns_with_other_columns():
+    """
+    名稱欄的文字要與「名稱」表頭及其他欄同一條起始線。
+
+    td 已有 padding-left:12px，輸入框自己又有 border 1px + padding 8px，
+    未聚焦時（框是透明的）名稱文字會比其他欄整整右移 9px——看起來就是沒貼齊。
+    往左拉回同樣的 9px 抵銷。
+    """
+    css = _CSS.read_text(encoding="utf-8")
+    block = css.split(".td-label-wrap .label-input {", 1)[1].split("}", 1)[0]
+    assert "margin-left: -9px" in block, (
+        "名稱輸入框缺少負邊距，文字會比其他欄右移 9px（td 12px + border 1px + padding 8px）"
+    )
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

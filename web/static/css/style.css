@@ -937,8 +937,14 @@ code {
    系統狀態頁的設備名稱欄共用它，直接改會讓那裡失去 max-width: 260px。 */
 .td-label-wrap .label-input {
     flex: 1 1 auto;
-    min-width: 0;                 /* 不可省：flex 子項預設不肯縮到內在寬度以下，溢出會回來 */
+    min-width: 0;                 /* 不可省：flex 子項預設不肯縮到最小內容寬度以下，溢出會回來 */
     max-width: none;
+    /* 文字對齊：td 已有 padding-left:12px，輸入框自己又有 border 1px + padding 8px，
+       名稱文字會比「名稱」表頭與其他欄整整右移 9px（實測回報的沒貼齊）。
+       往左拉回同樣的 9px，讓未聚焦時的文字與其他欄同一條起始線；
+       輸入框的內距保留，focus 出現外框時文字才不會貼著邊。
+       新值欄的 .nominal-input 不需要這樣做——它有可見外框，內縮看起來是刻意的。 */
+    margin-left: -9px;
 }
 
 /* 存檔狀態：輸入框內右側的小圖示，不是文字訊息。

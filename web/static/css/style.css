@@ -930,6 +930,7 @@ code {
     align-items: center;
     gap: 6px;
     min-height: 30px;
+    position: relative;           /* .label-state 以此為定位基準 */
 }
 
 /* 只在名稱欄內覆寫，不動 .label-input 基底類別——
@@ -940,14 +941,32 @@ code {
     max-width: none;
 }
 
-.td-label-wrap .feedback-msg {
-    margin-left: 0;
-    flex: 0 1 auto;               /* 只佔自然寬度，空間不足時先讓步給輸入框 */
-    min-width: 0;
-    max-width: none;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+/* 存檔狀態：輸入框內右側的小圖示，不是文字訊息。
+   col-label 只有 190px，放不下「輸入框 + 文字」並排；擠成兩行會把整張表推長
+   （2026-09-04 實測回報）。完整訊息留在 title，hover 看得到。
+   絕對定位讓它疊在輸入框右側內緣，完全不參與版面計算 → 列高恆定。 */
+.label-state {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.8rem;
+    line-height: 1;
+    pointer-events: none;         /* 不擋輸入框的點擊 */
+}
+
+.label-state.ok   { color: var(--ok); }
+.label-state.err  { color: var(--err); }
+.label-state.busy { color: var(--text-fainter); }
+
+/* 圖示會疊在文字上，所以輸入框右側留出空間 */
+.td-label-wrap .label-input {
+    padding-right: 22px;
+}
+
+/* 失敗時整個輸入框轉紅框——比一個小驚嘆號更容易注意到 */
+.td-label-wrap.is-err .label-input {
+    border-color: var(--err);
 }
 
 /* 通道設定頁「名稱只存本機」的但書。比一般 hint 再淡一階，

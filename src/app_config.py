@@ -31,6 +31,7 @@ CAPAROC 統一設定載入器
 import ipaddress
 import json
 import shutil
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -140,12 +141,29 @@ def _read_json(path: Path) -> dict:
         return {}
 
 
+# 設定檔寫入鎖。
+#
+# 所有寫入都是 read-modify-write（_read_json → 改 dict → _write_config），
+# 沒有鎖的話兩個並行請求會各自讀到同一份起始狀態，後寫的把先寫的整個蓋掉——
+# 兩邊都回傳成功，但其中一筆**靜默消失**。
+#
+# 2026-09-04 實測：8 個通道標籤同時 POST，HTTP 全部 200，實際只存下 2 筆。
+# 觸發條件很日常——在通道設定頁用 Tab 一路輸入名稱就會發生。
+#
+# FastAPI 把同步的 `def` 端點丟到 threadpool 執行，所以並行是真的會發生。
+# 鎖必須包住「讀→改→寫」整段，只鎖寫入沒有用。
+_write_lock = threading.RLock()
+
+
 def _write_config(data: dict) -> bool:
     """
     把完整設定 dict 寫回 config.json 並重新載入快取。
 
-    所有寫入路徑（save_device_ip / record_connection / forget_device_ip）都走這裡，
-    避免各自複製一份 mkdir + dump + reload 的流程。
+    所有寫入路徑（save_device_ip / record_connection / forget_device_ip /
+    標籤存檔）都走這裡，避免各自複製一份 mkdir + dump + reload 的流程。
+
+    ⚠️ 呼叫端必須持有 `_write_lock`，且鎖要從 `_read_json()` 之前就開始持有——
+    否則仍會發生「兩邊各讀一份、後寫覆蓋先寫」的競態。
     """
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -279,9 +297,10 @@ def save_device_ip(ip: str) -> bool:
     走 read-modify-write 並**保留檔案中其他所有區塊**——合併設定檔後，
     直接覆寫整個檔案會洗掉使用者的 logging/web 設定。
     """
-    data = _read_json(CONFIG_PATH)
-    data.setdefault("device", {})["default_ip"] = ip
-    return _write_config(data)
+    with _write_lock:
+        data = _read_json(CONFIG_PATH)
+        data.setdefault("device", {})["default_ip"] = ip
+        return _write_config(data)
 
 
 def recent_max() -> int:
@@ -313,22 +332,23 @@ def record_connection(ip: str, name: str | None = None,
     if not _is_ipv4(ip):
         return recent_devices()
 
-    data = _read_json(CONFIG_PATH)
-    device = data.setdefault("device", {})
-    entries = _sanitize_recent(device.get("recent"))
-    prev = next((e for e in entries if e["ip"] == ip), {})
+    with _write_lock:
+        data = _read_json(CONFIG_PATH)
+        device = data.setdefault("device", {})
+        entries = _sanitize_recent(device.get("recent"))
+        prev = next((e for e in entries if e["ip"] == ip), {})
 
-    entries = [e for e in entries if e["ip"] != ip]
-    entries.insert(0, {
-        "ip": ip,
-        "name": name or prev.get("name"),
-        "serial": serial or prev.get("serial"),
-        # 本地時間、秒精度。前端只拿來顯示「幾分鐘前 / 昨天 14:22」，不做時區換算。
-        "last_connected": datetime.now().isoformat(timespec="seconds"),
-    })
-    device["recent"] = entries[:recent_max()]
-    device["default_ip"] = ip
-    _write_config(data)
+        entries = [e for e in entries if e["ip"] != ip]
+        entries.insert(0, {
+            "ip": ip,
+            "name": name or prev.get("name"),
+            "serial": serial or prev.get("serial"),
+            # 本地時間、秒精度。前端只拿來顯示「幾分鐘前 / 昨天 14:22」，不做時區換算。
+            "last_connected": datetime.now().isoformat(timespec="seconds"),
+        })
+        device["recent"] = entries[:recent_max()]
+        device["default_ip"] = ip
+        _write_config(data)
     return recent_devices()
 
 
@@ -339,13 +359,14 @@ def forget_device_ip(ip: str) -> list[dict]:
     **不動 default_ip**：那是下次開機要連的位址，與「這台不想再出現在下拉清單」
     是兩件事；使用者若要換預設值，連線一次新設備即可。
     """
-    data = _read_json(CONFIG_PATH)
-    device = data.setdefault("device", {})
-    entries = _sanitize_recent(device.get("recent"))
-    remaining = [e for e in entries if e["ip"] != ip]
-    if len(remaining) != len(entries):
-        device["recent"] = remaining
-        _write_config(data)
+    with _write_lock:
+        data = _read_json(CONFIG_PATH)
+        device = data.setdefault("device", {})
+        entries = _sanitize_recent(device.get("recent"))
+        remaining = [e for e in entries if e["ip"] != ip]
+        if len(remaining) != len(entries):
+            device["recent"] = remaining
+            _write_config(data)
     return recent_devices()
 
 
@@ -396,30 +417,34 @@ def _save_label(key: str, field: str, text: str, channel_id: int | None = None) 
         return False
     value = _clean_label(text)
 
-    data = _read_json(CONFIG_PATH)
-    labels = data.setdefault("labels", {})
-    entry = labels.setdefault(key, {})
+    # 整段「讀→改→寫」都在鎖內。標籤最容易併發——在通道設定頁用 Tab
+    # 一路輸入名稱，blur 會連續觸發多個 POST，FastAPI 又把同步端點丟到
+    # threadpool 執行。沒有鎖的話後寫的會把先寫的整個蓋掉，兩邊都回成功。
+    with _write_lock:
+        data = _read_json(CONFIG_PATH)
+        labels = data.setdefault("labels", {})
+        entry = labels.setdefault(key, {})
 
-    if field == "device_label":
-        if value:
-            entry["device_label"] = value
+        if field == "device_label":
+            if value:
+                entry["device_label"] = value
+            else:
+                entry.pop("device_label", None)
         else:
-            entry.pop("device_label", None)
-    else:
-        channels = entry.setdefault("channels", {})
-        if value:
-            channels[str(channel_id)] = value
-        else:
-            channels.pop(str(channel_id), None)
-        if not channels:
-            entry.pop("channels", None)
+            channels = entry.setdefault("channels", {})
+            if value:
+                channels[str(channel_id)] = value
+            else:
+                channels.pop(str(channel_id), None)
+            if not channels:
+                entry.pop("channels", None)
 
-    if not entry:
-        labels.pop(key, None)
-    if not labels:
-        data.pop("labels", None)
+        if not entry:
+            labels.pop(key, None)
+        if not labels:
+            data.pop("labels", None)
 
-    return _write_config(data)
+        return _write_config(data)
 
 
 def save_channel_label(key: str, channel_id: int, text: str) -> bool:

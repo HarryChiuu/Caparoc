@@ -721,6 +721,22 @@ createApp({
             labelDrafts[slot] = labelValue(slot);
         }
 
+        // 狀態以輸入框內的小圖示呈現，不用文字訊息——名稱欄只有 190px，
+        // 放不下「輸入框 + 文字」並排，擠成兩行會把整張表推長（實測回報）。
+        // 完整訊息（尤其是錯誤原因）留在 title，hover 看得到。
+        function labelStateIcon(slot) {
+            const f = labelFeedback[slot];
+            if (!f?.msg) return '';
+            if (f.busy) return '⋯';
+            return f.ok ? '✓' : '⚠';
+        }
+
+        function labelStateClass(slot) {
+            const f = labelFeedback[slot];
+            if (f?.busy) return 'busy';
+            return f?.ok ? 'ok' : 'err';
+        }
+
         function _applyLabels(d) {
             Object.keys(channelLabels).forEach(k => delete channelLabels[k]);
             Object.entries(d?.channels ?? {}).forEach(([k, v]) => { channelLabels[k] = v; });
@@ -737,9 +753,13 @@ createApp({
 
         // 存檔沿用 setNominal() 的 busy + feedback 慣例（3 秒後自動清訊息）
         async function _postLabel(slot, url, text) {
-            if (labelBusy[slot]) return;
+            // 不再因 busy 就早退。輸入框原本綁 :disabled="labelBusy[...]"，
+            // Vue 一停用聚焦中的輸入框，瀏覽器就會補一次 blur → 再次進到這裡 →
+            // 撞上早退後 feedback 永遠停在「儲存中…」（實測回報的卡住現象）。
+            // 現在輸入框不再被停用，這裡也就不需要早退；同一格重複送出由
+            // saveLabel() 的「值沒變就不打 API」擋掉。
             labelBusy[slot] = true;
-            labelFeedback[slot] = { ok: true, msg: '儲存中…' };
+            labelFeedback[slot] = { ok: true, busy: true, msg: '儲存中…' };
             try {
                 const r = await fetch(url, {
                     method: 'POST',
@@ -1429,6 +1449,7 @@ createApp({
             setNominal, setAllNominal,
             channelLabels, deviceLabel, labelBusy, labelFeedback, LABEL_MAX_LEN,
             labelDrafts, labelValue, onLabelFocus, saveLabel, saveDeviceLabel,
+            labelStateIcon, labelStateClass,
             batchNominalByMod, batchStatusByMod, batchBusyByMod,
             setModuleNominal, isModNominalReadOnly, isModRotary, modRange, modFixedNominal,
             showNominalHelp, helpMod, openNominalHelp,

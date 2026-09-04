@@ -301,9 +301,11 @@
                                         <tr v-for="ch in channelsByModule[mod]" :key="ch.id">
                                             <td class="td-ch">CH{{ ch.channel }}</td>
                                             <td class="td-label">
-                                                <!-- flex 容器把輸入框與回饋關在格子裡，否則回饋會溢出蓋到
-                                                     隔壁的「目前額定電流」；min-height 與操作欄一致才對得齊 -->
-                                                <div class="td-label-wrap">
+                                                <!-- 狀態收進輸入框內（右側小圖示），不佔版面也不改列高。
+                                                     190px 的欄寬放不下「輸入框 + 文字訊息」並排，
+                                                     擠成兩行會把整張表推長。錯誤時轉紅框 + hover 看原因。 -->
+                                                <div class="td-label-wrap"
+                                                    :class="{ 'is-err': labelFeedback[ch.id] && !labelFeedback[ch.id].ok && labelFeedback[ch.id].msg }">
                                                     <!-- 綁 labelDrafts 而非 channelLabels：WebSocket 每秒重繪，
                                                          單向 :value 會把使用者打到一半的字拉回舊值 -->
                                                     <input type="text" class="label-input"
@@ -313,13 +315,12 @@
                                                         @blur="saveLabel(ch.id, $event.target.value)"
                                                         @keyup.enter="$event.target.blur()"
                                                         :maxlength="LABEL_MAX_LEN"
-                                                        :disabled="labelBusy[ch.id]"
                                                         placeholder="未命名"
-                                                        title="為這個通道命名，例如「主機電源」。僅存在本機。" />
-                                                    <span class="feedback-msg"
-                                                        :class="labelFeedback[ch.id]?.hint ? 'hint' : (labelFeedback[ch.id]?.ok ? 'ok' : 'err')"
-                                                        v-if="labelFeedback[ch.id]?.msg"
-                                                        :title="labelFeedback[ch.id].msg">{{ labelFeedback[ch.id].msg }}</span>
+                                                        :title="labelFeedback[ch.id]?.msg || '為這個通道命名，例如「主機電源」。僅存在本機。'" />
+                                                    <!-- 存檔中轉圈、成功打勾、失敗驚嘆號；沒有狀態時不佔位 -->
+                                                    <span class="label-state" v-if="labelStateIcon(ch.id)"
+                                                        :class="labelStateClass(ch.id)"
+                                                        :title="labelFeedback[ch.id]?.msg">{{ labelStateIcon(ch.id) }}</span>
                                                 </div>
                                             </td>
                                             <td class="td-nominal">{{ ch.nominal_amps }} A</td>
@@ -523,18 +524,24 @@
                             <tr>
                                 <td>自訂名稱</td>
                                 <td>
-                                    <input type="text" class="label-input label-input-device"
-                                        :value="labelValue('_device')"
-                                        @focus="onLabelFocus('_device')"
-                                        @input="labelDrafts['_device'] = $event.target.value"
-                                        @blur="saveDeviceLabel($event.target.value)"
-                                        @keyup.enter="$event.target.blur()"
-                                        :maxlength="LABEL_MAX_LEN"
-                                        :disabled="labelBusy['_device']"
-                                        placeholder="未命名（例如「一號配電箱」）"
-                                        title="為這台設備命名。僅存在本機，以序號綁定。" />
-                                    <span class="feedback-msg" :class="labelFeedback['_device']?.ok ? 'ok' : 'err'"
-                                        v-if="labelFeedback['_device']?.msg">{{ labelFeedback['_device'].msg }}</span>
+                                    <!-- 與通道名稱欄同一套：狀態收進輸入框內，不用文字訊息推版面。
+                                         不綁 :disabled——停用聚焦中的輸入框會讓瀏覽器補發 blur，
+                                         導致重複送出並卡在「儲存中…」 -->
+                                    <span class="td-label-wrap"
+                                        :class="{ 'is-err': labelFeedback['_device'] && !labelFeedback['_device'].ok && labelFeedback['_device'].msg }">
+                                        <input type="text" class="label-input label-input-device"
+                                            :value="labelValue('_device')"
+                                            @focus="onLabelFocus('_device')"
+                                            @input="labelDrafts['_device'] = $event.target.value"
+                                            @blur="saveDeviceLabel($event.target.value)"
+                                            @keyup.enter="$event.target.blur()"
+                                            :maxlength="LABEL_MAX_LEN"
+                                            placeholder="未命名（例如「一號配電箱」）"
+                                            :title="labelFeedback['_device']?.msg || '為這台設備命名。僅存在本機，以序號綁定。'" />
+                                        <span class="label-state" v-if="labelStateIcon('_device')"
+                                            :class="labelStateClass('_device')"
+                                            :title="labelFeedback['_device']?.msg">{{ labelStateIcon('_device') }}</span>
+                                    </span>
                                 </td>
                             </tr>
                             <tr>

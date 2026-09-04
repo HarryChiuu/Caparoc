@@ -314,5 +314,95 @@ def test_batch_status_writes_go_through_setter():
     )
 
 
+# ── 卡在「儲存中…」與版面推擠（2026-09-04 第三輪回報）──────────────────────
+def test_label_input_must_not_bind_disabled():
+    """
+    名稱輸入框不得綁 :disabled。
+
+    Vue 一停用**聚焦中**的輸入框，瀏覽器會補發一次 blur → 再次呼叫 saveLabel →
+    撞上 _postLabel 的 busy 早退 → feedback 永遠停在「儲存中…」，
+    輸入框也一直是灰的。這正是回報的卡住現象。
+    """
+    html = _INDEX.read_text(encoding="utf-8")
+    assert 'disabled="labelBusy' not in html, (
+        "名稱輸入框綁了 :disabled；停用聚焦中的輸入框會讓瀏覽器補發 blur，"
+        "造成重複送出並卡在「儲存中…」"
+    )
+
+
+def test_label_state_is_an_icon_not_a_text_message():
+    """
+    存檔狀態要用輸入框內的小圖示，不用文字訊息。
+
+    col-label 只有 190px，放不下「輸入框 + 文字」並排，擠成兩行會把整張表推長。
+    """
+    html = _INDEX.read_text(encoding="utf-8")
+    assert "labelStateIcon(" in html, "缺少狀態圖示"
+    assert "labelFeedback[ch.id].msg }}" not in html, (
+        "名稱欄仍在渲染文字訊息，190px 放不下、會把列高推高"
+    )
+    css = _CSS.read_text(encoding="utf-8")
+    block = css.split(".label-state {", 1)[1].split("}", 1)[0]
+    assert "position: absolute" in block, (
+        ".label-state 必須絕對定位才不會參與版面計算，否則列高會跳動"
+    )
+
+
+def test_post_label_does_not_early_return_on_busy():
+    """
+    _postLabel 不得因 busy 早退。
+
+    早退會讓重複觸發的那次直接返回，feedback 停在前一次設下的「儲存中…」。
+    移除輸入框的 :disabled 後已無重入來源，重複送出改由 saveLabel 的
+    「值沒變就不打 API」擋掉。
+    """
+    js = _APPJS.read_text(encoding="utf-8")
+    body = _fn_body(js, "async function _postLabel(slot, url, text) {")
+    assert "if (labelBusy[slot]) return;" not in body, (
+        "_postLabel 仍有 busy 早退，會造成卡在「儲存中…」"
+    )
+
+
+# ── 設定檔並行寫入（2026-09-04 實測發現）──────────────────────────────────
+def test_all_config_writes_hold_the_lock():
+    """
+    每個 read-modify-write 都必須整段持有 _write_lock。
+
+    2026-09-04 實測：8 個通道標籤同時 POST，HTTP 全部 200，實際只存下 2 筆。
+    FastAPI 把同步的 def 端點丟到 threadpool，兩個請求各讀到同一份起始狀態，
+    後寫的把先寫的整個蓋掉——兩邊都回成功，其中一筆靜默消失。
+    觸發條件很日常：在通道設定頁用 Tab 一路輸入名稱。
+    """
+    src = (_ROOT / "src" / "app_config.py").read_text(encoding="utf-8")
+    assert "_write_lock" in src, "app_config 缺少寫入鎖"
+    for fn in ("def save_device_ip(", "def record_connection(",
+               "def forget_device_ip(", "def _save_label("):
+        assert fn in src, f"找不到 {fn}"
+        body = src.split(fn, 1)[1].split("\ndef ", 1)[0]
+        assert "_read_json(CONFIG_PATH)" in body, f"{fn} 不是 read-modify-write？"
+        lock_at = body.find("with _write_lock:")
+        read_at = body.find("_read_json(CONFIG_PATH)")
+        assert lock_at != -1, f"{fn} 沒有持有 _write_lock，並行寫入會遺失資料"
+        assert lock_at < read_at, (
+            f"{fn} 的鎖必須在 _read_json() **之前**取得，"
+            "否則仍會發生「兩邊各讀一份、後寫覆蓋先寫」"
+        )
+
+
+def test_concurrent_label_writes_do_not_lose_data(cfg):
+    """16 個通道同時寫入，一筆都不能少。"""
+    import concurrent.futures as cf
+
+    def write(ch):
+        return app_config.save_channel_label(K1, ch, f"通道{ch}")
+
+    with cf.ThreadPoolExecutor(16) as ex:
+        assert all(ex.map(write, range(1, 17)))
+
+    got = app_config.device_labels(K1)["channels"]
+    missing = sorted(set(str(i) for i in range(1, 17)) - set(got))
+    assert not missing, f"並行寫入遺失了通道 {missing}（共 {len(got)}/16 筆）"
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

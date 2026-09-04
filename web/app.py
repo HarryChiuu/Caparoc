@@ -30,7 +30,7 @@ _DEMO_MODE: bool = "--demo" in sys.argv
 _demo_tick: int = 0  # 每秒遞增，用於電流波形模擬
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -58,6 +58,8 @@ from caparoc_ip_core import (  # noqa: E402
 import caparoc_http  # noqa: E402
 import app_config  # noqa: E402
 from logging_manager import cleanup_old_logs as _cleanup_old_logs  # noqa: E402
+# 前端資源 cache-busting 版號的唯一真相來源（原本手寫在 index.html 兩處，見 src/version.py）
+from version import ASSET_VERSION  # noqa: E402
 
 # 同時只允許一次網段掃描：掃描會開 32 條探測執行緒，兩個分頁同時按會互相干擾
 _discover_lock = threading.Lock()
@@ -272,9 +274,28 @@ def _format_status(raw: dict | None) -> dict:
 
 
 # ==================== 頁面路由 ====================
+def _render_index() -> str:
+    """讀入 index.html 並把 `{{ app_version }}` 換成 src/version.py 的版號。
+
+    只做這一個佔位符的字串替換，**沒有引入 Jinja2**：模板需求僅止於此，
+    為了一個變數多背一層樣板引擎（與它的 autoescape 語意）並不划算。
+
+    index.html 本身回應時已帶 no-store（見下方 index()），瀏覽器不會快取頁面，
+    因此每次都會拿到最新的 `?v=`；真正被快取的是 style.css 與 app.js，
+    它們正是靠這個版號失效。這裡在啟動時算一次並存起來，避免每個請求都讀檔。
+    """
+    html = (_WEB_DIR / "templates" / "index.html").read_text(encoding="utf-8")
+    return html.replace("{{ app_version }}", ASSET_VERSION)
+
+
+# 啟動時算一次。改前端檔案後要看到新版號需重啟服務——與 config.json
+# 「所有鍵啟動時讀入、沒有熱重載」的既有行為一致。
+_INDEX_HTML: str = _render_index()
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    resp = FileResponse(_WEB_DIR / "templates" / "index.html")
+    resp = HTMLResponse(_INDEX_HTML)
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"

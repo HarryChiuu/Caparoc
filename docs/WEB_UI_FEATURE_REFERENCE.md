@@ -317,19 +317,35 @@ set_nominal_current(1, 2, 4, verify=True)   # 模組1 通道2 設為 4A
 
 | 頁面 | 頁面代號 | 對應後端 | 說明 |
 |------|----------|----------|------|
-| 儀表板 | `dashboard` | `_read_current_status()` / WebSocket | 通道卡片、開關按鈕、即時電流 |
-| 圖表監控 | `charts` | `GET /api/history?minutes=N` | 雙 Y 軸、模組分圖、zoom、30 分鐘歷史 |
-| 通道設定 | `channel-settings` | `set_nominal_current()` / `POST /api/channels/nominal` | 額定電流表格（依模組分區，可編輯） |
-| 系統日誌 | `logs` | `GET /api/logs` | 等級篩選、顏色編碼、分頁、自動更新 |
-| 系統狀態 | `system-status` | `GET /api/device/info`、`GET /api/device/webif` | 上半：Identity Object + Class 0x0F（CIP）；下半三個「原廠介面」面板：硬體與韌體、LED 狀態、故障事件記憶（HTTP） |
-| 連線設定 | `connection` | `GET /api/device/network`、`POST /api/connect`、`GET/DELETE /api/connect/recent` | IP 連線表單（可下拉最近連線過的 IP）+ 頁內網段掃描 + 網路資訊面板（MAC / hostname） |
-| IP 設定 | `ip-config` | `GET /api/ipconfig/{current,interfaces}`、`POST /api/ipconfig/{discover,static,dhcp,detect-mac,assign}` | 網卡選擇 + 網段搜尋（含 MAC）、讀取/變更設備 IP、切換 DHCP、DHCP 失聯救援 |
+側邊欄由上而下即操作流程（2026-09-04 重排）。**頁面代號未隨顯示名稱更動**，
+改代號要連 `currentPage` 的所有判斷一起改，不值得。
+
+| # | 頁面 | 頁面代號 | 對應後端 | 說明 |
+|---|------|----------|----------|------|
+| 1 | 通道控制 | `dashboard` | `_read_current_status()` / WebSocket | 通道卡片、開關按鈕、即時電流 |
+| 2 | 設備監控 | `charts` | `GET /api/history?minutes=N` | 雙 Y 軸、模組分圖、zoom、30 分鐘歷史 |
+| 3 | 通道設定 | `channel-settings` | `set_nominal_current()` / `POST /api/channels/nominal`、`GET/POST /api/labels/*` | 額定電流表格（依模組分區，可編輯）+ 通道自訂名稱（存本機 config.json） |
+| 4 | 系統狀態 | `system-status` | `GET /api/device/info`、`GET /api/device/webif` | 上半：Identity Object + Class 0x0F（CIP）；下半三個「原廠介面」面板：硬體與韌體、LED 狀態、故障事件記憶（HTTP） |
+| 5 | 系統日誌 | `logs` | `GET /api/logs` | 等級篩選、顏色編碼、分頁、自動更新 |
+| 6 | 連線設定 | `connection` | `GET /api/device/network`、`POST /api/connect`、`GET/DELETE /api/connect/recent` | IP 連線表單（可下拉最近連線過的 IP）+ 頁內網段掃描 + 網路資訊面板（MAC / hostname） |
+| 7 | 初始設定 | `ip-config` | `GET /api/ipconfig/{current,interfaces,hostname}`、`POST /api/ipconfig/{discover,static,dhcp,detect-mac,assign,hostname}` | 網卡選擇 + 網段搜尋（含 MAC）、讀取/變更設備 IP、切換 DHCP、**設備主機名稱**、DHCP 失聯救援 |
+
+> ⚠️ **三種「名稱」別搞混**：
+> - **主機名稱**（`/api/ipconfig/hostname`）— 寫在**設備**裡（CIP 0xF5 **Attr 6**），換一台電腦連線也看得到
+> - **通道／設備自訂名稱**（`/api/labels/*`）— 只存在**這台電腦**的 `config.json`，以序號綁定
+> - **產品名稱**（`/api/device/info` 的 `product_name`）— Identity Object，唯讀
 
 > ⚠️ **`/api/device/network` 與 `/api/ipconfig/current` 容易混淆**：
 > 前者走 `get_network_info()`（0xF5 + 0xF6），提供 **MAC / hostname**，但**沒有** IP 取得方式；
 > 後者走 `read_device_network_config()`（0xF5 Attr1/3/5），提供 **`config_control`
 > （Static / BOOTP / DHCP）**，是「IP 設定」頁判斷目前模式所必需。
 > 兩者用途不同，**新增欄位前先確認要加在哪一支**。
+>
+> 主機名稱又是第三種：`get_network_info()` 讀的是「Attr 5 的 Domain Name 優先、
+> 空的才退回 Attr 6」，而 `/api/ipconfig/hostname` **只讀寫 Attr 6**。
+> 實機確認名稱存在 Attr 6（Attr 5 的 Domain Name 是空的），且 **Attr 6 立即生效、
+> 不需重啟設備**。⚠️ 改名絕不可寫 Attr 5——那是整包 IP/遮罩/閘道/DNS，
+> 與 `set_device_ip()` 同一個 attribute，寫錯會讓設備失聯。
 
 > ⚠️ **系統狀態頁有兩個獨立資料源，別把欄位加錯邊**：
 > 上半部（設備識別／全域設定）走 **CIP**（`/api/device/info`，需 `is_connected`）；

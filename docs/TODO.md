@@ -59,6 +59,18 @@
 
 ## ✅ 已完成功能
 
+### 設備主機名稱可設定（2026-09-04）
+- [x] 實機診斷確認名稱來自 **CIP 0xF5 Attr 6**（Attr 5 的 Domain Name 是空的）
+      —— `tests/manual/check_hostname.py`，唯讀工具
+- [x] `backend`：`get_device_hostname()` / `set_device_hostname()`，
+      編碼與實機位元組完全相同
+- [x] `GET`／`POST /api/ipconfig/hostname`（含 demo 分支）
+- [x] 「初始設定」頁的「主機名稱」區塊
+- [x] 寫入後回讀驗證 → **實機確認立即生效、不需重啟設備**
+- [x] `tests/test_hostname.py`（13 項），含「絕不寫 Attr 5」的安全界線
+- ⚠️ Attr 5 是整包 IP/遮罩/閘道/DNS，與 `set_device_ip()` 同一個 attribute，
+  誤寫會讓設備失聯。詳見 [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md)
+
 ### 4.3.6 通道自訂標籤（2026-09-04）
 - [x] `app_config`：`labels` 區塊 + `device_labels()` / `save_channel_label()` / `save_device_label()`
       （32 字上限、空字串＝刪除、全清時連區塊一起移除）

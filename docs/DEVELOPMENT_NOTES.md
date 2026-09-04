@@ -318,6 +318,55 @@ PhoenixConta → Broadcast  ARP Announcement for 192.168.50.111  × 2
 
 ---
 
+### 主機名稱（CIP Class 0xF5 Attr 6）
+
+**開發日期**: 2026-09-04
+**相關檔案**: `src/caparoc_backend.py`、`tests/manual/check_hostname.py`、`tests/test_hostname.py`
+
+#### 名稱存在 Attr 6，不是 Attr 5
+
+實機讀取（192.168.50.111）：
+
+```
+Attr 5 raw: 6F 32 A8 C0 00 FE FF FF 01 32 A8 C0 00 00 00 00 00 00 00 00 00 00
+            └ IP ──────┘└ Subnet ─┘└ Gateway ┘└ DNS1 ───┘└ DNS2 ───┘└ 00 00
+                                                                       ↑ Domain Name 長度前綴 = 0（空）
+Attr 6 raw: 08 00 63 61 70 61 72 6F 63 31
+            └len=8┘└─ "caparoc1" ───────┘
+```
+
+`get_network_info()` 是「Attr 5 的 Domain Name 優先、空的才退回 Attr 6」，
+所以畫面上的值實際來自 **Attr 6**。
+
+#### ⚠️ 兩者風險等級差很多，改名務必走 Attr 6
+
+| | Attr 5 | Attr 6 |
+|---|---|---|
+| 內容 | **整包** IP / 遮罩 / 閘道 / DNS / Domain Name | 單一 CIP STRING |
+| 改法 | read-modify-write 整包回寫 | 直接寫 |
+| 寫錯的後果 | **連 IP 一起改掉，設備失聯** | 只是名字不對 |
+
+Attr 5 與 `set_device_ip()` 是同一個 attribute。`test_set_hostname_never_touches_attr5`
+就是守這條界線的，動這塊程式時不要拿掉。
+
+#### CIP STRING 格式
+
+2-byte LE UINT 長度前綴 + ASCII chars（**不是** IP 那種 LE-UDINT，別混用）。
+長度 0 為合法值，等於清除名稱。
+
+#### 寫入行為（實機驗證）
+
+**Attr 6 立即生效，不需要重啟設備。** 寫入後回讀即為新值，重新整理頁面
+設備上仍是新名稱。
+
+`set_device_hostname()` 仍保留「回讀到舊值 → `applied=False`（需重啟）」的分支：
+EDS 未載明此行為，不能假設所有韌體版本都一樣。該分支在本機從未被觸發過。
+
+與改 IP 不同，改名**不會**造成連線中斷，因此可以安心等回應、也能安心回讀驗證——
+不需要 `set_device_ip()` 那套「例外即視為成功」的特殊處理。
+
+---
+
 ## 📊 重要數據結構
 
 ### 通道偏移計算公式

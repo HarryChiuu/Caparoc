@@ -24,10 +24,10 @@ import struct
 import time
 import threading
 import traceback
-from pathlib import Path
 
 import app_config
 import caparoc_http
+from paths import CONFIG_DIR
 
 # 額定電流可設定範圍（安培）。來源為 config/config.json 的 nominal_current 區塊，
 # 與 Web UI 輸入欄的 min/max（GET /api/config/limits）同一份設定。
@@ -900,7 +900,10 @@ class CaparocBackend:
 
     # ---- 探測結果快取（避免每次連線都對設備做破壞性寫入）----
 
-    _PROBE_CACHE_PATH = Path(__file__).resolve().parent.parent / "config" / "nominal_probe_cache.json"
+    # Phase 5.1：走 paths.CONFIG_DIR（外部資料）。打包後若跟著 __file__ 進暫存
+    # 解壓目錄，每次啟動都是新目錄 → **快取永不命中**；而探測會短暫改寫設備的
+    # 額定電流再還原，等於每次連線都對真實設備做一輪寫入。
+    _PROBE_CACHE_PATH = CONFIG_DIR / "nominal_probe_cache.json"
 
     def _probe_cache_key(self) -> str:
         """

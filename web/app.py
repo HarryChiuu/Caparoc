@@ -36,9 +36,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # ==================== 路徑設定 ====================
+# 這兩個只用於 bootstrap（把 src/ 加進 sys.path），不再用於存取任何檔案。
 _WEB_DIR = Path(__file__).parent
 _ROOT_DIR = _WEB_DIR.parent
 sys.path.insert(0, str(_ROOT_DIR / "src"))
+
+# Phase 5.1：上面兩行只用來把 src/ 加進 sys.path（bootstrap，必須先於任何專案
+# import）。實際存取檔案一律改用 paths 的常數——**內嵌資源與外部資料方向相反**，
+# 打包後不可共用同一個 base：
+#   WEB_DIR  (templates/static) → sys._MEIPASS，跟著 exe 走、唯讀
+#   LOG_DIR  (logs)             → exe 旁邊，使用者看得到
+from paths import WEB_DIR, LOG_DIR, resolve_data_dir  # noqa: E402
 
 # stdout 被導向檔案／pipe 時（排程啟動、`> run.log`）編碼會退回 cp950，
 # 任何一個 emoji 都會拋 UnicodeEncodeError 並被外層 except 當成操作失敗。
@@ -94,7 +102,10 @@ def _preload_log_file(max_lines: int = 400) -> None:
     """啟動時預載今日 .log 檔（最新 max_lines 筆），讓網頁可看到歷史記錄。"""
     global _log_serial
     today = _date.today().strftime("%Y-%m-%d")
-    log_path = _ROOT_DIR / "logs" / f"caparoc_{today}.log"
+    # 讀的是 logging_manager 寫出來的同一批檔案，因此目錄解析必須一致：
+    # 走 config 的 logging.log_dir（相對路徑以 DATA_DIR 為基準），而不是寫死 "logs"。
+    # 原本硬編 _ROOT_DIR / "logs"，使用者一旦改了 log_dir，本頁就靜默空白。
+    log_path = resolve_data_dir(app_config.get("logging", "log_dir"), LOG_DIR) / f"caparoc_{today}.log"
     if not log_path.exists():
         return
     try:
@@ -222,7 +233,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/static", StaticFiles(directory=str(_WEB_DIR / "static")), name="static")
+app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 
 
 # ==================== 狀態格式化輔助 ====================
@@ -284,7 +295,7 @@ def _render_index() -> str:
     因此每次都會拿到最新的 `?v=`；真正被快取的是 style.css 與 app.js，
     它們正是靠這個版號失效。這裡在啟動時算一次並存起來，避免每個請求都讀檔。
     """
-    html = (_WEB_DIR / "templates" / "index.html").read_text(encoding="utf-8")
+    html = (WEB_DIR / "templates" / "index.html").read_text(encoding="utf-8")
     return html.replace("{{ app_version }}", ASSET_VERSION)
 
 

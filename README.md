@@ -231,6 +231,8 @@ Caparoc5/
 ├── src/
 │   ├── caparoc_backend.py        # 裝置邏輯層（CIP 通訊，~750 行）
 │   ├── caparoc_controller.py     # CLI 包裝層（繼承 backend，~874 行）
+│   ├── paths.py                  # 路徑解析（內嵌資源 vs 外部資料，打包相容）
+│   ├── version.py                # 版本號唯一真相來源
 │   └── logging_manager.py        # 日誌管理
 ├── web/
 │   ├── app.py                    # FastAPI 服務（~550 行）

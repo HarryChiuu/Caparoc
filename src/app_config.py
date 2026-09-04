@@ -35,10 +35,10 @@ from datetime import datetime
 from pathlib import Path
 
 # ─── 路徑 ────────────────────────────────────────────────────────────────────
-# Phase 5.1 導入 src/paths.py 後，這三行改為引用該模組（打包成 exe 時 __file__
-# 會指向暫存解壓路徑，config 必須落在 exe 旁邊）。
-_ROOT_DIR = Path(__file__).resolve().parent.parent
-CONFIG_DIR = _ROOT_DIR / "config"
+# Phase 5.1（2026-09-04）已導入 src/paths.py。config 屬**外部資料**：打包成 exe
+# 後必須落在 exe 旁邊讓使用者能編輯，不能跟著 __file__ 進暫存解壓目錄。
+from paths import CONFIG_DIR
+
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
 # 遷移來源（合併完成後即可刪除；保留判斷是為了讓舊安裝能無痛升級）

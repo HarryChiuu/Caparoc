@@ -2,6 +2,81 @@
 
 ---
 
+## [2026-09-04] Phase 5.1 路徑抽象化：打包相容性從零到可用
+
+> Phase 5 全部項目的前置。改前全專案搜尋 `sys._MEIPASS` / `sys.frozen` 無任何
+> 結果——打包相容性是零。
+
+### 🐛 為什麼非做不可：開發模式全部正常，問題只在打包後浮現
+
+各模組原本各自用 `Path(__file__).parent.parent` 定位專案根目錄。PyInstaller 會把
+程式解壓到一個**每次啟動都不同**的暫存目錄，`__file__` 指向那裡，於是：
+
+| 位置 | 打包後的後果 |
+|---|---|
+| `app_config.py` config 路徑 | 使用者在 exe 旁邊編輯的 `config.json` **完全不會被讀到**，設定形同無法修改 |
+| `logging_manager.py` log 目錄 | log 寫進暫存目錄，**程式一關就隨目錄消失**，現場出事沒有記錄可查 |
+| `caparoc_backend.py` 探測快取 | **快取永不命中**。而探測會短暫改寫設備的額定電流再還原，等於**每次連線都對真實設備做一輪寫入** |
+| `web/app.py` templates/static | 需改讀 `_MEIPASS`（這兩者**應該**打包進去，與 config/logs 相反） |
+
+第三項有實際副作用，不只是慢一點。
+
+### ✨ src/paths.py：兩種路徑，方向相反
+
+這是本次設計最關鍵的區分，把兩者混為一談是這類重構最容易犯的錯，因此刻意用
+**兩個不同的 base**：
+
+- **內嵌資源** `RESOURCE_DIR` — `web/templates`、`web/static`（含 vendor/）
+  跟著 exe 走、唯讀 → frozen 時為 `sys._MEIPASS`
+- **外部資料** `DATA_DIR` — `config/`、`logs/`
+  放在 exe 旁邊、使用者可讀寫 → frozen 時為 `Path(sys.executable).parent`
+
+開發模式下兩者都等於專案根目錄，所以既有行為完全不變。
+
+`DATA_DIR` 用 `sys.executable` 而非 `sys.argv[0]`——後者可被呼叫端改寫，
+且從捷徑或服務啟動時不一定是完整路徑。
+
+另提供 `resolve_data_dir()`：設定檔的目錄值若為相對路徑，一律以 `DATA_DIR` 為基準
+（不受 CWD 影響）；絕對路徑則原樣尊重。
+
+### 🔧 各呼叫端
+
+- `src/app_config.py`: `CONFIG_DIR` 改為引用 paths（影響最大，優先做）。
+  順帶移除已無使用者的 `_ROOT_DIR`
+- `src/logging_manager.py`: `_resolve_log_dir()` 改用 `resolve_data_dir()`。
+  `_setup_logger()` 與 `cleanup_old_logs()` 早已共用這支，故只需改一處
+- `src/caparoc_backend.py`: `_PROBE_CACHE_PATH` 改用 `CONFIG_DIR`；
+  `pathlib.Path` 至此無其他使用者，從 import 移除
+- `web/app.py`: `WEB_DIR`（內嵌）與 `LOG_DIR`（外部）**分開處理**，不共用 base。
+  `_WEB_DIR` / `_ROOT_DIR` 保留但降級為純 bootstrap（把 src/ 加進 `sys.path`，
+  必須先於 `import paths`，無法改用本模組）
+- `src/caparoc_controller.py`: 已透過 `app_config` 取得路徑，確認無需改動
+
+### 🐛 順帶修掉一個 TODO 盤點表漏列的潛伏 bug
+
+`web/app.py` 的 `_preload_log_file()` 硬編 `_ROOT_DIR / "logs"`，但它讀的正是
+`logging_manager` 寫出來的那批檔案。兩邊的目錄解析不一致，代表**使用者一旦把
+`logging.log_dir` 改成別的值，Web 系統日誌頁就靜默空白**——這不必等打包，
+開發模式下就已經會發生。改為與 logger 共用同一套解析。
+
+### ✅ 驗證
+
+新增 `tests/test_paths.py`（9 項）。重點是**模擬 frozen 環境**（設好
+`sys.frozen` / `sys._MEIPASS` / `sys.executable` 後 reload paths），把打包後才會
+出現的行為提前到現在就能驗證，不必真的跑 PyInstaller。
+
+其中 `test_frozen_two_bases_must_diverge` 是核心不變式：開發模式下兩個 base 相等
+是正常的，**frozen 下相等就是 bug**。另有一項靜態掃描，防止日後新程式碼再用
+`Path(__file__)` 定位檔案。
+
+反向驗證測試有效性：刻意把 `_data_base()` 改成回傳 `_MEIPASS`（即「打包後 config
+改不到」那個真實 bug），測試如期 3 項失敗；還原後全綠。
+
+開發模式行為不變：37 passed、`ruff check .` 全綠、web 服務正常啟動（33 routes）、
+CLI 與 `caparoc_ip_config` 匯入正常、探測快取仍指向既有檔案（不會觸發重新探測）。
+
+---
+
 ## [2026-09-04] 測試套件從「跑不動」修回可用；前端版號改為單一真相來源
 
 > 起因：盤點 TODO 下一步時順手跑了一次 `pytest`，發現**整套中止**。

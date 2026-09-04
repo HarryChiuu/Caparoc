@@ -25,6 +25,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+# Phase 5.1：log 目錄的解析交給 paths（外部資料，打包後須落在 exe 旁邊）
+from paths import LOG_DIR, resolve_data_dir
+
 
 # ─── Module-level singleton ──────────────────────────────────────────────────
 _instance: Optional['LogManager'] = None
@@ -206,14 +209,15 @@ class LogManager:
         """
         回傳 log 目錄的絕對路徑。
 
-        相對路徑以專案根目錄（src/ 的上一層）為基準，不受 CWD 影響——
+        相對路徑以 paths.DATA_DIR 為基準，不受 CWD 影響——
         `_setup_logger()` 與 `cleanup_old_logs()` 必須共用同一份解析，
         否則從不同工作目錄啟動時會「寫入 A 目錄、清除 B 目錄」。
+
+        Phase 5.1：log 屬**外部資料**，打包成 exe 後要落在 exe 旁邊，
+        否則寫進 PyInstaller 暫存解壓目錄，程式一關就隨目錄消失，
+        現場出問題時沒有任何記錄可查。
         """
-        log_dir = Path(self.config['log_dir'])
-        if not log_dir.is_absolute():
-            log_dir = Path(__file__).parent.parent / log_dir
-        return log_dir
+        return resolve_data_dir(self.config['log_dir'], LOG_DIR)
 
     # ── 初始化 handlers ───────────────────────────────────────────────────────
     def _setup_logger(self, enable_gui_queue: bool):

@@ -13,21 +13,23 @@
 
 | # | 任務 | 工時 | 章節 |
 |---|------|------|------|
-| 1 | **5.1 路徑抽象化**（`src/paths.py`）— 打包相容性目前**為零**（全 repo 無 `sys._MEIPASS`／`sys.frozen`），是 Phase 5 全部項目的前置 | 1-1.5h | Phase 5.1 |
-| 2 | 4.3.6 通道自訂標籤（Serial Number 綁定，5 個 Step 全未動） | 2-3h | 4.3.6 |
-| 3 | 4.4.1 CLI 通道詳細狀態顯示（`s <ch>`、使用率、bit 0-5 解析） | 2-3h | 4.4.1 |
-| 4 | 5.3 PyInstaller 打包（前置＝#1） | 2-3h | Phase 5.3 |
+| 1 | 4.3.6 通道自訂標籤（Serial Number 綁定，5 個 Step 全未動） | 2-3h | 4.3.6 |
+| 2 | 4.4.1 CLI 通道詳細狀態顯示（`s <ch>`、使用率、bit 0-5 解析） | 2-3h | 4.4.1 |
+| 3 | 5.3 PyInstaller 打包（前置 5.1 **已完成**） | 2-3h | Phase 5.3 |
+
+~~5.1 路徑抽象化~~ ✅ **已完成（2026-09-04）**——`src/paths.py` 已建立並接上全部
+呼叫端，5.3 的前置解除。
 
 > **2026-09-04 清障已完成**（詳見「已完成功能」章節）：測試套件先前因
 > `tests/test_network_info.py` 在 import 期間連線實機而**整套 collection error**，
 > 25 個測試一個都跑不到；四支互動式工具已移入 `tests/manual/` 並加上 `pytest.ini`，
-> 現在 `python -m pytest` 為 **28 passed**。債 #11（`?v=` 版號）與 5.6 版本號管理
-> 一併收掉。5.1 仍是下一步。
+> 債 #11（`?v=` 版號）與 5.6 版本號管理一併收掉，隨後 5.1 路徑抽象化也已完成。
+> 現在 `python -m pytest` 為 **37 passed**。
 
-**為什麼把 5.1 排第一**：它是 Phase 5 全部項目的前置，且愈晚做、愈多新程式碼會沿用
-錯誤的路徑寫法（目前四個位置都是 `Path(__file__)`）。開發模式下這些寫法全部正常，
-**問題只在打包後浮現**——其中 `_PROBE_CACHE_PATH` 那個還帶副作用：快取永不命中，
-等於每次連線都對真實設備做一輪額定電流寫入／還原。
+**5.1 已收掉**（原本排第一的理由：它是 Phase 5 全部項目的前置，且愈晚做愈多新程式碼
+會沿用錯誤寫法）。實作時另外發現 TODO 原盤點表**漏列一處**：`web/app.py` 的
+`_preload_log_file()` 硬編 `_ROOT_DIR / "logs"`，不但打包後會壞，在開發模式下就已經是
+潛伏 bug——使用者一改 `logging.log_dir`，Web 系統日誌頁就靜默空白。已一併修正。
 
 ### 中優先（無相依，可插隊）
 
@@ -55,6 +57,21 @@
 ---
 
 ## ✅ 已完成功能
+
+### Phase 5.1 路徑抽象化（2026-09-04）
+- [x] **建立 `src/paths.py`**：`RESOURCE_DIR`／`DATA_DIR`／`CONFIG_DIR`／`LOG_DIR`／`WEB_DIR`
+  - 關鍵區分：**內嵌資源**（`sys._MEIPASS`，唯讀）與**外部資料**（`sys.executable` 旁，可讀寫）
+    用兩個不同的 base，方向相反，不可共用
+  - `resolve_data_dir()` 供設定檔的目錄值解析（相對以 `DATA_DIR` 為基準）
+- [x] `src/app_config.py`：`CONFIG_DIR` 改為引用（影響最大，優先做）
+- [x] `src/logging_manager.py`：`_resolve_log_dir()` 改為引用（`_setup_logger` 與
+      `cleanup_old_logs` 共用同一份，前一次 commit 已統一）
+- [x] `src/caparoc_backend.py`：`_PROBE_CACHE_PATH` 改為引用
+- [x] `web/app.py`：`WEB_DIR`（內嵌）與 `LOG_DIR`（外部）**分開處理**
+- [x] `src/caparoc_controller.py`：確認已透過 `app_config` 取得路徑，無需改動
+- [x] **額外修正**：`_preload_log_file()` 原硬編 `"logs"`，改為依 `logging.log_dir` 解析
+- [x] `tests/test_paths.py`（9 項）：**模擬 frozen 環境**驗證兩種路徑方向，
+      已用反向注入確認能抓到「外部資料誤用 `_MEIPASS`」這個典型錯誤
 
 ### 測試套件修復 + 前端版號單一真相來源（2026-09-04）
 - [x] **測試套件從 collection error 修回可用**（28 passed in 0.76s）
@@ -1472,17 +1489,19 @@ config 和 logs 必須在 exe 旁邊（使用者可編輯），不能被打包�
 - **外部資料**（放在 exe 旁邊，使用者可讀寫）：`config/`、`logs/` → `Path(sys.executable).parent`
 
 **工作項目**：
-- [ ] 建立 `src/paths.py`：統一定義 `ROOT_DIR` / `CONFIG_DIR` / `LOG_DIR` / `WEB_DIR` / `RESOURCE_DIR`
+✅ **本節已於 2026-09-04 完成**，以下保留為實作依據。
+
+- [x] 建立 `src/paths.py`：統一定義 `ROOT_DIR` / `CONFIG_DIR` / `LOG_DIR` / `WEB_DIR` / `RESOURCE_DIR`
   - 開發模式：`Path(__file__).resolve().parent.parent`
   - Frozen 外部資料：`Path(sys.executable).parent`（exe 同層）
   - Frozen 內嵌資源：`Path(sys._MEIPASS)`
-- [ ] `src/app_config.py`：`_ROOT_DIR` / `CONFIG_DIR` 改為引用（**優先做，影響最大**）
-- [ ] `src/logging_manager.py`：log 目錄改為引用（含 `_setup_logger` 與 `cleanup_old_logs` **兩處**
+- [x] `src/app_config.py`：`_ROOT_DIR` / `CONFIG_DIR` 改為引用（**優先做，影響最大**）
+- [x] `src/logging_manager.py`：log 目錄改為引用（含 `_setup_logger` 與 `cleanup_old_logs` **兩處**
       ——後者目前沒做相對轉絕對，見 4.3.1-audit）
-- [ ] `src/caparoc_backend.py`：`_PROBE_CACHE_PATH` 改為引用
-- [ ] `web/app.py`：`_WEB_DIR`（內嵌）與 `_ROOT_DIR`（外部）**分開處理**，不可共用同一個 base
-- [ ] `src/caparoc_controller.py`：config 路徑改為引用
-- [ ] 驗證：開發模式行為不變（跑一次現有測試 + demo 模式）
+- [x] `src/caparoc_backend.py`：`_PROBE_CACHE_PATH` 改為引用
+- [x] `web/app.py`：`_WEB_DIR`（內嵌）與 `_ROOT_DIR`（外部）**分開處理**，不可共用同一個 base
+- [x] `src/caparoc_controller.py`：config 路徑改為引用
+- [x] 驗證：開發模式行為不變（跑一次現有測試 + demo 模式）
 
 ---
 

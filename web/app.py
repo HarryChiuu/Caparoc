@@ -28,6 +28,7 @@ from pathlib import Path
 # ==================== Demo 模式旗標 ====================
 _DEMO_MODE: bool = "--demo" in sys.argv
 _demo_tick: int = 0  # 每秒遞增，用於電流波形模擬
+_demo_hostname: str = "caparoc1"  # demo 下可讀可寫，讓主機名稱 UI 不需實機也能檢視（債 #10）
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.responses import HTMLResponse
@@ -733,6 +734,66 @@ async def api_ipconfig_current():
     if not backend.is_connected:
         raise HTTPException(status_code=503, detail="設備未連線")
     return await asyncio.to_thread(backend.read_device_network_config)
+
+
+@app.get("/api/ipconfig/hostname")
+async def api_hostname_get():
+    """
+    讀取設備主機名稱（CIP 0xF5 Attr 6）。
+
+    實機驗證（2026-09-04）確認名稱存在 **Attr 6**，Attr 5 的 Domain Name 是空的。
+    這裡刻意只讀 Attr 6，與 get_network_info() 的「Attr5 優先、Attr6 備援」不同——
+    寫入目標是 Attr 6，讀寫必須看同一個欄位才比對得起來。
+    """
+    if _DEMO_MODE:
+        return {"success": True, "hostname": _demo_hostname, "error": None}
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="設備未連線")
+    name = await asyncio.to_thread(backend.get_device_hostname)
+    if name is None:
+        return {"success": False, "hostname": None, "error": "讀取失敗（設備可能不支援 Attr 6）"}
+    return {"success": True, "hostname": name, "error": None}
+
+
+class HostnameBody(BaseModel):
+    hostname: str = ""
+
+
+@app.post("/api/ipconfig/hostname")
+async def api_hostname_set(body: HostnameBody):
+    """
+    設定設備主機名稱（CIP 0xF5 Attr 6）。
+
+    與改 IP 不同，這**不會**造成連線中斷（改的是名稱不是位址），所以後端會在
+    寫入後立即回讀驗證，用 `applied` 告訴前端到底生效了沒：
+      True  = 回讀到新值，已生效
+      False = 回讀到舊值，指令被接受但要重啟設備才套用
+      None  = 回讀失敗，無法確認
+    """
+    global _demo_hostname
+    name = (body.hostname or "").strip()
+
+    if _DEMO_MODE:
+        if len(name) > 64:
+            raise HTTPException(status_code=422, detail="名稱過長（上限 64 字元）")
+        try:
+            name.encode("ascii")
+        except UnicodeEncodeError:
+            raise HTTPException(
+                status_code=422, detail="名稱只能使用 ASCII 字元（英數與 - _ 等）") from None
+        _demo_hostname = name
+        return {"success": True, "applied": True, "readback": name, "error": None}
+
+    if not backend.is_connected:
+        raise HTTPException(status_code=503, detail="設備未連線")
+
+    res = await asyncio.to_thread(backend.set_device_hostname, name)
+    if not res["success"]:
+        raise HTTPException(status_code=502, detail=res["error"] or "寫入失敗")
+    _WEB_LOGGER.log(_SYSTEM_LEVEL,
+                    f"主機名稱已寫入：{name!r}（applied={res['applied']}）",
+                    extra={'log_module': 'WEB'})
+    return res
 
 
 @app.get("/api/ipconfig/interfaces")

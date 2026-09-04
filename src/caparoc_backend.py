@@ -2149,6 +2149,106 @@ class CaparocBackend:
 
         return result
 
+    # ── 主機名稱（CIP 0xF5 Attr 6, Host Name）─────────────────────────────
+    #
+    # 實機驗證（192.168.50.111，2026-09-04）確認名稱來自 **Attr 6**，不是 Attr 5：
+    #     Attr 5 raw: ... 00 00        ← Domain Name 長度前綴 = 0，是空的
+    #     Attr 6 raw: 08 00 63 61 70 61 72 6F 63 31   ← len=8 + "caparoc1"
+    #
+    # 這個區分很重要：Attr 5 是**整包結構**（IP/遮罩/閘道/DNS 都在裡面），改它要
+    # read-modify-write 整包回寫，與 set_device_ip() 同一個 attribute——寫錯會連 IP
+    # 一起改掉、設備失聯。Attr 6 則是獨立的 CIP STRING，寫壞了頂多名字不對，
+    # 連線不受影響。所以改名一律走 Attr 6，**不要**碰 Attr 5 的 Domain Name。
+    #
+    # 原廠 EDS 的 [TCP/IP Interface Class] 宣告 Attr 6 在 Instance_Attributes 內，
+    # 且 Instance_Services 含 0x10（Set_Attribute_Single）。
+
+    HOSTNAME_MAX_LEN = 64        # CIP STRING 長度前綴是 UINT，但實務上設備多半更短
+
+    @staticmethod
+    def _encode_cip_string(text: str) -> bytes:
+        """CIP STRING：2-byte LE UINT 長度 + ASCII chars。"""
+        raw = text.encode('ascii', errors='ignore')
+        return struct.pack('<H', len(raw)) + raw
+
+    def get_device_hostname(self, driver=None):
+        """
+        讀取設備主機名稱（Attr 6）。讀不到回 None。
+
+        與 get_network_info()['hostname'] 的差別：後者會先看 Attr 5 的 Domain Name，
+        本方法**只讀 Attr 6**，是寫入前後要比對的那一個欄位。
+        """
+        raw = self._cip_get(0xF5, 1, 6, connected=True, driver=driver)
+        if raw is None or len(raw) < 2:
+            return None
+        n = struct.unpack_from('<H', raw, 0)[0]
+        if n == 0:
+            return ""
+        if len(raw) < 2 + n:
+            return None
+        return raw[2:2 + n].decode('ascii', errors='replace').strip('\x00')
+
+    def set_device_hostname(self, hostname: str, driver=None) -> dict:
+        """
+        設定設備主機名稱（Attr 6）。
+
+        寫入後**立即回讀驗證**——EDS 沒有說明這個屬性要不要重啟才生效，
+        與其事先猜，不如讓行為自己說話：
+          - 回讀到新值      → applied=True，已生效
+          - 回讀到舊值      → applied=False，指令被接受但要重啟設備才套用
+          - 回讀失敗        → applied=None，無法確認
+
+        不像 set_device_ip()，這裡**不會**造成連線中斷（改的是名稱不是位址），
+        所以可以放心等回應、也能安心回讀。
+
+        Args:
+            hostname: 新名稱。ASCII、去頭尾空白，上限 HOSTNAME_MAX_LEN。
+                      空字串等於清除名稱（設備允許長度 0）。
+
+        Returns:
+            dict: {'success': bool, 'error': str|None,
+                   'applied': bool|None, 'readback': str|None}
+        """
+        result = {'success': False, 'error': None, 'applied': None, 'readback': None}
+
+        if hostname is None:
+            result['error'] = "hostname 未指定"
+            return result
+
+        name = str(hostname).strip()
+        if len(name) > self.HOSTNAME_MAX_LEN:
+            result['error'] = f"名稱過長（上限 {self.HOSTNAME_MAX_LEN} 字元）"
+            return result
+        try:
+            name.encode('ascii')
+        except UnicodeEncodeError:
+            # CIP STRING 是 ASCII；靜默丟棄非 ASCII 會讓使用者拿到與輸入不同的名字，
+            # 不如明講。
+            result['error'] = "名稱只能使用 ASCII 字元（英數與 - _ 等）"
+            return result
+
+        before = self.get_device_hostname(driver=driver)
+
+        ok, err = self._cip_set(0xF5, 1, 6, self._encode_cip_string(name),
+                                connected=True, driver=driver)
+        if not ok:
+            result['error'] = err or "寫入失敗"
+            return result
+
+        result['success'] = True
+        after = self.get_device_hostname(driver=driver)
+        result['readback'] = after
+        if after is None:
+            result['applied'] = None          # 回讀失敗，無法確認
+        elif after == name:
+            result['applied'] = True          # 立即生效
+        elif after == before:
+            result['applied'] = False         # 已接受，待重啟
+        else:
+            # 設備自己改了名稱（例如截斷或正規化）——照實回報，不假裝成功
+            result['applied'] = True
+        return result
+
     def set_device_ip(self, driver=None, new_ip=None, subnet="255.255.255.0", gateway=""):
         """
         透過 CIP Class 0xF5 將設備 IP 硬寫入設備。

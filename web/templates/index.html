@@ -1205,6 +1205,42 @@
                         </div>
                     </section>
 
+                    <!-- 3.5 主機名稱（CIP 0xF5 Attr 6）-->
+                    <section class="panel">
+                        <h2>
+                            主機名稱
+                            <button v-if="state.connected" class="btn-refresh" @click="fetchHostname"
+                                :disabled="hostnameBusy" title="重新從設備讀取">↻</button>
+                        </h2>
+                        <p class="hint-text">
+                            寫入設備本身（CIP TCP/IP Object），不是本機資料——換一台電腦連線也看得到同樣的名稱。
+                            與「通道設定」頁的通道名稱不同，那些只存在這台電腦。
+                        </p>
+
+                        <div v-if="!state.connected" class="hint-text">請先連線至設備</div>
+                        <template v-else>
+                            <div class="conn-form-block">
+                                <label class="field-label">名稱</label>
+                                <div class="conn-form">
+                                    <input type="text" v-model="hostnameInput" maxlength="64"
+                                        placeholder="例如 caparoc1"
+                                        :disabled="hostnameBusy" @keyup.enter="applyHostname" />
+                                    <button class="btn" @click="applyHostname"
+                                        :disabled="hostnameBusy || hostnameInput.trim() === hostnameCurrent">
+                                        {{ hostnameBusy ? '寫入中…' : '寫入設備' }}
+                                    </button>
+                                </div>
+                                <p class="hint-text">
+                                    僅限 ASCII（英數與 <code>-</code> <code>_</code> 等），上限 64 字元。
+                                    目前設備上的名稱：<strong>{{ hostnameCurrent || '（未設定）' }}</strong>
+                                </p>
+                                <p class="feedback-msg"
+                                    :class="hostnameFeedback.hint ? 'hint' : (hostnameFeedback.ok ? 'ok' : 'err')"
+                                    v-if="hostnameFeedback.msg">{{ hostnameFeedback.msg }}</p>
+                            </div>
+                        </template>
+                    </section>
+
                     <!-- 4. 失聯設備救援（進階／例外流程，預設收合） -->
                     <details class="panel adv-panel">
                         <summary>

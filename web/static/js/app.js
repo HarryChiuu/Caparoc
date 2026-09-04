@@ -412,6 +412,79 @@ createApp({
         const ipApplyFeedback = ref({ ok: false, msg: '' });
         const ipConfirmOpen = ref(false);
 
+        // ── 主機名稱（CIP 0xF5 Attr 6，寫在設備上）──────────────
+        // 與通道／設備自訂標籤完全不同：那些只存在本機 config.json，
+        // 這個是寫進設備硬體的，換一台電腦連線也看得到。
+        const hostnameCurrent = ref('');      // 設備上目前的值
+        const hostnameInput = ref('');        // 輸入框
+        const hostnameBusy = ref(false);
+        const hostnameFeedback = reactive({ ok: false, hint: false, msg: '' });
+
+        function setHostnameFeedback({ ok = false, hint = false, msg = '' }) {
+            hostnameFeedback.ok = ok;
+            hostnameFeedback.hint = hint;
+            hostnameFeedback.msg = msg;
+        }
+
+        async function fetchHostname() {
+            if (hostnameBusy.value) return;
+            hostnameBusy.value = true;
+            try {
+                const r = await fetch('/api/ipconfig/hostname');
+                const body = await r.json().catch(() => ({}));
+                if (r.ok && body.success) {
+                    hostnameCurrent.value = body.hostname ?? '';
+                    hostnameInput.value = hostnameCurrent.value;
+                } else if (r.ok) {
+                    setHostnameFeedback({ msg: body.error ?? '讀取失敗' });
+                }
+            } catch (e) { /* 未連線等情況不吵使用者 */ } finally {
+                hostnameBusy.value = false;
+            }
+        }
+
+        async function applyHostname() {
+            if (hostnameBusy.value) return;
+            const name = hostnameInput.value.trim();
+            if (name === hostnameCurrent.value) {
+                setHostnameFeedback({ hint: true, msg: '名稱沒有變更' });
+                setTimeout(() => setHostnameFeedback({ msg: '' }), 3000);
+                return;
+            }
+            hostnameBusy.value = true;
+            setHostnameFeedback({ ok: true, msg: '寫入中…' });
+            try {
+                const r = await fetch('/api/ipconfig/hostname', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ hostname: name }),
+                });
+                const body = await r.json().catch(() => ({}));
+                if (!r.ok) {
+                    setHostnameFeedback({ msg: body.detail ?? '寫入失敗' });
+                    return;
+                }
+                // applied 由後端「寫入後立即回讀」判定，不是猜的：
+                //   true  = 回讀到新值，已生效
+                //   false = 回讀到舊值，要重啟設備才套用
+                //   null  = 回讀失敗，無法確認
+                hostnameCurrent.value = body.readback ?? name;
+                hostnameInput.value = hostnameCurrent.value;
+                if (body.applied === true) {
+                    setHostnameFeedback({ ok: true, msg: '✓ 已寫入並生效' });
+                    setTimeout(() => setHostnameFeedback({ msg: '' }), 4000);
+                } else if (body.applied === false) {
+                    setHostnameFeedback({ hint: true, msg: '已寫入設備，需重新啟動設備後才會套用' });
+                } else {
+                    setHostnameFeedback({ hint: true, msg: '已寫入，但無法回讀確認——請按 ↻ 重新讀取' });
+                }
+            } catch (e) {
+                setHostnameFeedback({ msg: '無法連線' });
+            } finally {
+                hostnameBusy.value = false;
+            }
+        }
+
         async function fetchIpCurrent() {
             try {
                 const r = await fetch('/api/ipconfig/current');
@@ -1395,7 +1468,10 @@ createApp({
             // 進入 IP 設定頁且已連線 → 自動讀取目前網路設定
             if (page === 'ip-config') {
                 if (!ipIfaces.value.length) fetchIfaces();   // 網卡列舉不需連線
-                if (state.connected) refreshIpCurrent();
+                if (state.connected) {
+                    refreshIpCurrent();
+                    fetchHostname();                        // 主機名稱走 CIP，需連線
+                }
             }
         });
 
@@ -1456,6 +1532,8 @@ createApp({
             channelLabels, deviceLabel, labelBusy, labelFeedback, LABEL_MAX_LEN,
             labelDrafts, labelValue, onLabelFocus, saveLabel, saveDeviceLabel,
             labelStateIcon, labelStateClass,
+            hostnameCurrent, hostnameInput, hostnameBusy, hostnameFeedback,
+            fetchHostname, applyHostname,
             batchNominalByMod, batchStatusByMod, batchBusyByMod,
             setModuleNominal, isModNominalReadOnly, isModRotary, modRange, modFixedNominal,
             showNominalHelp, helpMod, openNominalHelp,

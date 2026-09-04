@@ -18,6 +18,8 @@ import struct
 import subprocess
 import time
 import ipaddress
+import locale
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 # ── CIP 0xF5（TCP/IP Interface Object）常數 ──────────────────
@@ -102,21 +104,76 @@ def parse_list_identity(data: bytes, src_ip: str) -> dict | None:
         return None
 
 
-def get_broadcast_addresses() -> list[str]:
-    """推導本機所有網卡的廣播位址（含受限廣播 255.255.255.255）"""
-    broadcasts = {'255.255.255.255'}
+def _iface_netmasks() -> dict[str, str]:
+    """
+    向作業系統查詢 {ip: netmask}，供廣播位址計算使用。
+
+    psutil 是**選配**依賴：查不到就回空 dict，呼叫端退回 /24 推測。
+    刻意不把它列為必要依賴——它只影響非 /24 網段的探索完整度，
+    而受限廣播 255.255.255.255 本來就是所有情況的保底。
+    """
     try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            ip = info[4][0]
-            if ip.startswith('127.'):
-                continue
-            parts = ip.split('.')
-            if ip.startswith('169.254.'):
-                broadcasts.add('169.254.255.255')
-            else:
-                broadcasts.add('.'.join(parts[:3]) + '.255')
+        import psutil
+    except ImportError:
+        return {}
+    masks: dict[str, str] = {}
+    try:
+        for addrs in psutil.net_if_addrs().values():
+            for a in addrs:
+                if a.family == socket.AF_INET and a.address and a.netmask:
+                    masks[a.address] = a.netmask
     except Exception:
         pass
+    return masks
+
+
+def _broadcast_from_mask(ip: str, mask: str | None) -> str:
+    """
+    由 IP + 遮罩算出廣播位址；遮罩不明或無法解析時退回 /24 推測。
+
+    /24 只是**推測**不是事實——非 /24 網段（如 /16、/22）算出來的位址會落在
+    錯誤的子網而收不到回應。有真實遮罩時一律優先採用。
+    """
+    if ip.startswith('169.254.'):
+        return '169.254.255.255'
+    if mask:
+        try:
+            net = ipaddress.IPv4Network(f"{ip}/{mask}", strict=False)
+            # /31、/32（VPN／點對點介面常見）沒有可用的廣播位址——
+            # IPv4Network 會回傳網段本身或該主機 IP，往那裡送廣播毫無意義。
+            if net.prefixlen < 31:
+                return str(net.broadcast_address)
+            return ''
+        except ValueError:
+            pass
+    return '.'.join(ip.split('.')[:3]) + '.255'
+
+
+def get_broadcast_addresses() -> list[str]:
+    """
+    推導本機所有網卡的廣播位址（含受限廣播 255.255.255.255）。
+
+    有 psutil 時使用作業系統回報的真實遮罩，正確涵蓋非 /24 網段；
+    沒有時退回 /24 推測（原行為）。
+    """
+    broadcasts = {'255.255.255.255'}
+    masks = _iface_netmasks()
+
+    # psutil 的清單比 getaddrinfo(gethostname()) 完整——後者在多網卡機器上
+    # 常只回傳「主要」那張，其餘網段的設備因此掃不到。
+    candidate_ips = set(masks)
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            candidate_ips.add(info[4][0])
+    except Exception:
+        pass
+
+    for ip in candidate_ips:
+        if ip.startswith('127.') or ip == '0.0.0.0':
+            continue
+        bcast = _broadcast_from_mask(ip, masks.get(ip))
+        if bcast:
+            broadcasts.add(bcast)
     return list(broadcasts)
 
 
@@ -204,22 +261,57 @@ def discover_devices(timeout: float = 2.0, broadcasts: list[str] | None = None,
     return devices
 
 
+_ARP_MAC_RE = re.compile(r'^(?:[0-9a-fA-F]{2}[-:]){5}[0-9a-fA-F]{2}$')
+
+
+def _is_static_arp_mac(mac: str) -> bool:
+    """
+    判斷是否為 `arp -a` 的「靜態」項目：廣播與多播位址。
+
+    這些項目本來就不是實體設備，先前靠「動態/dynamic」文字排除，
+    改以位址本身的結構判斷後就與系統語系無關了。
+      * ff:ff:ff:ff:ff:ff        —— 廣播
+      * 01:00:5e:xx:xx:xx        —— IPv4 多播
+      * 33:33:xx:xx:xx:xx        —— IPv6 多播
+    """
+    m = normalize_mac(mac)
+    return (m == 'ff:ff:ff:ff:ff:ff'
+            or m.startswith('01:00:5e:')
+            or m.startswith('33:33:'))
+
+
 def arp_table() -> list[tuple[str, str]]:
     """
-    讀取系統 ARP table 的動態項目，回傳 [(mac, ip), ...]，保留 `arp -a` 原始順序。
+    讀取系統 ARP table 的實體項目，回傳 [(mac, ip), ...]，保留 `arp -a` 原始順序。
 
-    僅適用 Windows（依賴 arp.exe），且「動態/dynamic」欄位隨系統語系而異——
-    非 zh-TW/英文語系下會找不到任何項目，屬已知限制。
+    僅適用 Windows（依賴 arp.exe）。
+
+    ⚠️ 刻意**不比對「動態」/「dynamic」欄位**：該欄位是本地化文字，
+    先前在非 zh-TW／英文語系下會一個項目都找不到（TODO 問題 #6）。
+    改為以「這一行長得像 IP + MAC」判斷，並用 MAC 結構濾掉廣播/多播，
+    行為與原本等價但不再依賴語系。
+
+    另外用 errors='replace' 解碼：主控台代碼頁與 Python 預設編碼不一致時
+    （zh-TW cp950 很常見），text=True 的預設解碼會直接拋 UnicodeDecodeError，
+    讓整個 ARP 後援探索靜默失效。
     """
     try:
-        result = subprocess.run(['arp', '-a'], capture_output=True, text=True)
+        result = subprocess.run(['arp', '-a'], capture_output=True)
     except (FileNotFoundError, OSError):
         return []   # 系統無 arp 指令（非 Windows）
+    text = result.stdout.decode(locale.getpreferredencoding(False), errors='replace')
     pairs: list[tuple[str, str]] = []
-    for line in result.stdout.splitlines():
+    for line in text.splitlines():
         parts = line.split()
-        if len(parts) >= 3 and parts[2] in ('動態', 'dynamic'):
-            pairs.append((parts[1], parts[0]))
+        # 標題列與「介面:」列的欄位排列不同，靠格式判斷自然被排除
+        if len(parts) < 2:
+            continue
+        ip, mac = parts[0], parts[1]
+        if not is_valid_ip(ip) or not _ARP_MAC_RE.match(mac):
+            continue
+        if _is_static_arp_mac(mac):
+            continue
+        pairs.append((mac, ip))
     return pairs
 
 
@@ -278,10 +370,13 @@ def list_interfaces() -> list[dict]:
 
 
 def _broadcast_for(ip: str) -> str:
-    """由 IP 推導廣播位址（沿用 get_broadcast_addresses() 的 /24 假設）。"""
-    if ip.startswith('169.254.'):
-        return '169.254.255.255'
-    return '.'.join(ip.split('.')[:3]) + '.255' 
+    """
+    由 IP 推導廣播位址。有作業系統遮罩時採用真實網段，否則退回 /24 推測。
+    與 get_broadcast_addresses() 共用同一套計算，兩處不會再各算各的。
+    """
+    # discover() 會把回傳值直接當成廣播目標，因此 /31、/32 沒有廣播位址時
+    # 退回受限廣播，而不是回空字串。
+    return _broadcast_from_mask(ip, _iface_netmasks().get(ip)) or '255.255.255.255'
 
 
 def discover(timeout: float = 2.0, on_stage=None, iface_ip: str | None = None) -> dict:

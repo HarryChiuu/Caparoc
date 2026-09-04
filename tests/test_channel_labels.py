@@ -419,5 +419,26 @@ def test_label_input_text_aligns_with_other_columns():
     )
 
 
+# ── 主題預設值 ──────────────────────────────────────────────────────────────
+def test_default_theme_is_light_and_consistent():
+    """
+    預設主題為白天模式，且 index.html 與 app.js 的預設值必須一致。
+
+    index.html <head> 有一段開頁前腳本先套 data-theme（避免閃爍），app.js 載入後
+    又會自己算一次。兩邊不一致的話首屏會先套一種主題、再跳成另一種——
+    使用者看到的就是「開頁閃一下」。
+    """
+    html = _INDEX.read_text(encoding="utf-8")
+    js = _APPJS.read_text(encoding="utf-8")
+
+    assert "localStorage.getItem('caparoc_theme') || 'light'" in html, (
+        "index.html 開頁前腳本的預設主題不是 light"
+    )
+    assert "const DEFAULT_THEME = 'light';" in js, "app.js 的 DEFAULT_THEME 不是 light"
+    assert "|| 'dark'" not in js.split("function toggleTheme", 1)[0], (
+        "app.js 主題初始化仍殘留 'dark' 預設，會與 index.html 不一致造成首屏閃爍"
+    )
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

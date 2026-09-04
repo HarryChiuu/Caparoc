@@ -29,9 +29,13 @@ createApp({
         }
 
         // -- 主題（夜間 / 白天）--
-        const theme = ref('dark');
+        // 預設白天模式——現場多在明亮環境操作。使用者切換過就以 localStorage 為準。
+        // ⚠️ 這個值必須與 index.html <head> 裡開頁前腳本的預設一致，
+        //    否則首屏會先套一種主題、載入 app.js 後再跳成另一種（閃爍）。
+        const DEFAULT_THEME = 'light';
+        const theme = ref(DEFAULT_THEME);
         try {
-            theme.value = localStorage.getItem('caparoc_theme') || 'dark';
+            theme.value = localStorage.getItem('caparoc_theme') || DEFAULT_THEME;
         } catch (_) { /* 私密模式等情境讀不到，維持預設 */ }
 
         function applyTheme(t) {

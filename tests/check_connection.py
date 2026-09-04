@@ -10,8 +10,8 @@ import socket
 import time
 from pathlib import Path
 
-# 添加 src 目錄到路徑
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# 添加 src 目錄到路徑（本檔在 tests/ 底下，須往上一層才是專案根）
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 def check_ping(host):
     """檢查網路連通性 (ping)"""

@@ -1,7 +1,7 @@
 # CAPAROC PM EIP ECB 控制系統
 
-> **版本**: v4.2  
-> **更新日期**: 2026-07-23
+> **版本**: v4.15.0（唯一真相來源：`src/version.py`）  
+> **更新日期**: 2026-09-04
 > **維護者**: Harry Chiu
 
 CAPAROC 電子斷路器遠端控制程式，基於 EtherNet/IP 協議，支援多模組、多通道電流監控與控制。提供 **Web UI**（瀏覽器操作）與 **CLI** 兩種操作介面。
@@ -19,9 +19,13 @@ conda activate sv
 # 安裝依賴
 pip install -r requirements.txt
 
-# 驗證環境可用（應輸出 28 passed，不需連接設備）
+# 驗證環境可用（應輸出 81 passed，不需連接設備）
 python -m pytest
 ```
+
+> ⚠️ **一定要先 `conda activate`。** 直接用系統 Python 執行 `python -m pytest` 會
+> 在收集階段就失敗（`ModuleNotFoundError: No module named 'pycomm3'`），
+> 這不是測試壞掉，是跑錯直譯器。
 
 ### 2. 啟動程式
 
@@ -77,7 +81,7 @@ q                    # 退出程式
 | `device` | `default_ip` | 啟動時嘗試連線的設備 IP |
 | `web` | `port` | ⚠️ **僅 `python web/app.py` 生效**（見下） |
 | `web` | `ws_push_interval` / `ws_idle_shutdown` | WebSocket 推送間隔／閒置自動關閉秒數 |
-| `logging` | `log_level` / `log_dir` | 日誌等級與輸出目錄（相對路徑以專案根目錄為基準） |
+| `logging` | `log_level` / `log_dir` | 日誌等級與輸出目錄（相對路徑由 `src/paths.py` 的 `resolve_data_dir()` 解析：開發模式為專案根目錄，打包後為 exe 所在目錄） |
 | `logging` | `retention_days` | 保留最近 N 天，**於 Web 服務啟動時**清除更舊的檔；`0` = 永不清除。CLI 不會觸發清除 |
 | `nominal_current` | `min` / `max` | 額定電流可設定範圍（安培） |
 
@@ -121,7 +125,7 @@ uvicorn web.app:app --port 8001    # ❌ 完全忽略 web.port，須自行帶 --
 
 | 功能 | 說明 | 命令 |
 |------|------|------|
-| **額定電流設定** | Config Assembly Read-Modify-Write (1-10A) | `init <ch> <amps>` |
+| **額定電流設定** | Config Assembly Read-Modify-Write (1-20A) | `init <ch> <amps>` |
 | **通道控制** | 開關控制，支援 1-64 通道 (多模組) | `on <ch>` / `off <ch>` |
 | **狀態查詢** | 全域系統狀態與通道詳細資訊 | `s` / `status` |
 | **即時監控** | 背景監控，支援靜默/顯示模式 | `monitor start/stop` |
@@ -133,13 +137,39 @@ uvicorn web.app:app --port 8001    # ❌ 完全忽略 web.port，須自行帶 --
 
 | 功能 | 說明 |
 |------|------|
-| **Web UI 基礎架構** | FastAPI + Vue 3 CDN，6 個功能頁面 |
+| **Web UI 基礎架構** | FastAPI + Vue 3（前端資源已 vendor 化至本地，可離線運行），7 個功能頁面 |
 | **通道設定頁** | 額定電流表格，直接在瀏覽器操作 |
 | **圖表監控頁** | 雙 Y 軸、模組分圖、zoom、30 分鐘歷史 |
 | **系統日誌頁** | 等級篩選、顏色編碼、預載今日記錄 |
 | **系統狀態頁** | Identity Object + Class 0x0F |
 | **連線設定頁** | IP 表單 + 網路資訊面板（IP / MAC / 閘道） |
 | **多執行緒安全** | `_cip_lock` 序列化所有 generic_message 呼叫 |
+
+### Phase 4.3–5.1 已完成 ✅ (2026-08 ~ 2026-09)
+
+| 功能 | 說明 |
+|------|------|
+| **初始設定頁** | 設備 IP 變更、DHCP 切換、新裝置初始配置（BOOTP），含失聯救援指引 |
+| **設備主機名稱** | CIP 0xF5 **Attr 6** 讀寫，寫入後回讀驗證；實機確認立即生效不需重啟 |
+| **通道自訂標籤** | 以設備序號綁定的通道／設備命名，存於 `config.json` 的 `labels` 區塊 |
+| **最近連線 IP** | 連線設定頁下拉清單 + 頁內網段掃描，兩條路互補 |
+| **額定電流型號驗證** | 依模組型號判定可設定範圍，區分「固定額定型號」與「旋鈕未轉 RC」 |
+| **日誌保留機制** | `retention_days` 接上 `cleanup_old_logs()`，Web 服務啟動時清除逾期檔 |
+| **主控台編碼防護** | 修正 stdout 導向時 cp950 編碼錯誤被誤判為設備連線失敗 |
+| **路徑抽象化** | `src/paths.py` 區分內嵌資源（唯讀）與外部資料（可讀寫），為打包鋪路 |
+| **版本號單一真相來源** | `src/version.py` 驅動前端資源 `?v=` cache-busting |
+| **UI 調整** | 側邊欄依現場流程重排、預設白天主題、關閉鈕改為明確文字 |
+
+> ⚠️ **Attr 5 vs Attr 6**：主機名稱是 Attr 6；Attr 5 是整包 IP/遮罩/閘道/DNS，
+> 與 `set_device_ip()` 同一個 attribute，誤寫會讓設備失聯。
+> 詳見 [DEVELOPMENT_NOTES.md](docs/DEVELOPMENT_NOTES.md)。
+
+### 🚧 進行中 / 下一步
+
+| 項目 | 說明 |
+|------|------|
+| **4.4.1 CLI 通道詳細狀態** | `s <ch>` 單通道詳細、電流使用率、狀態 bit 0-5 解析 |
+| **5.3 PyInstaller 打包** | 產出單一 `caparoc.exe`（前置 5.1 路徑抽象化已完成） |
 
 詳見 [TODO.md](docs/TODO.md) 及 [CHANGELOG.md](docs/CHANGELOG.md)
 
@@ -233,17 +263,22 @@ python tests/check_connection.py
 ```
 Caparoc5/
 ├── src/
-│   ├── caparoc_backend.py        # 裝置邏輯層（CIP 通訊，~750 行）
-│   ├── caparoc_controller.py     # CLI 包裝層（繼承 backend，~874 行）
+│   ├── caparoc_backend.py        # 裝置邏輯層（CIP 通訊，~2370 行）
+│   ├── caparoc_controller.py     # CLI 包裝層（繼承 backend，~975 行）
+│   ├── caparoc_ip_config.py      # 新裝置初始設定 CLI（BOOTP / IP 變更）
+│   ├── caparoc_ip_core.py        # IP / 網段 / 掃描的純函式層
+│   ├── caparoc_http.py           # 設備 HTTP 介面輔助
+│   ├── app_config.py             # config.json 讀寫（含 labels 區塊）
 │   ├── paths.py                  # 路徑解析（內嵌資源 vs 外部資料，打包相容）
 │   ├── version.py                # 版本號唯一真相來源
+│   ├── console_io.py             # 主控台編碼防護
 │   └── logging_manager.py        # 日誌管理
 ├── web/
-│   ├── app.py                    # FastAPI 服務（~550 行）
-│   ├── templates/index.html      # Vue 3 CDN 頁面
-│   └── static/                   # JS / CSS
+│   ├── app.py                    # FastAPI 服務（~1350 行）
+│   ├── templates/index.html      # Vue 3 頁面（7 個功能頁）
+│   └── static/                   # JS / CSS / vendor（離線資源）
 ├── tests/                        # 自動化測試（`python -m pytest`，不需實機）
-│   ├── test_*.py                 # pytest 測試，28 項
+│   ├── test_*.py                 # pytest 測試，81 項
 │   ├── diagnostic_tools.py       # 診斷工具集
 │   ├── check_connection.py       # 連線檢查工具
 │   └── manual/                   # 需實機／需管理員權限的互動式工具，pytest 不收集
@@ -253,13 +288,15 @@ Caparoc5/
 │   ├── TODO.md                   # 功能規劃
 │   ├── CHANGELOG.md              # 版本歷史
 │   ├── DEVELOPMENT_NOTES.md      # 技術備忘錄
-│   ├── PROGRAM_FLOW.md           # 程式流程
+│   ├── CLI_PROGRAM_FLOW.md       # CLI 程式流程
+│   ├── CHANNEL_LABELS_PLAN.md    # 4.3.6 通道標籤規劃
 │   ├── DIAGNOSTIC_TOOLS_GUIDE.md # 診斷指南
 │   ├── NOMINAL_CURRENT_IMPLEMENTATION.md
+│   ├── diagrams/                 # 架構圖
 │   ├── history/                  # 歷史文件
 │   └── vendor/                   # 原廠文件
 ├── archive/                      # 封存檔案
-├── config/                       # 設定檔（device_ip 等）
+├── config/                       # 設定檔（config.json，複製自 config.example.json）
 ├── logs/                         # 執行日誌
 ├── .gitmessage                   # Git commit 模板
 ├── requirements.txt              # Python 套件需求
@@ -268,14 +305,19 @@ Caparoc5/
 
 ---
 
-## 🔄 版本歷史
+## 🔄 開發里程碑
 
-- **v4.2** (2026-05-25) - 系統狀態頁、連線設定頁、頂部關閉按鈕、Bug fixes（CIP 鎖、IP 做變、重連）
-- **v4.1** (2026-05-21) - 圖表監控頁（Chart.js + zoom）、設備網路資訊 API
-- **v4.0** (2026-05-18) - Web UI 基礎架構（FastAPI + Vue 3）、導覽列、通道設定頁、系統日誌頁
-- **v3.8** (2026-05-14) - controller.py 延负 shadow 方法清除
-- **v3.7** (2025-11-26) - 額定電流設定測化、文件重組
-- **v3.5–3.6** (2025-10-28) - 多模組、即時監控、內部重構
+> ⚠️ **這不是發布版本列表。** 本專案目前**沒有 git tag**，`src/version.py`
+> 只保存當前版本號（v4.15.0），[CHANGELOG.md](docs/CHANGELOG.md) 則以**日期**分節、
+> 不帶版本號。因此下表只列出**里程碑與日期**，不替歷史變更編造版本號。
+> 要查某次改動的細節，請直接看 CHANGELOG 的日期條目。
+
+| 期間 | 里程碑 |
+|------|--------|
+| 2026-09 | 主機名稱設定（CIP 0xF5 Attr 6）、通道自訂標籤、路徑抽象化（`src/paths.py`）、版本號單一真相來源、測試套件修復 |
+| 2026-08 | 初始設定頁（IP／DHCP／BOOTP）、DHCP 失聯救援、CIP 並發修正、額定電流型號驗證、最近連線 IP 與網段掃描 |
+| 2026-05 | **v4.0–v4.2** Web UI 基礎架構（FastAPI + Vue 3）、圖表監控頁、系統狀態頁、連線設定頁 |
+| 2025-10 ~ 2025-11 | **v3.5–v3.7** 多模組支援、即時監控、額定電流設定強化、文件重組 |
 
 詳見 [CHANGELOG.md](docs/CHANGELOG.md)
 
@@ -284,7 +326,7 @@ Caparoc5/
 ## 🛠️ 技術規格
 
 - **通訊協議**: EtherNet/IP (CIP)
-- **Python 版本**: 3.11+
+- **Python 版本**: 3.11+（開發與測試基準為 **3.12**，見 `environment.yml`）
 - **主要依賴**: pycomm3 >= 1.2.14
 - **支援設備**: CAPAROC PM EIP(EtherNet/IP)
 - **支援模組**: 1-16 個 (每模組 4 通道)
@@ -296,6 +338,8 @@ Caparoc5/
 
 ## 📝 授權
 
+尚未指定授權條款（專案根目錄無 `LICENSE` 檔）。在補上之前，請視為
+**保留所有權利**，對外散布前先與維護者確認。
 
 ---
 

@@ -2,6 +2,125 @@
 
 ---
 
+## [2026-09-04] 變更記錄收斂為單一來源，修正 README 五處事實錯誤
+
+接續前一則的文件同步。稽核時發現「**改了什麼**」這件事同時記在**三個地方**，
+其中兩個都已經過期或不可考：
+
+| 位置 | 狀態 |
+|------|------|
+| `docs/CHANGELOG.md` | ✅ 每個 commit 都有條目，是真相來源 |
+| `docs/README.md`「🆕 最近更新」 | ❌ 停在 2026-05-25，落後三個多月 |
+| `README.md`「🔄 版本歷史」 | ⚠️ v4.10–v4.15 的版本號是**依日期反推編出來的** |
+
+### 🔴 為什麼「版本歷史」比過期更糟
+
+`git tag` 數量是 **0**，`src/version.py` 只保存當前版本號，CHANGELOG 則以日期
+分節、不帶版本號。也就是說 v4.10、v4.11 … 這些歷史版本號**沒有任何東西可以佐證**
+——它看起來像事實，實際是推斷。過期的文件讀者還會懷疑，編造的版本號不會。
+
+改為「**開發里程碑**」表，只列期間與里程碑，並明講本專案沒有 git tag、
+不替歷史變更編號。v4.0–v4.2 與 v3.5–v3.7 這些**真正在 CHANGELOG 裡出現過**的
+版本號則保留。
+
+### 📋 docs/README.md：回歸「索引」職責
+
+- **刪除「🆕 最近更新」**，改為一行指向 CHANGELOG，並寫明**刻意不維護第二份清單**
+  （不留下理由的話，下一個人會再把它加回來）
+- **刪除 `changelogs/` 章節**——該目錄**根本不存在**，導航與說明各有一處死連結
+- **補上 `diagrams/`**（架構圖與 CLI 流程圖，HTML + PNG）與 `CHANNEL_LABELS_PLAN.md`
+- 專案名稱 `Caparoc_breaker_control` → **CAPAROC PM EIP ECB 控制系統（`Caparoc5`）**
+  ——同一專案原本有五個名字在流通
+
+### 🐛 README 五處事實錯誤（逐項對照程式碼驗證）
+
+| 位置 | 原本 | 更正 |
+|------|------|------|
+| Phase 3 額定電流 | `1-10A` | **`1-20A`**（依手冊 Table 7-11 & 7-18；同份 README 技術規格欄早已寫 1-20A，**自我矛盾**） |
+| Web UI 基礎架構 | `Vue 3 CDN，6 個功能頁面` | **前端資源已 vendor 化至本地、可離線運行，7 個頁面** |
+| Python 版本 | `3.11+` | 補註**開發與測試基準為 3.12** |
+| `logging.log_dir` | 相對路徑以**專案根目錄**為基準 | 由 `resolve_data_dir()` 解析：**開發模式為專案根，打包後為 exe 所在目錄** |
+| 授權章節 | **完全空白** | 明述尚未指定授權、視為保留所有權利 |
+
+「Vue 3 CDN」這處特別值得記：前端資源在 commit `895025c` 就已 vendor 化，
+README 卻還寫 CDN——**離線可用正是本專案的賣點之一**，寫成 CDN 會讓人以為
+無網路環境不能跑。
+
+另補上環境準備的警語：直接用系統 Python 跑 `python -m pytest` 會在收集階段
+`ModuleNotFoundError: No module named 'pycomm3'`,**這不是測試壞掉,是跑錯直譯器**
+——本次實際踩到。
+
+### 🔧 順手修掉 `tests/check_connection.py` 的死路徑
+
+`sys.path.insert(0, Path(__file__).parent / "src")` 在 `tests/` 底下解析成
+`tests/src`,**該目錄不存在**。目前無害(此檔只 import `pycomm3`,不碰專案模組),
+但下一個想在這裡 import backend 的人會踩到。已改為 `.resolve().parent.parent / "src"`。
+
+### ✅ 驗證
+
+- `python -m pytest` → **81 passed**（`conda run -n sv`）
+- `docs/README.md` 所列路徑逐一確認存在；`docs/*.md` 反向核對,無遺漏
+- 除 `check_connection.py` 一行路徑外,**未改動任何程式邏輯**
+
+---
+
+## [2026-09-04] 文件同步：README 補上 Phase 4.3–5.1，修正過期數字與失效連結
+
+CHANGELOG 與 TODO 一直隨 commit 更新，**README 卻停在 v4.2（2026-07-23）**——
+中間近兩個月的 4.3～5.1 全部沒有出現在專案門面上。本次以 commit `1171f27`
+為基準把三份文件對齊。
+
+### 📌 README：補上缺漏的兩個月
+
+- 版本標頭 `v4.2` → **`v4.15.0`**，並註明真相來源是 `src/version.py`
+  （避免日後又出現「README 一個版本、程式碼另一個版本」）
+- 新增「**Phase 4.3–5.1 已完成**」表：初始設定頁、設備主機名稱、通道自訂標籤、
+  最近連線 IP、額定電流型號驗證、日誌保留、主控台編碼防護、路徑抽象化、
+  版本號單一真相來源、UI 調整
+- 新增「**進行中 / 下一步**」表，與 TODO 的工作佇列一致（4.4.1、5.3）
+- 表格內保留 **Attr 5 / Attr 6 的警語**——README 是新手第一份文件，
+  「誤寫 Attr 5 會讓設備失聯」這件事不該只寫在 DEVELOPMENT_NOTES 裡
+
+### 🐛 修正三處會誤導人的錯誤
+
+| 位置 | 原本 | 實際 |
+|------|------|------|
+| 環境驗證指令的預期輸出 | `28 passed` | **`81 passed`** |
+| 文件導覽 / 專案結構 | `docs/PROGRAM_FLOW.md` | **`docs/CLI_PROGRAM_FLOW.md`**（連結失效） |
+| 專案結構行數 | backend `~750` / controller `~874` / app `~550` | **`~2370` / `~975` / `~1350`** |
+
+專案結構另補上未列出的 `caparoc_ip_config.py`、`caparoc_ip_core.py`、
+`caparoc_http.py`、`app_config.py`、`console_io.py` 與 `docs/diagrams/`、
+`docs/CHANNEL_LABELS_PLAN.md`。
+
+### 🔄 版本歷史補到 v4.15
+
+原表停在 v4.2 且有兩處錯字（「IP 做變」→「IP 改變」、「設定測化」→「設定強化」）。
+補上 v4.3–v4.15 共七列，並加註但書：
+
+> CHANGELOG 以**日期**分節、不帶版本號，README 的版本號對應 `src/version.py`。
+
+這個但書是必要的——兩份文件的編排方式不同，不寫清楚，日後想從 CHANGELOG
+反查「v4.11 是哪幾個 commit」會找不到對應。
+
+### 📋 TODO 的兩處過期數字
+
+- 工作佇列的 `37 passed` → **`81 passed`**，並註明**需在 conda 環境 `sv` 下執行**
+  （系統 Python 沒有 `pycomm3`，直接 `python -m pytest` 會 collection error，
+  這個坑本次實際踩到）
+- 技術債表裡 `test_ip_core.py` 那列的 `28 passed` 一併更新
+- ⚠️ 該列**維持開啟**：`tests/test_ip_core.py` 目前確認**尚未建立**，只有數字過期
+- 標頭加上「末次核對：commit 1171f27」，讓下次同步有明確起點
+
+### ✅ 驗證
+
+- `python -m pytest` → **81 passed**（`conda run -n sv`）
+- 逐一核對 README 提及的檔案路徑皆存在；側邊欄 7 個頁面與 `web/static/js/app.js`
+  的 `navItems` 一致
+- 本次**只改文件，未動任何程式碼**
+
+---
+
 ## [2026-09-04] 設備主機名稱可在「初始設定」頁修改
 
 實機診斷（`tests/manual/check_hostname.py`，192.168.50.111）確認名稱來自

@@ -1,6 +1,6 @@
 # CAPAROC 控制器 - 待實作功能清單
 
-更新日期: 2026-09-04
+更新日期: 2026-09-04（末次核對：commit 1171f27）
 
 ---
 
@@ -25,7 +25,7 @@
 > `tests/test_network_info.py` 在 import 期間連線實機而**整套 collection error**，
 > 25 個測試一個都跑不到；四支互動式工具已移入 `tests/manual/` 並加上 `pytest.ini`，
 > 債 #11（`?v=` 版號）與 5.6 版本號管理一併收掉，隨後 5.1 路徑抽象化也已完成。
-> 現在 `python -m pytest` 為 **37 passed**。
+> 現在 `python -m pytest` 為 **81 passed**（2026-09-04 實測，需在 conda 環境 `sv` 下執行）。
 
 **5.1 已收掉**（原本排第一的理由：它是 Phase 5 全部項目的前置，且愈晚做愈多新程式碼
 會沿用錯誤寫法）。實作時另外發現 TODO 原盤點表**漏列一處**：`web/app.py` 的
@@ -52,7 +52,7 @@
 | `get_broadcast_addresses()` 硬編 `.255`（假設 /24） | 非 /24 網段廣播位址算錯；多網卡可能漏掉 | 問題 #7（已知限制） |
 | `set_device_dhcp()` 任何例外都回 `success=True` | 真失敗與預期斷線無法區分 | 問題 #5（**刻意不改**，真相來源是事後驗證步驟） |
 | 每個新端點都要手寫 `_DEMO_MODE` 分支 | 漏寫 → `--demo` 靜默壞掉 | 債 #10（status payload 已有測試把關，其他端點仍人工） |
-| 選配：`tests/test_ip_core.py` | 純函式安全網，約 30 行，成本極低。**套件現已可正常執行（28 passed），補測試的成本更低了** | 建議項 |
+| 選配：`tests/test_ip_core.py` | 純函式安全網，約 30 行，成本極低。**套件現已可正常執行（81 passed），補測試的成本更低了** | 建議項 |
 | `environment.yml` 的環境名 `caparoc_breaker` 與實際使用的 `sv` 不符 | 已在 yml 與 README 註明，但兩者長期並存仍易混淆 | 2026-09-04 記錄 |
 
 ---

@@ -237,7 +237,7 @@ Byte 6+:  通道狀態 (每個通道 3 bytes)
 
 **開發日期**: 2026-08-04  
 **分支**: `feature/ip-config-dhcp`  
-**相關檔案**: `src/caparoc_backend.py`、`tests/test_ip_config.py`
+**相關檔案**: `src/caparoc_backend.py`、`tests/manual/check_ip_config.py`
 
 #### 背景
 
@@ -457,7 +457,7 @@ CLI 專屬方法：`_show_help_message()`、`_configure_device_ip()`、`_validat
 > - 影響程式可攜性：打包後的工具需要使用者額外安裝系統驅動
 >
 > **目前已完成的探索（保留供日後參考）**：
-> - `tests/test_scapy_dcp.py`：診斷腳本，已確認 scapy 2.7.0 可在 sv 環境安裝
+> - `tests/manual/check_scapy_dcp.py`：診斷腳本，已確認 scapy 2.7.0 可在 sv 環境安裝
 > - 設備 MAC 可取得（`cc:cc:ea:8b:5f:18`），ping / ARP 正常
 > - DCP Identify 廣播因缺 Npcap 未能測試，設備是否回應 DCP 尚未確認
 >

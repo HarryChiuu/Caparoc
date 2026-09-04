@@ -2,6 +2,89 @@
 
 ---
 
+## [2026-09-04] 測試套件從「跑不動」修回可用；前端版號改為單一真相來源
+
+> 起因：盤點 TODO 下一步時順手跑了一次 `pytest`，發現**整套中止**。
+> 不是某個測試失敗，是連收集階段都過不了。
+
+### 🐛 根因：手動診斷腳本被命名成 `test_*.py`
+
+`tests/test_network_info.py` 其實是一支對實機讀網路資訊的**手動腳本**，
+而且 `with CIPDriver(IP)` 寫在 **module 頂層**——pytest 一 import 就會嘗試
+連線 `192.168.50.111`。沒有實機時：
+
+```
+ERROR tests/test_network_info.py - pycomm3.exceptions.CommError: failed to open a connection
+!!!! Interrupted: 1 error during collection !!!!
+```
+
+collection error 會**中止整個 run**，所以另外 25 個不需實機、0.75 秒就跑完的
+測試**一個都執行不到**。安全網存在，但沒人能用——直接下 `pytest` 只會看到失敗。
+
+清點後發現同類共四支（皆為互動式選單／需管理員權限，`def test_` 數量皆為 0）：
+
+| 原檔名 | 實際身分 | 移至 |
+|--------|----------|------|
+| `test_network_info.py` | 實機網路資訊讀取腳本 | `tests/manual/check_network_info.py` |
+| `test_ip_config.py` | 互動式 IP 設定選單 | `tests/manual/check_ip_config.py` |
+| `test_scapy_dcp.py` | scapy/DCP 診斷（需管理員） | `tests/manual/check_scapy_dcp.py` |
+| `test_dcp_ip_config.py` | PROFINET DCP + mini DHCP server | `tests/manual/dcp_ip_config_tool.py` |
+
+命名沿用既有慣例（`tests/check_connection.py`、`tests/diagnostic_tools.py`）。
+四支都以 `git mv` 搬移，history 完整保留；移深一層後 `sys.path` 的
+`parent.parent` 已補成 `resolve().parent.parent.parent`，並改用 `resolve()`
+避免相對路徑啟動時算錯。檔內 usage 字串一併更新。
+
+新增 `pytest.ini` 把收集範圍釘死（`testpaths` + `norecursedirs = tests/manual`），
+避免日後再有人把手動腳本命名成 `test_*.py` 而重蹈覆轍。
+
+**結果**：`python -m pytest` 從 collection error 變成 **28 passed in 0.76s**。
+
+### ✨ 債 #11 收掉：`?v=` 版號單一真相來源（即 5.6 版本號管理）
+
+TODO 技術債 #11 自評為「最難查」的一種故障：cache-busting 版號手寫在
+`index.html` 兩處（stylesheet 與 app.js），漏改一處使用者的瀏覽器就沿用舊檔，
+症狀是「新功能沒出現」——**沒有錯誤訊息、沒有 log**。當時全專案連一個版本常數
+都沒有（`grep` 不到任何 `__version__`）。
+
+- 新增 `src/version.py`（`__version__` / `ASSET_VERSION`），零專案相依，
+  未來 PyInstaller 打包腳本可共用。
+- `index.html` 的兩處 app 資源改為 `{{ app_version }}` 佔位符。
+  **vendor/ 底下的 chart.js、vue 等維持寫死**——那是函式庫自己的版本，與應用程式無關。
+- `web/app.py` 新增 `_render_index()`：單一佔位符的字串替換，**刻意不引入 Jinja2**
+  （為一個變數多背一層樣板引擎與其 autoescape 語意並不划算）。啟動時算一次存入
+  `_INDEX_HTML`，避免每個請求讀檔；頁面本身仍帶 `no-store`，故永遠拿得到最新版號。
+
+⚠️ 路由回應型別由 `FileResponse` 改為 `HTMLResponse`（因為現在送的是替換後的字串
+而非磁碟檔案），三個 no-cache 標頭維持不變。
+
+新增 `tests/test_asset_version.py`（3 項）把「兩處是否同步」從人工複查變成自動偵測。
+該測試已用**反向驗證**確認有效：手動把其中一處改回寫死的 `4.11.0`，測試如期
+兩項失敗；復原後回到全綠。
+
+### 🔧 環境文件對齊實際狀態
+
+`environment.yml` 宣告的 `caparoc_breaker` 環境**在開發機上並不存在**，
+README 與 USER_GUIDE 則寫著佔位符 `your_env_name`，照做必定失敗；
+實際可用的是 `sv`（Python 3.12.11，套件版本與 yml 的 pin 相符）。
+
+- README／USER_GUIDE 的 `conda activate your_env_name` → `conda activate sv`，
+  並註明全新建立時的名稱差異。
+- `environment.yml` 開頭補上名稱說明；`pytest` 從「可選，按需安裝」註解
+  提升為正式相依（環境早已裝了 9.1.1，只是 yml 沒反映）。
+- README 快速開始加入 `python -m pytest` 作為環境驗證步驟。
+- 更正 `test_demo_payload.py` docstring 中「該環境目前沒有 pytest」的過時敘述。
+
+### 🧹 TODO 債務表清理
+
+- **BOOTP `op` 被當成 DHCP message type（問題 #4）已解決，移除**。
+  `caparoc_ip_core.py` 的 `dhcp_msg_type()` 已正確解析 Option 53，
+  兩個呼叫點（`:463`、`:547`）都走這條路徑，`caparoc_ip_config.py` 內
+  已無該邏輯。TODO 原本標註它是「配置精靈上 web 的前置條件」——**該前置已解除**。
+- 債 #11 移除（本次收掉）。
+
+---
+
 ## [2026-09-03] 接上 `retention_days`：log 自動清除從「死設定」變成真的會動
 
 > 起因：使用者把 `retention_days` 改成 10，問「程式一啟動就會刪舊 log 嗎」。

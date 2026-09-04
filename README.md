@@ -13,11 +13,14 @@ CAPAROC 電子斷路器遠端控制程式，基於 EtherNet/IP 協議，支援�
 ### 1. 環境準備
 
 ```bash
-# 啟動 Conda 環境
-conda activate your_env_name
+# 啟動 Conda 環境（本機開發環境名為 sv；用 environment.yml 全新建立的話是 caparoc_breaker）
+conda activate sv
 
 # 安裝依賴
 pip install -r requirements.txt
+
+# 驗證環境可用（應輸出 28 passed，不需連接設備）
+python -m pytest
 ```
 
 ### 2. 啟動程式
@@ -233,9 +236,11 @@ Caparoc5/
 │   ├── app.py                    # FastAPI 服務（~550 行）
 │   ├── templates/index.html      # Vue 3 CDN 頁面
 │   └── static/                   # JS / CSS
-├── tests/
+├── tests/                        # 自動化測試（`python -m pytest`，不需實機）
+│   ├── test_*.py                 # pytest 測試，28 項
 │   ├── diagnostic_tools.py       # 診斷工具集
-│   └── check_connection.py       # 連線檢查工具
+│   ├── check_connection.py       # 連線檢查工具
+│   └── manual/                   # 需實機／需管理員權限的互動式工具，pytest 不收集
 ├── docs/                         # 完整文件
 │   ├── USER_GUIDE.md             # 使用者指南 ⭐
 │   ├── WEB_UI_FEATURE_REFERENCE.md  # API / WebSocket 參考

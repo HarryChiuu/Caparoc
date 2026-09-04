@@ -1,3 +1,16 @@
+# Conda 環境定義 — CAPAROC 控制器
+#
+# ⚠️ 環境名稱：本檔建立的環境叫 `caparoc_breaker`，但**開發機上實際在用的環境是 `sv`**
+# （Python 3.12.11，套件版本與下方 pin 相符）。文件中的指令一律以 `sv` 為準；
+# 若你是從這份 yml 全新建立環境，請把指令中的 `sv` 換成 `caparoc_breaker`。
+#
+# 建立環境：
+#   conda env create -f environment.yml
+#   conda activate caparoc_breaker
+#
+# 驗證環境可用（應輸出 28 passed）：
+#   python -m pytest
+
 name: caparoc_breaker
 channels:
   - defaults
@@ -16,8 +29,10 @@ dependencies:
       - python-multipart>=0.0.28
       - websockets>=14.0
 
-      # 開發與測試工具（可選，按需安裝）
-      # - pytest>=7.4.0
+      # 測試（`python -m pytest` 需要；sv 環境已裝 9.1.1）
+      - pytest>=7.4.0
+
+      # 其餘開發工具（可選，按需安裝）
       # - pytest-cov>=4.1.0
       # - flake8>=6.0.0
       # - black>=23.0.0

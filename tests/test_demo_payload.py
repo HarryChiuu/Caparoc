@@ -6,8 +6,9 @@ demo 模式 payload 與真實 payload 的結構一致性測試（不需設備、
   python tests/test_demo_payload.py       # 直接跑，印 PASS / 總結
   pytest tests/test_demo_payload.py       # 純 assert 函式，pytest 也能收
 
-⚠️ 需在**裝有 fastapi 的環境**執行（本測試會 import `web/app.py`）——
-即 conda env `sv`。該環境目前沒有 pytest，所以直接執行是實際驗證過的路徑。
+⚠️ 需在**裝有 fastapi 的環境**執行（本測試會 import `web/app.py`）——即 conda env `sv`。
+（2026-09-04 更正：該環境已裝 pytest 9.1.1，`python -m pytest` 是現在的主要執行方式；
+檔案底部的 `__main__` 區塊仍保留，直接執行也可以。）
 
 ── 為什麼需要這支測試 ──────────────────────────────────────────────
 `web/app.py` 有兩條產生前端 payload 的路徑，必須保持結構一致：

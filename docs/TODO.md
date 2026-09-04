@@ -1,6 +1,6 @@
 # CAPAROC 控制器 - 待實作功能清單
 
-更新日期: 2026-09-03
+更新日期: 2026-09-04
 
 ---
 
@@ -18,6 +18,12 @@
 | 3 | 4.4.1 CLI 通道詳細狀態顯示（`s <ch>`、使用率、bit 0-5 解析） | 2-3h | 4.4.1 |
 | 4 | 5.3 PyInstaller 打包（前置＝#1） | 2-3h | Phase 5.3 |
 
+> **2026-09-04 清障已完成**（詳見「已完成功能」章節）：測試套件先前因
+> `tests/test_network_info.py` 在 import 期間連線實機而**整套 collection error**，
+> 25 個測試一個都跑不到；四支互動式工具已移入 `tests/manual/` 並加上 `pytest.ini`，
+> 現在 `python -m pytest` 為 **28 passed**。債 #11（`?v=` 版號）與 5.6 版本號管理
+> 一併收掉。5.1 仍是下一步。
+
 **為什麼把 5.1 排第一**：它是 Phase 5 全部項目的前置，且愈晚做、愈多新程式碼會沿用
 錯誤的路徑寫法（目前四個位置都是 `Path(__file__)`）。開發模式下這些寫法全部正常，
 **問題只在打包後浮現**——其中 `_PROBE_CACHE_PATH` 那個還帶副作用：快取永不命中，
@@ -28,7 +34,7 @@
 - 4.3.3 UI 視覺一致性（2-3h）／ 4.3.4 行動裝置支援（1-2h）
 - 4.5 數據記錄與分析（6-8h）— ⚠️ 要與已接上的 log 保留機制**共用**清理策略，別長第二套
 - 4.6 告警與通知系統（4-5h）
-- 5.4 首次執行初始化（0.5h）／ 5.5 Docker（1-2h）／ 5.6 版本號管理（0.5h）
+- 5.4 首次執行初始化（0.5h）／ 5.5 Docker（1-2h）　※ 5.6 版本號管理已完成（2026-09-04）
 
 ### 低優先
 
@@ -38,18 +44,34 @@
 
 | 債務 | 症狀 | 出處 |
 |------|------|------|
-| `?v=` 版號需**手動改兩處**（`index.html:8` 與 `:553`） | 漏改 → 使用者拿到舊 JS，回報「新功能沒出現」，最難查。**無任何機制提醒** | 債 #11 |
-| BOOTP `op` 被當成 DHCP message type（`caparoc_ip_config.py:418`、`:467`） | 會匹配任何 client→server BOOTP 訊息，可能回報「續約中」而非「首次探索」的設備 MAC | 問題 #4 —— **配置精靈上 web 的前置條件** |
 | `app.js` 單一 `setup()` 約 870 行 | 全案最大長期債 | 債 #8（**刻意不償還**，需引入 build step） |
 | `arp -a` 依賴語系文字（`動態`/`dynamic`） | 非 zh-TW／英文語系找不到項目 | 問題 #6（已知限制） |
 | `get_broadcast_addresses()` 硬編 `.255`（假設 /24） | 非 /24 網段廣播位址算錯；多網卡可能漏掉 | 問題 #7（已知限制） |
 | `set_device_dhcp()` 任何例外都回 `success=True` | 真失敗與預期斷線無法區分 | 問題 #5（**刻意不改**，真相來源是事後驗證步驟） |
 | 每個新端點都要手寫 `_DEMO_MODE` 分支 | 漏寫 → `--demo` 靜默壞掉 | 債 #10（status payload 已有測試把關，其他端點仍人工） |
-| 選配：`tests/test_ip_core.py` | 純函式安全網，約 30 行，成本極低 | 建議項 |
+| 選配：`tests/test_ip_core.py` | 純函式安全網，約 30 行，成本極低。**套件現已可正常執行（28 passed），補測試的成本更低了** | 建議項 |
+| `environment.yml` 的環境名 `caparoc_breaker` 與實際使用的 `sv` 不符 | 已在 yml 與 README 註明，但兩者長期並存仍易混淆 | 2026-09-04 記錄 |
 
 ---
 
 ## ✅ 已完成功能
+
+### 測試套件修復 + 前端版號單一真相來源（2026-09-04）
+- [x] **測試套件從 collection error 修回可用**（28 passed in 0.76s）
+  - [x] 四支互動式／需實機的工具由 `test_*.py` 改名移入 `tests/manual/`（`git mv`，history 保留）
+  - [x] 移深一層後的 `sys.path` 深度修正（`resolve().parent.parent.parent`）
+  - [x] 新增 `pytest.ini`：`testpaths` + `norecursedirs`，防止同類問題再發生
+  - 根因：`test_network_info.py` 在 module 頂層 `with CIPDriver(IP)` 連線實機，
+    沒有設備時 pytest 收集階段即中止，**另外 25 個測試一個都跑不到**
+- [x] **債 #11 / 5.6 版本號管理**：`src/version.py` 成為唯一真相來源
+  - [x] `index.html` 兩處 app 資源改用 `{{ app_version }}`（vendor 函式庫版號維持寫死）
+  - [x] `web/app.py` `_render_index()` 啟動時替換一次；回應型別 `FileResponse` → `HTMLResponse`
+  - [x] `tests/test_asset_version.py`（3 項），已用反向驗證確認能抓到漏改
+- [x] **環境文件對齊實際**：README／USER_GUIDE 的 `your_env_name` → `sv`；
+      `environment.yml` 補名稱說明並把 `pytest` 提升為正式相依
+- [x] **TODO 債務表清理**：BOOTP `op`（問題 #4）確認已由 `dhcp_msg_type()` 解決並移除
+
+詳見 [CHANGELOG.md](CHANGELOG.md) 的 2026-09-04 條目。
 
 ### IP 設定功能（2026-08-11）
 - [x] **CIP 0xF5 IP 讀寫**（`caparoc_backend.py`）
@@ -187,20 +209,20 @@ Phase 5.1 動路徑抽象化時**不要移除**進入點的 `force_safe_stdio()`
 
 ## 🔧 caparoc_ip_config.py 改善項目 ✅ 已完成（2026-08-13）
 
-> 本節記錄對 `src/caparoc_ip_config.py` 的改善項目，比對 `tests/test_dcp_ip_config.py`（DCP/DHCP 實驗工具）後確認並實作。
+> 本節記錄對 `src/caparoc_ip_config.py` 的改善項目，比對 `tests/manual/dcp_ip_config_tool.py`（DCP/DHCP 實驗工具）後確認並實作。
 
 ### 已完成項目
 
 | # | 優先 | 說明 |
 |---|---|---|
 | 1 | 低 | **Typo 修正**：`run_discovery()` 輸出 `廣播0：` → `廣播：`（程式碼中已無此 typo，僅 TODO 記錄未勾）✅ |
-| 2 | 高 | **Server IP 選擇**：新增 `_pick_iface()`（移植自 test_dcp_ip_config.py），列出可用網卡含 MAC/IP 讓使用者選擇，取代不可靠的 `gethostbyname()` ✅ |
+| 2 | 高 | **Server IP 選擇**：新增 `_pick_iface()`（移植自 manual/dcp_ip_config_tool.py），列出可用網卡含 MAC/IP 讓使用者選擇，取代不可靠的 `gethostbyname()` ✅ |
 | 3 | 高 | **固化完整寫入**：`_provision_new_device()` 改呼叫 `backend.set_device_ip(driver, assign_ip, subnet, gateway)`，DHCP ACK 後正確寫入 Attr5（IP/Subnet/GW）+ Attr3（Static），不再只寫 Attr3 ✅ |
 | 4 | 中 | **從主連線迴圈獨立**：新增頂層選單 [1]連線設備 / [2]新裝置初始設定，`_provision_new_device()` 不再掛在已連線設備的選單下 ✅ |
 | 5 | 低 | **前置說明**：`_provision_new_device()` 開頭顯示前提條件（其他 DHCP/BOOTP 工具已關閉）✅ |
-| 6 | 中 | **自動 MAC 偵測**：新增 `_listen_dhcp_discover()`（移植自 test_dcp_ip_config.py，UDP port 67 → Raw Socket 混雜模式 → scapy sniff 三層 fallback），新裝置設定時可自動監聽 DHCP Discover 取得 MAC，不需手動輸入 ✅ |
+| 6 | 中 | **自動 MAC 偵測**：新增 `_listen_dhcp_discover()`（移植自 manual/dcp_ip_config_tool.py，UDP port 67 → Raw Socket 混雜模式 → scapy sniff 三層 fallback），新裝置設定時可自動監聽 DHCP Discover 取得 MAC，不需手動輸入 ✅ |
 
-**未搬入的功能**：PROFINET DCP Layer 2 Identify/Set IP（test_dcp_ip_config.py 選項 [1]-[3]）— 程式註解確認對此設備硬體無效，故意不整合。
+**未搬入的功能**：PROFINET DCP Layer 2 Identify/Set IP（manual/dcp_ip_config_tool.py 選項 [1]-[3]）— 程式註解確認對此設備硬體無效，故意不整合。
 
 ---
 

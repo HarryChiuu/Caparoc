@@ -13,7 +13,7 @@
 
 | # | 任務 | 工時 | 章節 |
 |---|------|------|------|
-| 1 | 4.3.6 通道自訂標籤（Serial Number 綁定，5 個 Step 全未動） | 2-3h | 4.3.6 |
+| 1 | 4.3.6 通道自訂標籤（Serial Number 綁定）— **規劃已完成**，見 [CHANNEL_LABELS_PLAN.md](CHANNEL_LABELS_PLAN.md) | 3-4h | 4.3.6 |
 | 2 | 4.4.1 CLI 通道詳細狀態顯示（`s <ch>`、使用率、bit 0-5 解析） | 2-3h | 4.4.1 |
 | 3 | 5.3 PyInstaller 打包（前置 5.1 **已完成**） | 2-3h | Phase 5.3 |
 
@@ -1269,6 +1269,14 @@ Independent 模式），`any()` 會把這種合法狀態誤判成「所有欄位
 > **目的**：讓使用者為每個通道輸入自訂名稱（例如「主機電源」、「照明迴路」），存檔於本機，下次連線同一台裝置自動載入。  
 > **識別方式**：用 PM EIP 的 Serial Number 作為 key，確保標籤綁定到正確的物理裝置。  
 > **預估工時**：2-3 對時
+
+> ⚠️ **2026-09-04：完整規劃見 [CHANNEL_LABELS_PLAN.md](CHANNEL_LABELS_PLAN.md)，以該文件為準。**
+> 下方 5 個 Step 寫於 config 架構統一之前，其中**兩項前提已經改變**：
+> （1）獨立的 `channel_labels.json` 改為併入 `config.json` 的 `labels` 區塊；
+> （2）Step 2 的「`_format_status()` 加 `label` 欄位」**不採用**——該函式在
+> WebSocket 迴圈中每秒執行，塞入靜態文字會每天推送 8.6 萬次，且為了填 label
+> 得每秒多讀一次 CIP 取 S/N。改走獨立端點 + 前端合併。
+> 保留下方原文作為對照。
 
 **實作步驟**：
 

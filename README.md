@@ -101,6 +101,7 @@ uvicorn web.app:app --port 8001    # ❌ 完全忽略 web.port，須自行帶 --
 
 ### 開發文件
 - **[TODO.md](docs/TODO.md)** - 功能規劃與待實作項目
+- **[通道自訂標籤規劃](docs/CHANNEL_LABELS_PLAN.md)** - 4.3.6 實作規劃與設計決策
 - **[CHANGELOG.md](docs/CHANGELOG.md)** - 版本更新歷史
 - **[WEB UI / API 參考](docs/WEB_UI_FEATURE_REFERENCE.md)** - Web UI 頁面、HTTP REST API、WebSocket 資料結構
 - **[開發技術備忘錄](docs/DEVELOPMENT_NOTES.md)** - CIP lock 設計、IP LE-UDINT、WebSocket 斷線等技術細節

@@ -1,6 +1,6 @@
 # CAPAROC 控制器 - 待實作功能清單
 
-更新日期: 2026-09-04（末次核對：commit 1171f27）
+更新日期: 2026-09-05（末次核對：commit bd34746 + 打包前全案 review）
 
 ---
 
@@ -13,8 +13,19 @@
 
 | # | 任務 | 工時 | 章節 |
 |---|------|------|------|
-| 1 | 4.4.1 CLI 通道詳細狀態顯示（`s <ch>`、使用率、bit 0-5 解析） | 2-3h | 4.4.1 |
-| 2 | 5.3 PyInstaller 打包（前置 5.1 **已完成**） | 2-3h | Phase 5.3 |
+| 0 | **打包前必修三項**（CLI 多模組同步／關閉改優雅／log 目錄防護） | 1-1.5h | [5.0 打包前必修](#50-打包前必修打包前-review2026-09-05) |
+| 1 | 5.3 PyInstaller 打包（前置 5.1 **已完成**，已試打包驗證可行） | 2-3h | Phase 5.3 |
+| 2 | 5.4 首次執行初始化（建議與 5.3 同一輪收掉） | 0.5h | Phase 5.4 |
+
+> **2026-09-05 打包前 review 已完成**：已用 PyInstaller 6.22 對 `web/app.py` 做過
+> **實際試打包**（工具與產物都在暫存區，未動 repo、未裝進 `sv` 環境），
+> demo 與實機兩種模式的 HTTP 端點、WebSocket、frozen 路徑、scapy/psutil 全部通過。
+> **結論：本專案可以順利打包**，但有一個會讓成品直接壞掉的環境陷阱與數項建議先修項，
+> 全部整理在 [5.0 打包前必修](#50-打包前必修打包前-review2026-09-05) 與
+> [Phase 5.3](#53-pyinstaller-打包windows-exe) 的實測結果。
+
+~~4.4.1 CLI 通道詳細狀態顯示~~ ✅ **已完成（2026-09-05）**——`s <ch>` 已上線，
+`show_status()` 也一併加上使用率欄位。
 
 ~~4.3.6 通道自訂標籤~~ ✅ **已完成（2026-09-04）**——見 [CHANNEL_LABELS_PLAN.md](CHANNEL_LABELS_PLAN.md)。
 
@@ -25,7 +36,8 @@
 > `tests/test_network_info.py` 在 import 期間連線實機而**整套 collection error**，
 > 25 個測試一個都跑不到；四支互動式工具已移入 `tests/manual/` 並加上 `pytest.ini`，
 > 債 #11（`?v=` 版號）與 5.6 版本號管理一併收掉，隨後 5.1 路徑抽象化也已完成。
-> 現在 `python -m pytest` 為 **81 passed**（2026-09-04 實測，需在 conda 環境 `sv` 下執行）。
+> 當時 `python -m pytest` 為 81 passed；經 2026-09-05 補測後為 **169 passed**
+> （需在 conda 環境 `sv` 下執行）。
 
 **5.1 已收掉**（原本排第一的理由：它是 Phase 5 全部項目的前置，且愈晚做愈多新程式碼
 會沿用錯誤寫法）。實作時另外發現 TODO 原盤點表**漏列一處**：`web/app.py` 的
@@ -37,7 +49,10 @@
 - 4.3.3 UI 視覺一致性（2-3h）／ 4.3.4 行動裝置支援（1-2h）
 - 4.5 數據記錄與分析（6-8h）— ⚠️ 要與已接上的 log 保留機制**共用**清理策略，別長第二套
 - 4.6 告警與通知系統（4-5h）
-- 5.4 首次執行初始化（0.5h）／ 5.5 Docker（1-2h）　※ 5.6 版本號管理已完成（2026-09-04）
+- 5.5 Docker（1-2h）
+  　※ 5.4 首次執行初始化已升到「下一步」第 2 項（與 5.3 同一輪）
+  　※ 5.6 版本號管理**只完成一半**（`version.py` 已建，但三處版本號仍不一致），
+  　　見 [5.0 建議 ④](#-建議-④--版本號沒有真正的單一來源)
 
 ### 低優先
 
@@ -48,16 +63,55 @@
 | 債務 | 症狀 | 出處 |
 |------|------|------|
 | `app.js` 單一 `setup()` 約 870 行 | 全案最大長期債 | 債 #8（**刻意不償還**，需引入 build step） |
-| `arp -a` 依賴語系文字（`動態`/`dynamic`） | 非 zh-TW／英文語系找不到項目 | 問題 #6（已知限制） |
-| `get_broadcast_addresses()` 硬編 `.255`（假設 /24） | 非 /24 網段廣播位址算錯；多網卡可能漏掉 | 問題 #7（已知限制） |
+| ~~`arp -a` 依賴語系文字~~ | ✅ **已修（2026-09-05）**：改以 IP/MAC 格式判斷，與語系無關 | 問題 #6 |
+| ~~`get_broadcast_addresses()` 硬編 `.255`~~ | ✅ **已修（2026-09-05）**：改用作業系統回報的真實遮罩 | 問題 #7 |
 | `set_device_dhcp()` 任何例外都回 `success=True` | 真失敗與預期斷線無法區分 | 問題 #5（**刻意不改**，真相來源是事後驗證步驟） |
 | 每個新端點都要手寫 `_DEMO_MODE` 分支 | 漏寫 → `--demo` 靜默壞掉 | 債 #10（status payload 已有測試把關，其他端點仍人工） |
-| 選配：`tests/test_ip_core.py` | 純函式安全網，約 30 行，成本極低。**套件現已可正常執行（81 passed），補測試的成本更低了** | 建議項 |
-| `environment.yml` 的環境名 `caparoc_breaker` 與實際使用的 `sv` 不符 | 已在 yml 與 README 註明，但兩者長期並存仍易混淆 | 2026-09-04 記錄 |
+| ~~選配：`tests/test_ip_core.py`~~ | ✅ **已建（2026-09-05）**：66 項純函式測試 | 建議項 |
+| ~~`environment.yml` 環境名不符~~ | ✅ **已修（2026-09-05）**：yml 統一為 `sv` | 2026-09-04 記錄 |
+| CLI 啟動同步只處理模組 1 | 🔴 兩模組實機下第一次對 M2 下 `on`/`off` 會關掉 M2 其他運作中通道 | [5.0-①](#-必修-①--cli-啟動同步只處理模組-1) |
+| `/api/shutdown` 是硬殺不是優雅關閉 | Windows 上 lifespan 不執行 → CIP session 沒關 | [5.0-②](#-必修-②--關閉伺服器是硬殺lifespan-不執行) |
+| log 目錄 `mkdir` 無防護 | exe 放唯讀位置 → import 期就 traceback 退出 | [5.0-③](#-必修-③--log-目錄建立沒有防護) |
+| 版本號三處不一致 | `version.py` 4.15.0／FastAPI 4.0.0／CLI v3.8，UI 也不顯示 | [5.0-④](#-建議-④--版本號沒有真正的單一來源) |
+| 額定電流 1-20 硬編三處 | 提示訊息與 `config.json` 脫節（後端仍會擋，不會出錯） | [5.0-⑤](#-建議-⑤--額定電流上下限硬編) |
+| `scapy` 已安裝但未宣告依賴 | 打包會自動收入並拖進 matplotlib/numpy/PIL/tkinter（103 MB） | [5.3 實測](#-實測結果2026-09-05-試打包) |
+| CLI 通道編號兩套（等差 vs `_ch_id_map`） | 只有 2 通道模組排前面才會不一致，目前實機不受影響 | [5.0-⑥](#-觀察-⑥--cli-通道編號有兩套) |
 
 ---
 
 ## ✅ 已完成功能
+
+### 4.4.1 CLI 通道詳細狀態顯示 + 零散技術債清理（2026-09-05）
+
+**4.4.1**
+- [x] `calc_utilization()`／`CHANNEL_STATUS_BITS`／`show_channel_detail()`
+- [x] CLI `s <ch>`，`show_status()` 每行加上使用率百分比
+- [x] `tests/test_channel_detail.py`（22 項）
+
+**技術債（本輪收掉 4 項）**
+- [x] **問題 #6 `arp -a` 語系依賴** —— 原本比對「動態／dynamic」字面，
+      非 zh-TW/英文語系會**一個項目都找不到**。改以「這一行長得像 IP + MAC」
+      判斷，再用 MAC 結構（`ff:ff:..`／`01:00:5e:`／`33:33:`）濾掉廣播多播。
+      順手修掉一個**同源的潛在 bug**：原本 `text=True` 會用 Python 預設編碼解 
+      `arp.exe` 輸出，主控台代碼頁不符時直接拋 `UnicodeDecodeError`，
+      讓整個 ARP 後援探索靜默失效——改為 `errors='replace'` 解碼。
+- [x] **問題 #7 廣播位址硬編 /24** —— 改用作業系統回報的真實遮罩（psutil，
+      **選配**依賴，缺少時退回原本的 /24 推測）。
+      ⚠️ **這在開發機上就是實際的 bug，不只是理論限制**：本機 `192.168.50.200`
+      是 **/23**，正確廣播位址為 `192.168.51.255`，舊碼推測的 `192.168.50.255`
+      收不到子網上半部的設備回應。另外 psutil 的網卡清單比
+      `getaddrinfo(gethostname())` 完整，後者在多網卡機器上常只回主要那張。
+      /31、/32（VPN 點對點）沒有可用廣播位址，已排除而非送到主機 IP。
+- [x] **`tests/test_ip_core.py`** —— 66 項純函式測試。含兩道回歸防線：
+      `is_valid_ip()` 曾被改成 `return false`（小寫）；`dhcp_msg_type()` 不可用
+      `data[0]` 判斷（BOOTP op 與 DHCP_DISCOVER 都等於 1，會把 REQUEST/RELEASE
+      全誤判成 Discover）。
+- [x] **`environment.yml` 環境名** —— 統一為 `sv`，README／USER_GUIDE 同步；
+      順帶補上漏列的 `requests` 依賴。
+
+> 測試數：81 → **169 passed**（2026-09-05 實測，conda 環境 `sv`）。ruff 全綠。
+> 剩餘 3 項技術債均為**刻意不償還**（債 #8 `app.js`、問題 #5 `set_device_dhcp()`、
+> 債 #10 `_DEMO_MODE` 分支），理由見技術債表格。
 
 ### 設備主機名稱可設定（2026-09-04）
 - [x] 實機診斷確認名稱來自 **CIP 0xF5 Attr 6**（Attr 5 的 Domain Name 是空的）
@@ -1226,31 +1280,52 @@ def _show_monitor_status(self, status, changes):
 
 ---
 
-##### 4.4.1 通道詳細狀態顯示
+##### 4.4.1 通道詳細狀態顯示 ✅ **已完成（2026-09-05）**
 
-> **對應後端**：擴充 `show_status()` / 新增 `show_channel_detail(ch)` 方法  
-> **預估工時**：2-3 小時
+> **對應後端**：`show_channel_detail(ch)` + `calc_utilization()`（`caparoc_backend.py`）  
+> **實際工時**：約 1 小時（低於估的 2-3h——`show_status()` 早已解析全部 6 個位元，
+> 缺的只有使用率與單通道檢視）
 
 **工作項目**：
-- [ ] 擴充 `show_status()` 顯示電流使用率（Flowing / Nominal × 100%）
-- [ ] 新增 CLI 指令 `s <ch>`：呼叫 `show_channel_detail(ch)` 顯示單一通道詳細資訊
+- [x] 擴充 `show_status()` 顯示電流使用率（Flowing / Nominal × 100%）
+- [x] 新增 CLI 指令 `s <ch>`：呼叫 `show_channel_detail(ch)` 顯示單一通道詳細資訊
   - 狀態、實際電流、額定電流、使用率
   - 狀態位元完整解析（bit 0-5：On/Off、80%警告、過載、短路、硬體故障、總電流關斷）
+- [x] `tests/test_channel_detail.py`（22 項，不需實機）
 
-**顯示範例**：
+**實際輸出**：
 ```
 🎮 > s 1
 
 📊 CH1 詳細狀態:
-   ────────────────────────────────────
+   ────────────────────────────────────────
    狀態:         🟢 開啟
-   實際電流:     2.50 A
+   實際電流:     3.40 A
    額定電流:     4.00 A
-   使用率:       62.5% ✅
-   ────────────────────────────────────
-   警告/錯誤:    ⚠️  接近 80% 警告閾值 (3.2A)
-   ────────────────────────────────────
+   使用率:       85.0% ⚠️
+   ────────────────────────────────────────
+   警告/錯誤:    ⚠️  80% 電流警告
+   ────────────────────────────────────────
+   狀態位元:     0b000011  (bit5..bit0)
+     bit 0  通道開啟          ✔
+     bit 1  80% 電流警告      ✔
+     bit 2  過載              ·
+     bit 3  短路              ·
+     bit 4  硬體故障          ·
+     bit 5  總電流關斷        ·
+   ────────────────────────────────────────
 ```
+
+**實作決策**：
+- 資料來源是 `_read_current_status()` 而非自己重讀 Input Assembly——該方法
+  已處理 `_cip_lock`、空槽過濾（`nominal=0`）與 `_ch_id_map` 維護，
+  另寫一套解析等於把同一份位元組格式的知識複製到第二個地方。
+- `calc_utilization()` 在額定為 0 時回 **None 而非 0**：「0% 使用率」與
+  「無法計算」在畫面上意義完全不同，前者會讓空槽看起來像健康的閒置通道。
+- 位元定義集中在 `CHANNEL_STATUS_BITS`，與 `_read_current_status()` 的 dict
+  欄位名共用，避免同一個位元在三個地方各有一套講法。
+- 位元標籤用 East Asian Width 補空白，不能用 `{:<14}`——中文字在終端機佔兩格，
+  按字元數補會讓勾選欄歪掉。
 
 ---
 
@@ -1496,6 +1571,118 @@ LED 顏色與面板實況相符、CIP 斷線狀態下此頁仍讀得到（驗證
 
 ---
 
+#### 5.0 打包前必修（打包前 review，2026-09-05）
+
+> **由來**：打包前對全案做了一次 review，並用 PyInstaller 6.22 **實際試打包**驗證可行性
+> （工具與產物都在暫存區，未改動 repo、未裝進 `sv` 環境）。
+> 打包本身沒問題，但下列項目**在打包後會比開發模式更難修**——exe 出去了才發現，
+> 要重打包、重發布、重跑現場驗證，所以放在 5.3 之前。
+>
+> **總工時**：必修三項約 1–1.5h；建議項另計。
+
+##### 🔴 必修 ① — CLI 啟動同步只處理模組 1
+
+**位置**：`src/caparoc_controller.py` 的 `run()`（啟動時「讀取設備實際狀態並同步」段）
+
+`run()` 自己複製了一份同步邏輯，`channel_offsets = [6, 9, 12, 15]` 寫死模組 1 的四個位移，
+最後也只填 `current_output_data[1]`。但 backend 早就有處理**全部模組**的
+`_sync_output_from_device()`，Web 路徑（`connect()`）走的正是後者。
+
+**後果**（依程式碼判讀，**尚未實機驗證**）：兩模組實機下，CLI 第一次對 M2 下 `on`/`off` 時，
+`current_output_data[2]` 仍是初始的 `0x00`，該次寫入會把 **M2 其他正在運作的通道一起關掉**。
+這正是 `_sync_output_from_device()` 當初要防的「誤關運行中通道」，CLI 卻繞過了它。
+
+- [ ] 刪掉 `run()` 內那段自製同步，改呼叫 `self._sync_output_from_device()`
+- [ ] 實機驗證：兩模組、M2 有通道為 ON 時，對 M2 另一通道下 `on`，其餘通道不得被關
+- ⚠️ 若 5.3 決定要出第二個 `caparoc_cli.exe`，**這項必須先修**——CLI 是它唯一的介面
+
+##### 🔴 必修 ② — 關閉伺服器是硬殺，lifespan 不執行
+
+**位置**：`web/app.py` 的 `/api/shutdown` 與 `_ws_idle_shutdown()`，兩處都是
+`os.kill(os.getpid(), signal.SIGINT)`。
+
+**實測**（2026-09-05，Windows）：`os.kill(SIGINT)` 在 Windows 上等同 `TerminateProcess`，
+**signal handler 與 `finally` 都不會執行**。frozen 執行的 log 佐證：
+
+```
+[SYSTEM] [WEB] 收到關閉請求，伺服器準備停止      ← 只有這一行
+                                                  ← 「Web 服務關閉中...」從未出現
+                                                  ← 「正在中斷連線」也沒有
+```
+
+也就是 lifespan 的 shutdown 段整段被跳過，`backend.disconnect()` 不會被呼叫，
+**CIP session 沒有正常關閉**。開發模式下同樣的問題已經存在，只是打包後
+「關掉視窗 → 設備那端 session 殘留」會更常被現場遇到。
+
+- [ ] 保留 `uvicorn.Server` 物件，關閉改設 `server.should_exit = True`
+      （跨平台，且會正常走完 lifespan shutdown）
+- [ ] 驗證：log 必須依序出現「收到關閉請求」→「Web 服務關閉中」→「正在中斷連線」
+
+##### 🔴 必修 ③ — log 目錄建立沒有防護
+
+**位置**：`src/logging_manager.py` 的 `_setup_logger()`，`log_dir.mkdir(parents=True, exist_ok=True)`
+
+這行在 **import 期間**執行（`caparoc_backend` 一被 import 就觸發 `_log_setup()`）。
+exe 若放在唯讀位置（無管理員權限的 `Program Files`、唯讀網路磁碟、光碟／防寫 USB），
+`mkdir` 會拋 `PermissionError`，**程式在任何畫面出現之前就 traceback 退出**，
+使用者只看到一個閃一下就消失的黑視窗。
+
+- [ ] `mkdir` 包 try/except；失敗時退回 `%LOCALAPPDATA%\Caparoc\logs`
+- [ ] 退回時在 console 印出實際使用的路徑（否則使用者找不到 log）
+- [ ] 最低限度也要印出清楚訊息，不能讓它以 traceback 收場
+
+##### 🟡 建議 ④ — 版本號沒有真正的單一來源
+
+`src/version.py` 是 **4.15.0**，但另有兩處各說各話：
+
+| 位置 | 目前值 |
+|------|--------|
+| `src/version.py` | `4.15.0` ← 唯一真相來源 |
+| `web/app.py` 的 `FastAPI(version=...)` | `4.0.0` |
+| `src/caparoc_controller.py` 啟動橫幅與 log | `v3.8` |
+
+5.6 當初只把前端 `?v=` 接上 `version.py`，這兩處漏了。**打包後現場回報問題時對不上版本**
+——使用者說「我用的是 v3.8」，實際是 4.15.0。
+
+- [ ] `web/app.py`、`caparoc_controller.py` 改為 `from version import __version__`
+- [ ] Web UI 系統狀態頁顯示版本號（5.6 原本就列了，未做）
+- [ ] `--version` 命令列參數（5.6 原本就列了，未做）
+
+##### 🟡 建議 ⑤ — 額定電流上下限硬編
+
+`config.json` 的 `nominal_current.min/max` 已經有人讀（`app_config.nominal_range()`、
+`GET /api/config/limits`），但下列三處仍寫死 `1` 與 `20`：
+
+- `web/app.py` `set_nominal()` 的範圍檢查
+- `web/app.py` `set_nominal_batch()` 的範圍檢查
+- `src/caparoc_controller.py` CLI `init` 的範圍檢查
+
+**後端 `_validate_nominal_args()` 仍會擋，所以不會寫出超範圍的值**，
+症狀只是「提示訊息與設定檔脫節」：使用者把 max 改成 10，UI 卻還是說 1–20 A。
+
+- [ ] 三處改用 `_NOMINAL_MIN` / `_NOMINAL_MAX`（`app.py` 檔頭已經載入好了，直接用）
+
+##### 🔵 觀察 ⑥ — CLI 通道編號有兩套
+
+`_ch_id_map` 只在 `_read_current_status()` 跑過之後才建立（也就是用過 monitor 或 `s <ch>`）；
+在那之前，`on`／`off`／`init` 走的是 `get_module_and_channel()` 的**等差公式** fallback。
+
+兩者只有在「2 通道模組排在 4 通道模組前面」時才會給出不同答案。
+**目前實機是 E4（4ch）在前、E2 在後，不受影響**，故列為觀察而非必修。
+
+- [ ] 若日後出現 2 通道模組排前面的配置，需先讀一次狀態再接受通道指令
+
+##### 📄 文件與版控（打包前一併處理）
+
+- [ ] **先 commit 目前的未提交變更**：8 個修改檔 + 2 個新測試檔（`test_channel_detail.py`、`test_ip_core.py`）
+- [ ] `README.md` 第 22 行仍寫 `81 passed` → 應為 **169 passed**（`environment.yml` 已更新，README 沒跟上）
+- [ ] `README.md` 底部「最後更新」停在 **2026年5月25日**
+- [ ] `docs/USER_GUIDE.md` 沒有 `s <ch>` 的說明（4.4.1 已上線）
+- [ ] README／USER_GUIDE 的 CLI 範例輸出格式與程式實際輸出不同
+      （文件是 `標稱: 4A | 使用率: 11%`，程式是 `0.45A / 4A  (11%)`）
+
+---
+
 #### 5.1 路徑抽象化（打包前置）
 
 > **目的**：統一所有路徑解析邏輯，使程式在開發環境與 PyInstaller frozen 環境都能正確找到 config / logs / web 資源  
@@ -1546,22 +1733,88 @@ config 和 logs 必須在 exe 旁邊（使用者可編輯），不能被打包�
 > **目的**：產出單一 `caparoc.exe`，雙擊即啟動 Web UI + 自動開瀏覽器  
 > **預估工時**：2–3 小時
 
+##### 🧪 實測結果（2026-09-05 試打包）
+
+用 PyInstaller **6.22.2**（+ hooks-contrib 2026.7）對 `web/app.py` 做過完整試打包。
+工具以 `--target` 裝在暫存區、**沒有裝進 `sv` 環境**，產物也不在 repo 內。
+demo 與實機兩種模式都通過：HTTP 端點、WebSocket、frozen 路徑解析、
+static/vendor 資源、scapy + psutil 網卡列舉全部正常。
+
+| 建置方式 | 大小 | 啟動到首次回應 |
+|---|---|---|
+| onedir，預設設定 | 103 MB | 3.0 s |
+| onedir，加 `excludes` | 38 MB | 未另測 |
+| **onefile，加 `excludes`** | **21 MB** | **2.4 s** |
+
+> 實機模式首次回應約 6–7 秒，多出來的是**等待預設 IP 連線失敗**，不是打包造成的。
+
+**🔴 最關鍵的一個坑：必須在 `conda activate sv` 之後才能執行 PyInstaller**
+
+未啟用環境時打包，`_ctypes` 依賴的 **`ffi.dll`**（以及 `LIBBZ2` / `liblzma` / `libexpat`）
+不會被收進去——它們在 `<env>\Library\bin`，不在 `<env>\DLLs`。
+**build 過程全綠、沒有任何警告**，但 exe 一啟動就：
+
+```
+ImportError: DLL load failed while importing _ctypes: 找不到指定的模組。
+[PYI-xxxxx:ERROR] Failed to execute script 'pyi_rth_mplconfig'
+```
+
+啟用環境後同一份 spec 就正常。**打包後請一律以「`_internal` 內有沒有 `ffi.dll`」當檢查點。**
+
+**🟡 scapy 拖進 100 MB 的相依**
+
+`scapy` 已安裝在 `sv` 但**未宣告在 `requirements.txt` / `environment.yml`**
+（`list_interfaces()` 與新裝置 DHCP 救援會用到）。PyInstaller 自動收入它，
+並連帶拖進 **matplotlib、numpy、PIL、tkinter**——這就是 103 MB 的來源。
+加上 `excludes` 後縮到 21 MB（onefile）。
+
+- [ ] 順手把 `scapy` 補進 `requirements.txt` / `environment.yml`（**選配**依賴，缺少時
+      `list_interfaces()` 已有退路，與 `psutil` 同一種處理方式）
+
+**✅ 不需要 hidden-import**：hooks-contrib 已內建 `hook-uvicorn.py`、`hook-websockets.py`、
+`hook-psutil.py`、`hook-jinja2.py`。原本列的那串 `--hidden-import` **可以整串刪掉**。
+`pycomm3` 是純 Python，也不需要特別處理。
+
+**⚠️ spec 檔不能放 `build/`**：`.gitignore:7` 有 `build/`，放那裡會**進不了版控**。
+改放專案根目錄或新開 `packaging/`。
+
+**可直接使用的 spec 核心設定**（相對路徑以 spec 所在目錄為基準）：
+
+```python
+a = Analysis(['web/app.py'], pathex=['src'],
+             datas=[('web/templates', 'web/templates'),
+                    ('web/static',    'web/static')],
+             excludes=['matplotlib', 'numpy', 'PIL', 'tkinter',
+                       '_tkinter', 'IPython', 'watchfiles'])
+```
+
+**其他實測發現**：
+- `logs/` 已正確落在 exe 旁邊（5.1 的成果有效），onefile 的 `_MEI` 暫存目錄結束後也有清掉
+- exe 旁沒有 `config/` 也能跑（全用 `DEFAULTS`），但**不會自動產生設定檔**——正是 5.4 要補的
+- 前端 `{{ app_version }}` 佔位符在 frozen 下正確替換為 `4.15.0`
+- **Windows 防火牆**：伺服器綁 `0.0.0.0`，每台新 PC 首次執行都會跳對話框，部署文件要交代
+- 本機裝有 **Npcap**，scapy 回傳的介面名是 `\Device\NPF_{…}`；
+  **沒裝 Npcap 的現場 PC 行為尚未驗證**，需實測一次
+
 **工作項目**：
-- [ ] 建立 `build/caparoc.spec`（PyInstaller spec file）
-- [ ] 主入口：`web/app.py`
-- [ ] `--add-data`：收入 `web/templates`、`web/static`（含 vendor/）
-- [ ] `--hidden-import`：`uvicorn.logging`、`uvicorn.lifespan.on`、`uvicorn.protocols.http.auto`、`websockets`、`pycomm3`
-- [ ] 排除不需打包的目錄：`tests/`、`docs/`、`archive/`、`logs/`
-- [ ] 測試：打包後 exe 可正常啟動、連線設備、操作所有頁面
+- [ ] 建立 `caparoc.spec`（**放根目錄或 `packaging/`，不可放 `build/`**），內容見上方
+- [ ] 主入口：`web/app.py`；`pathex=['src']`
+- [ ] `datas`：收入 `web/templates`、`web/static`（含 vendor/）
+- [ ] `excludes`：`matplotlib` / `numpy` / `PIL` / `tkinter` / `_tkinter` / `IPython` / `watchfiles`
+- [ ] 決定 onefile（21 MB，單檔好發布）或 onedir（38 MB，啟動略快、好抽換 config）
+- [ ] 打包後檢查 `ffi.dll` 是否在產物內
+- [ ] 測試：exe 可正常啟動、連線**實機設備**、操作所有 7 個頁面
+- [ ] 在**沒有 Python 也沒有 Npcap** 的 PC 上實測一次
 - [ ] 可選：第二入口 `caparoc_cli.exe`（打包 `caparoc_controller.py`）
+      ——⚠️ 若要做，[5.0 必修 ①](#-必修-①--cli-啟動同步只處理模組-1) 得先修
 
 **產出目錄結構**：
 ```
 dist/
   caparoc.exe          ← 主程式（Web UI）
   config/
-    config.json        ← 使用者可編輯設定
-  logs/                ← 執行時產生
+    config.json        ← 使用者可編輯設定（5.4 首次執行自動產生）
+  logs/                ← 執行時產生（已驗證會落在 exe 旁邊）
 ```
 
 ---
@@ -1569,12 +1822,15 @@ dist/
 #### 5.4 首次執行初始化
 
 > **目的**：exe 首次執行時自動建立必要的外部目錄與檔案  
-> **預估工時**：0.5 小時
+> **預估工時**：0.5 小時  
+> **建議與 5.3 同一輪收掉**——試打包已確認 exe 旁沒有 `config/` 時雖然能跑（全用
+> `DEFAULTS`），但**不會產生設定檔**，使用者沒有東西可以編輯，等同「設定功能不存在」。
 
 **工作項目**：
+- [ ] `config.example.json` 加進 spec 的 `datas`（**內嵌資源**，目前沒被收入）
 - [ ] exe 旁無 `config/` → 自動從內嵌 `config.example.json` 複製為 `config/config.json`
-- [ ] exe 旁無 `logs/` → 自動建立目錄
-- [ ] 啟動時 console 印出路徑資訊（方便使用者找到 config 位置）
+- [ ] exe 旁無 `logs/` → 自動建立目錄（並套用 [5.0 必修 ③](#-必修-③--log-目錄建立沒有防護) 的唯讀防護）
+- [ ] 啟動時 console 印出 config 與 logs 的**實際路徑**（方便使用者找到，也方便遠端支援）
 
 ---
 
@@ -1603,10 +1859,15 @@ docker compose up -d
 #### 5.6 版本號管理
 
 > **目的**：單一來源版本號，打包時自動嵌入，UI 可顯示  
-> **預估工時**：0.5 小時
+> **預估工時**：0.5 小時  
+> ⚠️ **2026-09-04 只完成第一項**（`version.py` + 前端 `?v=`），其餘三項仍未做，
+> 且打包前 review 發現版本號**實際上有三處各說各話**——見
+> [5.0 建議 ④](#-建議-④--版本號沒有真正的單一來源)。
 
 **工作項目**：
-- [ ] 建立 `src/version.py`：`__version__ = "4.x.x"`
+- [x] 建立 `src/version.py`：`__version__ = "4.15.0"`（2026-09-04，前端 `?v=` 已接上）
+- [ ] `web/app.py` 的 `FastAPI(version="4.0.0")` 改引用 `version.__version__`
+- [ ] `src/caparoc_controller.py` 啟動橫幅與 log 的 `v3.8` 改引用 `version.__version__`
 - [ ] 打包時嵌入 git commit hash（短 hash）
 - [ ] Web UI 系統狀態頁顯示版本號
 - [ ] `--version` 命令列參數支援

@@ -9,8 +9,8 @@ IP 設定功能測試工具
   [0] 離開
 
 用法：
-  python tests/test_ip_config.py [設備IP]
-  python tests/test_ip_config.py 192.168.50.221
+  python tests/manual/check_ip_config.py [設備IP]
+  python tests/manual/check_ip_config.py 192.168.50.221
 """
 import sys
 import struct
@@ -18,7 +18,7 @@ import socket
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from pycomm3 import CIPDriver
 from caparoc_backend import CaparocBackend
@@ -190,7 +190,7 @@ def run_discovery() -> str | None:
         print("  ❕ 未發現任何設備，請確認：")
         print("     1. 設備已開機且連接同一網路")
         print("     2. 若設備為 DHCP 模式，請確認 DHCP server 已分配 IP")
-        print("     3. 可手動指定 IP：python tests/test_ip_config.py <IP>")
+        print("     3. 可手動指定 IP：python tests/manual/check_ip_config.py <IP>")
         return None
 
     print(f"\n  發現 {len(devices)} 台設備：")
@@ -337,10 +337,10 @@ def set_static_ip(driver, backend: CaparocBackend):
         try:
             with socket.create_connection((new_ip, 44818), timeout=3):
                 print(f"  ✅ 驗證成功：設備已在 {new_ip}")
-                print(f"     python tests/test_ip_config.py {new_ip}")
+                print(f"     python tests/manual/check_ip_config.py {new_ip}")
         except OSError:
             print(f"  ⚠️  10 秒後仍無法連線，請稍後再試")
-            print(f"     python tests/test_ip_config.py {new_ip}")
+            print(f"     python tests/manual/check_ip_config.py {new_ip}")
     else:
         print(f"  ❌ 寫入失敗: {result['error']}")
 

@@ -12,10 +12,10 @@ PROFINET DCP / scapy 前期診斷測試
 ⚠️  須以「管理員身份」執行（scapy 需要 raw socket 權限）：
     在管理員 PowerShell 中：
         conda activate sv
-        python tests/test_scapy_dcp.py
+        python tests/manual/check_scapy_dcp.py
 
     或指定設備 IP（預設 192.168.2.111）：
-        python tests/test_scapy_dcp.py 192.168.2.200
+        python tests/manual/check_scapy_dcp.py 192.168.2.200
 """
 
 import sys

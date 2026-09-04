@@ -46,7 +46,9 @@ ignore = [
 
 [lint.per-file-ignores]
 # 測試與診斷工具允許未使用的 import 與變數（探索性腳本，留著方便手動改測項目）
-"tests/*" = ["F401", "F841"]
+# `tests/**/*` 而非 `tests/*`：2026-09-04 起互動式工具移入 `tests/manual/`，
+# 單層 glob 匹配不到巢狀目錄，會讓這條豁免在子目錄悄悄失效。
+"tests/**/*" = ["F401", "F841"]
 # web/app.py 的 import 順序是**架構要求**，不是疏漏：
 # `sys.path.insert(0, ROOT/"src")` 必須先執行，之後才 import 得到 caparoc_backend
 # 與 caparoc_ip_core。檔內既有的 `# noqa: E402` 註解保留作為意圖說明。

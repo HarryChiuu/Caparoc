@@ -5,8 +5,8 @@
   0xF6 Ethernet Link     attr3=MAC Address
 
 用法：
-  python test_network_info.py [IP]
-  python test_network_info.py 192.168.50.111
+  python tests/manual/check_network_info.py [IP]
+  python tests/manual/check_network_info.py 192.168.50.111
 """
 import sys
 import struct

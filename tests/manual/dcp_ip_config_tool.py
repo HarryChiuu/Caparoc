@@ -14,7 +14,7 @@ PROFINET DCP IP 設定工具
 ⚠️  須以「管理員身份」執行（scapy 需要 raw socket）：
     在管理員 PowerShell 中：
         conda activate sv
-        python tests/test_dcp_ip_config.py
+        python tests/manual/dcp_ip_config_tool.py
 """
 
 import sys
@@ -24,7 +24,7 @@ import time
 import subprocess
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 # ── DCP 常數 ─────────────────────────────────────────────────
 DCP_MULTICAST_MAC = "01:0e:cf:00:00:00"
@@ -606,10 +606,10 @@ def _cip_fix_as_static(device_ip: str, new_ip: str = None,
                 try:
                     with socket.create_connection((target, 44818), timeout=3):
                         print(f"  ✅ 驗證成功：設備已在 {target}")
-                        print(f"     python tests/test_ip_config.py {target}")
+                        print(f"     python tests/manual/check_ip_config.py {target}")
                 except OSError:
                     print(f"  ⚠️  10 秒後仍無法連線，請稍後再試")
-                    print(f"     python tests/test_ip_config.py {target}")
+                    print(f"     python tests/manual/check_ip_config.py {target}")
             else:
                 print(f"  ❌ 失敗: {result['error']}")
             return result['success']
@@ -724,7 +724,7 @@ def _run_new_device_setup(iface: str, prefill_mac: str = None):
 
     print(f"\n  mini DHCP server 已啟動，持續監聽（按 Ctrl+C 中斷）")
     print(f"  ⚡ 請現在重插設備網路線！")
-    print(f"     或在另一個視窗: python tests/test_ip_config.py <目前IP> → [3] 切 DHCP")
+    print(f"     或在另一個視窗: python tests/manual/check_ip_config.py <目前IP> → [3] 切 DHCP")
 
     try:
         got = _mini_dhcp_server(server_ip, target_mac, assign_ip, subnet, timeout=None)
